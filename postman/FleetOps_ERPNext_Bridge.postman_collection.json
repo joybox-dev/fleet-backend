@@ -1,0 +1,782 @@
+{
+	"info": {
+		"name": "FleetOps ERPNext Bridge",
+		"description": "Tests all FleetOps ↔ ERPNext integration endpoints.\nRun '00 - Login' first to get session cookie, then test each entity.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "base_url", "value": "http://localhost:8080", "type": "string" },
+		{ "key": "api_key", "value": "", "type": "string" },
+		{ "key": "api_secret", "value": "", "type": "string" },
+		{ "key": "sid", "value": "", "type": "string" },
+		{ "key": "company", "value": "FleetOps", "type": "string" },
+		{ "key": "currency", "value": "KWD", "type": "string" },
+		{ "key": "cost_center", "value": "Main - FO", "type": "string" },
+		{ "key": "customer_name", "value": "", "type": "string" },
+		{ "key": "employee_name", "value": "", "type": "string" },
+		{ "key": "asset_name", "value": "", "type": "string" },
+		{ "key": "invoice_name", "value": "", "type": "string" },
+		{ "key": "journal_name", "value": "", "type": "string" },
+		{ "key": "payment_name", "value": "", "type": "string" }
+	],
+	"item": [
+		{
+			"name": "00 - Auth",
+			"item": [
+				{
+					"name": "Login (Get Session)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var cookies = pm.response.headers.filter(h => h.key === 'Set-Cookie');",
+									"    cookies.forEach(c => {",
+									"        if (c.value.startsWith('sid=')) {",
+									"            var sid = c.value.split(';')[0].split('=')[1];",
+									"            pm.collectionVariables.set('sid', sid);",
+									"            console.log('Session ID saved: ' + sid);",
+									"        }",
+									"    });",
+									"    pm.test('Login successful', () => pm.response.to.have.status(200));",
+									"    pm.test('Got valid session', () => {",
+									"        var json = pm.response.json();",
+									"        pm.expect(json.message).to.not.equal('Guest');",
+									"    });",
+									"} else {",
+									"    pm.test('Login failed', () => pm.expect.fail('Status: ' + pm.response.code));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"usr\": \"Administrator\",\n    \"pwd\": \"admin\"\n}"
+						},
+						"url": "{{base_url}}/api/method/login"
+					}
+				},
+				{
+					"name": "Get Logged User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Authenticated', () => {",
+									"    pm.response.to.have.status(200);",
+									"    var json = pm.response.json();",
+									"    pm.expect(json.message).to.not.equal('Guest');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/method/frappe.auth.get_logged_user"
+					}
+				},
+				{
+					"name": "Ping (Version Check)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('ERPNext reachable', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/method/frappe.utils.change_log.get_versions"
+					}
+				}
+			]
+		},
+		{
+			"name": "00.5 - Seed Setup (Run Once)",
+			"description": "Creates all Items, Groups, and Categories that the FleetOps bridge requires. Also discovers account names dynamically. Run ONCE after Login.",
+			"item": [
+				{
+					"name": "Seed: Create Item Group (Services)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item Group\",\"item_group_name\":\"Services\",\"parent_item_group\":\"All Item Groups\"}" },
+						"url": "{{base_url}}/api/resource/Item Group"
+					}
+				},
+				{
+					"name": "Seed: Create Item Group (Custody Items)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item Group\",\"item_group_name\":\"Custody Items\",\"parent_item_group\":\"All Item Groups\"}" },
+						"url": "{{base_url}}/api/resource/Item Group"
+					}
+				},
+				{
+					"name": "Seed: Create Item (DELIVERY-SERVICE)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item\",\"item_code\":\"DELIVERY-SERVICE\",\"item_name\":\"خدمة توصيل طلبات\",\"item_group\":\"Services\",\"stock_uom\":\"Nos\",\"is_stock_item\":0}" },
+						"url": "{{base_url}}/api/resource/Item"
+					}
+				},
+				{
+					"name": "Seed: Create Item (CUSTODY-PHONE)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item\",\"item_code\":\"CUSTODY-PHONE\",\"item_name\":\"عهدة هاتف\",\"item_group\":\"Custody Items\",\"stock_uom\":\"Nos\",\"is_stock_item\":1,\"has_serial_no\":1}" },
+						"url": "{{base_url}}/api/resource/Item"
+					}
+				},
+				{
+					"name": "Seed: Create Item (CUSTODY-SIM)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item\",\"item_code\":\"CUSTODY-SIM\",\"item_name\":\"عهدة شريحة\",\"item_group\":\"Custody Items\",\"stock_uom\":\"Nos\",\"is_stock_item\":1,\"has_serial_no\":1}" },
+						"url": "{{base_url}}/api/resource/Item"
+					}
+				},
+				{
+					"name": "Seed: Create Item (CUSTODY-CLOTHING)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Item\",\"item_code\":\"CUSTODY-CLOTHING\",\"item_name\":\"عهدة ملابس\",\"item_group\":\"Custody Items\",\"stock_uom\":\"Nos\",\"is_stock_item\":1}" },
+						"url": "{{base_url}}/api/resource/Item"
+					}
+				},
+				{
+					"name": "Seed: Create Customer Group (Delivery Brands)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Customer Group\",\"customer_group_name\":\"Delivery Brands\",\"parent_customer_group\":\"All Customer Groups\"}" },
+						"url": "{{base_url}}/api/resource/Customer Group"
+					}
+				},
+				{
+					"name": "Seed: Create Supplier Group (Garages)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Supplier Group\",\"supplier_group_name\":\"Garages\"}" },
+						"url": "{{base_url}}/api/resource/Supplier Group"
+					}
+				},
+				{
+					"name": "Seed: Create Asset Category (Vehicles)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"doctype\":\"Asset Category\",\"asset_category_name\":\"Vehicles\",\"enable_cwip_accounting\":0}" },
+						"url": "{{base_url}}/api/resource/Asset Category"
+					}
+				},
+				{
+					"name": "Discover: Auto-Detect Accounts",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var data = pm.response.json().data;",
+									"    var map = {};",
+									"    data.forEach(a => {",
+									"        if (a.account_type === 'Cash' && !map.cash) map.cash = a.name;",
+									"        if (a.account_type === 'Receivable' && !map.receivable) map.receivable = a.name;",
+									"        if (a.account_type === 'Payable' && !map.payable) map.payable = a.name;",
+									"        if (a.account_type === 'Fixed Asset' && !map.fixed_asset) map.fixed_asset = a.name;",
+									"        if (a.name.includes('Salary') && !map.salary) map.salary = a.name;",
+									"        if (a.name.includes('Service') && a.root_type === 'Income' && !map.income) map.income = a.name;",
+									"    });",
+									"    pm.collectionVariables.set('account_cash', map.cash || '');",
+									"    pm.collectionVariables.set('account_receivable', map.receivable || '');",
+									"    pm.collectionVariables.set('account_payable', map.payable || '');",
+									"    pm.collectionVariables.set('account_asset', map.fixed_asset || '');",
+									"    pm.collectionVariables.set('account_salary', map.salary || '');",
+									"    pm.collectionVariables.set('account_income', map.income || '');",
+									"    console.log('Accounts discovered:', JSON.stringify(map));",
+									"    pm.test('Accounts auto-discovered', () => pm.expect(Object.keys(map).length).to.be.above(3));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/resource/Account?fields=[\"name\",\"account_type\",\"root_type\",\"is_group\"]&filters=[[\"company\",\"=\",\"{{company}}\"],[\"is_group\",\"=\",0]]&limit_page_length=200",
+							"host": ["{{base_url}}"],
+							"path": ["api", "resource", "Account"],
+							"query": [
+								{ "key": "fields", "value": "[\"name\",\"account_type\",\"root_type\",\"is_group\"]" },
+								{ "key": "filters", "value": "[[\"company\",\"=\",\"{{company}}\"],[\"is_group\",\"=\",0]]" },
+								{ "key": "limit_page_length", "value": "200" }
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "01 - Customer (Client)",
+			"item": [
+				{
+					"name": "Create Customer",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('customer_name', json.data.name);",
+									"    pm.test('Customer created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Customer\",\n    \"customer_name\": \"Yalla Go - Test\",\n    \"customer_type\": \"Company\",\n    \"customer_group\": \"Commercial\",\n    \"territory\": \"All Territories\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Customer"
+					}
+				},
+				{
+					"name": "Get Customer",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Customer retrieved', () => {",
+									"    pm.response.to.have.status(200);",
+									"    var json = pm.response.json();",
+									"    pm.expect(json.data.customer_name).to.contain('Yalla');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Customer/{{customer_name}}"
+					}
+				},
+				{
+					"name": "List Customers",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Customers listed', () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().data).to.be.an('array');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/resource/Customer?fields=[\"name\",\"customer_name\",\"customer_type\"]&limit_page_length=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "resource", "Customer"],
+							"query": [
+								{ "key": "fields", "value": "[\"name\",\"customer_name\",\"customer_type\"]" },
+								{ "key": "limit_page_length", "value": "20" }
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "02 - Employee",
+			"item": [
+				{
+					"name": "Create Employee",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('employee_name', json.data.name);",
+									"    pm.test('Employee created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Employee\",\n    \"first_name\": \"أحمد\",\n    \"last_name\": \"السائق\",\n    \"employee_name\": \"أحمد السائق\",\n    \"company\": \"{{company}}\",\n    \"status\": \"Active\",\n    \"gender\": \"Male\",\n    \"date_of_birth\": \"1990-01-15\",\n    \"date_of_joining\": \"2026-04-01\",\n    \"cell_phone\": \"+96512345678\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Employee"
+					}
+				},
+				{
+					"name": "Get Employee",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Employee retrieved', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Employee/{{employee_name}}"
+					}
+				},
+				{
+					"name": "List Employees",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/resource/Employee?fields=[\"name\",\"employee_name\",\"status\",\"company\"]&limit_page_length=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "resource", "Employee"],
+							"query": [
+								{ "key": "fields", "value": "[\"name\",\"employee_name\",\"status\",\"company\"]" },
+								{ "key": "limit_page_length", "value": "20" }
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "03 - Asset (Vehicle)",
+			"item": [
+				{
+					"name": "List Asset Categories",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Categories listed', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Asset Category?fields=[\"name\"]"
+					}
+				},
+				{
+					"name": "Create Asset (Vehicle)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('asset_name', json.data.name);",
+									"    pm.test('Asset created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Asset\",\n    \"asset_name\": \"Vehicle 12345-KW\",\n    \"asset_category\": \"Vehicles\",\n    \"company\": \"{{company}}\",\n    \"location\": \"Kuwait\",\n    \"is_existing_asset\": 1,\n    \"available_for_use_date\": \"2026-04-01\",\n    \"purchase_date\": \"2026-01-01\",\n    \"asset_owner\": \"Company\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Asset"
+					}
+				},
+				{
+					"name": "Get Asset",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Asset/{{asset_name}}"
+					}
+				}
+			]
+		},
+		{
+			"name": "04 - Sales Invoice (Daily Log)",
+			"item": [
+				{
+					"name": "Create Sales Invoice",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('invoice_name', json.data.name);",
+									"    pm.test('Invoice created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Sales Invoice\",\n    \"customer\": \"{{customer_name}}\",\n    \"posting_date\": \"2026-04-30\",\n    \"due_date\": \"2026-05-15\",\n    \"company\": \"{{company}}\",\n    \"currency\": \"{{currency}}\",\n    \"items\": [\n        {\n            \"item_code\": \"DELIVERY-SERVICE\",\n            \"item_name\": \"خدمة توصيل طلبات\",\n            \"description\": \"توصيل 25 طلب - سيارة 12345-KW - تاريخ 2026-04-30\",\n            \"qty\": 25,\n            \"rate\": 1.0,\n            \"amount\": 25.0\n        }\n    ],\n    \"remarks\": \"FleetOps Daily Log #1 | Vehicle: 12345-KW | Orders: 25 x 1.000 KWD\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Sales Invoice"
+					}
+				},
+				{
+					"name": "Get Sales Invoice",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Sales Invoice/{{invoice_name}}"
+					}
+				},
+				{
+					"name": "List Sales Invoices",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/resource/Sales Invoice?fields=[\"name\",\"customer\",\"grand_total\",\"posting_date\",\"status\"]&limit_page_length=20&order_by=creation desc",
+							"host": ["{{base_url}}"],
+							"path": ["api", "resource", "Sales Invoice"],
+							"query": [
+								{ "key": "fields", "value": "[\"name\",\"customer\",\"grand_total\",\"posting_date\",\"status\"]" },
+								{ "key": "limit_page_length", "value": "20" },
+								{ "key": "order_by", "value": "creation desc" }
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "05 - Journal Entry (Violation)",
+			"item": [
+				{
+					"name": "Create Journal Entry (Violation Deduction)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('journal_name', json.data.name);",
+									"    pm.test('Journal created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Journal Entry\",\n    \"voucher_type\": \"Journal Entry\",\n    \"posting_date\": \"2026-04-30\",\n    \"company\": \"{{company}}\",\n    \"user_remark\": \"مخالفة مرورية #V001 - سائق أحمد - سيارة 12345-KW - تجاوز سرعة - 15 KWD\",\n    \"accounts\": [\n        {\n            \"account\": \"1310 - Debtors - FO\",\n            \"debit_in_account_currency\": 15.0,\n            \"party_type\": \"Customer\",\n            \"party\": \"{{customer_name}}\",\n            \"cost_center\": \"{{cost_center}}\"\n        },\n        {\n            \"account\": \"1110 - Cash - FO\",\n            \"credit_in_account_currency\": 15.0,\n            \"cost_center\": \"{{cost_center}}\"\n        }\n    ]\n}"
+						},
+						"url": "{{base_url}}/api/resource/Journal Entry"
+					}
+				},
+				{
+					"name": "Get Journal Entry",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Journal Entry/{{journal_name}}"
+					}
+				}
+			]
+		},
+		{
+			"name": "06 - Payment Entry (Cash Settlement)",
+			"item": [
+				{
+					"name": "Create Payment Entry (Cash Settlement)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('payment_name', json.data.name);",
+									"    pm.test('Payment created', () => pm.expect(json.data.name).to.not.be.empty);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Payment Entry\",\n    \"payment_type\": \"Receive\",\n    \"posting_date\": \"2026-04-30\",\n    \"company\": \"{{company}}\",\n    \"mode_of_payment\": \"Cash\",\n    \"party_type\": \"Customer\",\n    \"party\": \"{{customer_name}}\",\n    \"paid_amount\": 50.0,\n    \"received_amount\": 50.0,\n    \"target_exchange_rate\": 1,\n    \"source_exchange_rate\": 1,\n    \"paid_from\": \"1310 - Debtors - FO\",\n    \"paid_to\": \"1110 - Cash - FO\",\n    \"remarks\": \"تسوية كاش - سائق أحمد - 50 KWD\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Payment Entry"
+					}
+				},
+				{
+					"name": "Get Payment Entry",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Payment Entry/{{payment_name}}"
+					}
+				}
+			]
+		},
+		{
+			"name": "07 - Stock Entry (Custody)",
+			"item": [
+				{
+					"name": "Create Stock Entry (Custody Issue)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Stock Entry created', () => {",
+									"    if(pm.response.code === 200) {",
+									"        pm.expect(pm.response.json().data.name).to.not.be.empty;",
+									"    }",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Stock Entry\",\n    \"stock_entry_type\": \"Material Issue\",\n    \"posting_date\": \"2026-04-30\",\n    \"company\": \"{{company}}\",\n    \"remarks\": \"تسليم عهدة هاتف إلى أحمد السائق - FleetOps #1\",\n    \"items\": [\n        {\n            \"item_code\": \"CUSTODY-PHONE\",\n            \"qty\": 1,\n            \"s_warehouse\": \"Stores - FO\",\n            \"basic_rate\": 25.0\n        }\n    ]\n}"
+						},
+						"url": "{{base_url}}/api/resource/Stock Entry"
+					}
+				},
+				{
+					"name": "Create Stock Entry (Custody Return)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Stock Entry\",\n    \"stock_entry_type\": \"Material Receipt\",\n    \"posting_date\": \"2026-04-30\",\n    \"company\": \"{{company}}\",\n    \"remarks\": \"استرجاع عهدة هاتف من أحمد السائق - FleetOps #1\",\n    \"items\": [\n        {\n            \"item_code\": \"CUSTODY-PHONE\",\n            \"qty\": 1,\n            \"t_warehouse\": \"Stores - FO\",\n            \"basic_rate\": 25.0\n        }\n    ]\n}"
+						},
+						"url": "{{base_url}}/api/resource/Stock Entry"
+					}
+				}
+			]
+		},
+		{
+			"name": "08 - Salary Slip (Payroll)",
+			"item": [
+				{
+					"name": "List Salary Structures",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Salary Structure?fields=[\"name\",\"company\"]"
+					}
+				},
+				{
+					"name": "Create Salary Slip (Official Only)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Salary Slip\",\n    \"employee\": \"{{employee_name}}\",\n    \"company\": \"{{company}}\",\n    \"posting_date\": \"2026-04-30\",\n    \"start_date\": \"2026-04-01\",\n    \"end_date\": \"2026-04-30\",\n    \"payroll_frequency\": \"Monthly\"\n}"
+						},
+						"url": "{{base_url}}/api/resource/Salary Slip"
+					}
+				}
+			]
+		},
+		{
+			"name": "09 - Utility",
+			"item": [
+				{
+					"name": "List Companies",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Company?fields=[\"name\",\"default_currency\"]"
+					}
+				},
+				{
+					"name": "List Chart of Accounts",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/resource/Account?fields=[\"name\",\"account_type\",\"parent_account\",\"is_group\"]&filters=[[\"company\",\"=\",\"{{company}}\"]]&limit_page_length=100",
+							"host": ["{{base_url}}"],
+							"path": ["api", "resource", "Account"],
+							"query": [
+								{ "key": "fields", "value": "[\"name\",\"account_type\",\"parent_account\",\"is_group\"]" },
+								{ "key": "filters", "value": "[[\"company\",\"=\",\"{{company}}\"]]" },
+								{ "key": "limit_page_length", "value": "100" }
+							]
+						}
+					}
+				},
+				{
+					"name": "List Warehouses",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Warehouse?fields=[\"name\",\"company\"]"
+					}
+				},
+				{
+					"name": "List Items",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Item?fields=[\"name\",\"item_name\",\"item_group\"]&limit_page_length=50"
+					}
+				},
+				{
+					"name": "Get Document Count",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Cookie", "value": "sid={{sid}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"doctype\": \"Sales Invoice\",\n    \"filters\": {}\n}"
+						},
+						"url": "{{base_url}}/api/method/frappe.client.get_count"
+					}
+				}
+			]
+		},
+		{
+			"name": "10 - Cleanup (Optional)",
+			"item": [
+				{
+					"name": "Delete Test Customer",
+					"request": {
+						"method": "DELETE",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Customer/{{customer_name}}"
+					}
+				},
+				{
+					"name": "Delete Test Employee",
+					"request": {
+						"method": "DELETE",
+						"header": [{ "key": "Cookie", "value": "sid={{sid}}" }],
+						"url": "{{base_url}}/api/resource/Employee/{{employee_name}}"
+					}
+				}
+			]
+		}
+	]
+}

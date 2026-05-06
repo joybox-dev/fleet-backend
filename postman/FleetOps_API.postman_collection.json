@@ -1,0 +1,495 @@
+{
+	"info": {
+		"name": "FleetOps API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "base_url", "value": "http://localhost:8001" },
+		{ "key": "token", "value": "" },
+		{ "key": "client_id", "value": "" },
+		{ "key": "contract_id", "value": "" },
+		{ "key": "employee_id", "value": "" },
+		{ "key": "vehicle_id", "value": "" },
+		{ "key": "daily_log_id", "value": "" },
+		{ "key": "violation_id", "value": "" },
+		{ "key": "maintenance_id", "value": "" },
+		{ "key": "custody_id", "value": "" }
+	],
+	"item": [
+		{
+			"name": "Phase 0 — Auth",
+			"item": [
+				{
+					"name": "Login (saves token)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 200) {",
+						"  pm.collectionVariables.set('token', pm.response.json().token);",
+						"  pm.test('Login OK', () => pm.response.to.have.status(200));",
+						"}"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\"email\":\"admin@fleetops.com\",\"password\":\"password\"}" },
+						"url": "{{base_url}}/api/auth/login"
+					}
+				},
+				{
+					"name": "Me",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/auth/me"
+					}
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/auth/logout"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 1 — Clients & Contracts",
+			"item": [
+				{
+					"name": "Create Client (saves client_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('client_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"name\": \"Yalla Go\",\n  \"name_ar\": \"يلا جو\",\n  \"contact_person\": \"Ahmed Ali\",\n  \"phone\": \"+96550000001\",\n  \"email\": \"ops@yallago.com\"\n}" },
+						"url": "{{base_url}}/api/clients"
+					}
+				},
+				{
+					"name": "List Clients",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/clients"
+					}
+				},
+				{
+					"name": "Get Client",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/clients/{{client_id}}"
+					}
+				},
+				{
+					"name": "Create Contract (saves contract_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('contract_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"client_id\": {{client_id}},\n  \"contract_number\": \"YALLAGO-2026-001\",\n  \"name\": \"Yalla Go Q2 2026\",\n  \"payment_type\": \"per_order\",\n  \"rate_per_order\": 1.350,\n  \"fixed_monthly\": 0,\n  \"start_date\": \"2026-04-01\"\n}" },
+						"url": "{{base_url}}/api/contracts"
+					}
+				},
+				{
+					"name": "List Contracts",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/contracts"
+					}
+				},
+				{
+					"name": "Lock Contract",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/contracts/{{contract_id}}/lock"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 2 — Employees (HR)",
+			"item": [
+				{
+					"name": "Create Employee (saves employee_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('employee_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"name\": \"Mohammed Saleh\",\n  \"name_ar\": \"محمد صالح\",\n  \"nationality\": \"Egyptian\",\n  \"phone\": \"+96560000001\",\n  \"date_of_joining\": \"2026-04-01\",\n  \"employee_type\": \"overseas\",\n  \"pay_type\": \"per_order\",\n  \"official_salary\": 150.000,\n  \"actual_salary\": 300.000,\n  \"rate_per_order\": 0.500,\n  \"has_end_of_service\": false,\n  \"health_card_expiry\": \"2027-04-01\",\n  \"residence_expiry\": \"2027-03-15\",\n  \"driving_license_expiry\": \"2027-01-10\",\n  \"work_permit_expiry\": \"2027-03-15\"\n}" },
+						"url": "{{base_url}}/api/employees"
+					}
+				},
+				{
+					"name": "List Employees",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/employees"
+					}
+				},
+				{
+					"name": "Get Employee",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/employees/{{employee_id}}"
+					}
+				},
+				{
+					"name": "Update Employee Status (active)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"status\": \"active\"}" },
+						"url": "{{base_url}}/api/employees/{{employee_id}}"
+					}
+				},
+				{
+					"name": "Employee Balance (debit/credit ledger)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/employees/{{employee_id}}/balance"
+					}
+				},
+				{
+					"name": "Issue Custody Item (saves custody_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('custody_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"employee_id\": {{employee_id}},\n  \"item_type\": \"phone\",\n  \"item_description\": \"Samsung A15 Black\",\n  \"serial_number\": \"SN-2026-001\",\n  \"value\": 45.000,\n  \"issued_date\": \"2026-04-30\"\n}" },
+						"url": "{{base_url}}/api/custody"
+					}
+				},
+				{
+					"name": "Return Custody Item",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"returned_date\": \"2026-04-30\",\n  \"return_condition\": \"good\"\n}" },
+						"url": "{{base_url}}/api/custody/{{custody_id}}/return"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 3 — Vehicles & Fleet",
+			"item": [
+				{
+					"name": "Create Vehicle (saves vehicle_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('vehicle_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"plate_number\": \"12345-KW\",\n  \"make\": \"Toyota\",\n  \"model\": \"Hiace\",\n  \"year\": 2023,\n  \"color\": \"White\",\n  \"monthly_fuel_allowance\": 50.000,\n  \"oil_change_interval_km\": 4000,\n  \"insurance_expiry\": \"2027-01-15\",\n  \"comprehensive_insurance_expiry\": \"2027-01-15\",\n  \"food_authority_license_expiry\": \"2026-12-31\"\n}" },
+						"url": "{{base_url}}/api/vehicles"
+					}
+				},
+				{
+					"name": "List Vehicles",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/vehicles"
+					}
+				},
+				{
+					"name": "Assign Vehicle to Driver",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"employee_id\": {{employee_id}},\n  \"contract_id\": {{contract_id}},\n  \"assigned_date\": \"2026-04-30\"\n}" },
+						"url": "{{base_url}}/api/vehicles/{{vehicle_id}}/assign"
+					}
+				},
+				{
+					"name": "Update Odometer",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"odometer_km\": 4200}" },
+						"url": "{{base_url}}/api/vehicles/{{vehicle_id}}/odometer"
+					}
+				},
+				{
+					"name": "Unassign Vehicle",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"unassigned_date\": \"2026-04-30\"}" },
+						"url": "{{base_url}}/api/vehicles/{{vehicle_id}}/unassign"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 4 — Daily Operations",
+			"item": [
+				{
+					"name": "Create Daily Log (saves daily_log_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('daily_log_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"employee_id\": {{employee_id}},\n  \"vehicle_id\": {{vehicle_id}},\n  \"contract_id\": {{contract_id}},\n  \"log_date\": \"2026-04-30\",\n  \"orders_count\": 25,\n  \"orders_online\": 18,\n  \"orders_cash\": 7,\n  \"cash_collected\": 35.750,\n  \"odometer_start\": 4200,\n  \"odometer_end\": 4380\n}" },
+						"url": "{{base_url}}/api/daily-logs"
+					}
+				},
+				{
+					"name": "List Daily Logs",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/daily-logs?date_from=2026-04-01&date_to=2026-04-30",
+							"host": ["{{base_url}}"],
+							"path": ["api", "daily-logs"],
+							"query": [
+								{ "key": "date_from", "value": "2026-04-01" },
+								{ "key": "date_to", "value": "2026-04-30" }
+							]
+						}
+					}
+				},
+				{
+					"name": "Record Cash Settlement",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"employee_id\": {{employee_id}},\n  \"daily_log_id\": {{daily_log_id}},\n  \"settlement_date\": \"2026-04-30\",\n  \"amount\": 35.750,\n  \"notes\": \"Full settlement - receipt photographed\"\n}" },
+						"url": "{{base_url}}/api/cash-settlements"
+					}
+				},
+				{
+					"name": "Pending Cash (dashboard widget)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/cash-settlements/pending"
+					}
+				},
+				{
+					"name": "Create Violation (saves violation_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('violation_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"employee_id\": {{employee_id}},\n  \"vehicle_id\": {{vehicle_id}},\n  \"violation_date\": \"2026-04-29\",\n  \"violation_type\": \"تجاوز سرعة\",\n  \"reference_number\": \"VIO-2026-001\",\n  \"amount\": 20.000,\n  \"is_driver_liable\": true\n}" },
+						"url": "{{base_url}}/api/violations"
+					}
+				},
+				{
+					"name": "Create Maintenance Record (saves maintenance_id)",
+					"event": [{ "listen": "test", "script": { "exec": [
+						"if (pm.response.code === 201) pm.collectionVariables.set('maintenance_id', pm.response.json().id);"
+					]}}],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"vehicle_id\": {{vehicle_id}},\n  \"garage_name\": \"Al Noor Garage\",\n  \"maintenance_type\": \"repair\",\n  \"maintenance_date\": \"2026-04-30\",\n  \"estimated_cost\": 75.000,\n  \"is_driver_liable\": false,\n  \"odometer_km\": 4380\n}" },
+						"url": "{{base_url}}/api/maintenance"
+					}
+				},
+				{
+					"name": "Approve Maintenance",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"actual_cost\": 70.000, \"notes\": \"Approved after inspection\"}" },
+						"url": "{{base_url}}/api/maintenance/{{maintenance_id}}/approve"
+					}
+				},
+				{
+					"name": "Reject Maintenance",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\"rejection_reason\": \"Price too high, get second quote\"}" },
+						"url": "{{base_url}}/api/maintenance/{{maintenance_id}}/reject"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 5 — Payroll",
+			"item": [
+				{
+					"name": "Run Payroll (April 2026)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": { "mode": "raw", "raw": "{\n  \"year\": 2026,\n  \"month\": 4,\n  \"notes\": \"April 2026 payroll run\"\n}" },
+						"url": "{{base_url}}/api/payroll/run"
+					}
+				},
+				{
+					"name": "View Payroll (April 2026)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/payroll/2026/4"
+					}
+				},
+				{
+					"name": "Employee Payroll Slip",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/payroll/2026/4/{{employee_id}}"
+					}
+				},
+				{
+					"name": "Approve Payroll",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/payroll/2026/4/approve"
+					}
+				}
+			]
+		},
+		{
+			"name": "Phase 6 — Dashboard & Reports",
+			"item": [
+				{
+					"name": "Dashboard Summary",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/dashboard/summary"
+					}
+				},
+				{
+					"name": "Report: Fleet Status",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/reports/fleet-status"
+					}
+				},
+				{
+					"name": "Report: Expiring Documents (60 days)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/reports/expiring-docs?days=60",
+							"host": ["{{base_url}}"],
+							"path": ["api", "reports", "expiring-docs"],
+							"query": [{ "key": "days", "value": "60" }]
+						}
+					}
+				},
+				{
+					"name": "Report: Pending Cash",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": "{{base_url}}/api/reports/pending-cash"
+					}
+				},
+				{
+					"name": "Report: Weekly Orders",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/reports/weekly-orders?from=2026-04-24&to=2026-04-30",
+							"host": ["{{base_url}}"],
+							"path": ["api", "reports", "weekly-orders"],
+							"query": [
+								{ "key": "from", "value": "2026-04-24" },
+								{ "key": "to", "value": "2026-04-30" }
+							]
+						}
+					}
+				},
+				{
+					"name": "Report: Violations",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "{{base_url}}/api/reports/violations?year=2026&month=4",
+							"host": ["{{base_url}}"],
+							"path": ["api", "reports", "violations"],
+							"query": [
+								{ "key": "year", "value": "2026" },
+								{ "key": "month", "value": "4" }
+							]
+						}
+					}
+				}
+			]
+		}
+	]
+}
