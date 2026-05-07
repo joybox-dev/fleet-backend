@@ -91,25 +91,44 @@ class PayrollController extends Controller
                     ->get()
                     ->sum(fn($a) => $a->vehicle?->monthly_fuel_allowance ?? 0);
 
-                // Calculate pay based on type
-                $baseOfficial = $employee->official_salary;
-                $baseActual   = $employee->actual_salary;
+                // ═══════════════════════════════════════════════════════════
+                // DUAL-PAYROLL CALCULATION — 5-STEP PROTECTED FORMULA
+                // Bank salary (official_salary) is STRICTLY PROTECTED.
+                // Deductions are absorbed by the cash portion first.
+                // ═══════════════════════════════════════════════════════════
+
+                $baseActual = (float) $employee->actual_salary;
 
                 if ($employee->pay_type === 'per_order') {
-                    // Per-order employee: their income IS their orders × their rate
-                    // official_salary is just the bank minimum (e.g. 100 KWD)
+                    // Per-order: income IS orders × their personal rate
+                    // actual_salary is 0, so their base is their order earnings
                     $baseActual  = $ordersBonus; // e.g. 350 × 0.500 = 175
-                    $ordersBonus = 0;            // Already included in baseActual
+                    $ordersBonus = 0;            // Already folded into baseActual
                 }
 
-                $grossOfficial = $baseOfficial + $fuelAllowance - $violationsDeduction - $maintenanceDeduction - $custodyDeduction;
-                $grossActual   = $baseActual + $ordersBonus + $fuelAllowance - $violationsDeduction - $maintenanceDeduction - $custodyDeduction;
-                $cashPortion   = max(0, $grossActual - $grossOfficial);
+                // ── Step 1: Total Gross Actual (internal full pay before deductions) ──
+                $totalBonuses    = $ordersBonus + $fuelAllowance;
+                $totalGrossActual = $baseActual + $totalBonuses;
+
+                // ── Step 2: Total Deductions ──
+                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction;
+
+                // ── Step 3: Net Actual (what the employee truly deserves) ──
+                $netActual = max(0, $totalGrossActual - $totalDeductions);
+
+                // ── Step 4: Net Bank — PROTECT official salary! ──
+                // Give full official salary UNLESS deductions are so extreme
+                // that net_actual itself is less than the official salary.
+                $netBank = min($netActual, (float) $employee->official_salary);
+
+                // ── Step 5: Net Cash (remainder = cash envelope) ──
+                // Cash absorbs the deductions. This is the internal portion.
+                $netCash = max(0, $netActual - $netBank);
 
                 $slip = PayrollSlip::create([
                     'payroll_run_id'        => $run->id,
                     'employee_id'           => $employee->id,
-                    'base_official'         => $baseOfficial,
+                    'base_official'         => $employee->official_salary,
                     'base_actual'           => $baseActual,
                     'orders_bonus'          => $ordersBonus,
                     'fuel_allowance'        => $fuelAllowance,
@@ -117,9 +136,9 @@ class PayrollController extends Controller
                     'violations_deduction'  => $violationsDeduction,
                     'maintenance_deduction' => $maintenanceDeduction,
                     'custody_deduction'     => $custodyDeduction,
-                    'gross_official'        => max(0, $grossOfficial),
-                    'gross_actual'          => max(0, $grossActual),
-                    'cash_portion'          => $cashPortion,
+                    'gross_official'        => $netBank,     // Bank receives this
+                    'gross_actual'          => $netActual,   // True net pay
+                    'cash_portion'          => $netCash,     // Cash envelope
                 ]);
 
                 // Mark violations as deducted
@@ -128,8 +147,8 @@ class PayrollController extends Controller
                     ->where('is_deducted', false)
                     ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
 
-                $totalOfficial += max(0, $grossOfficial);
-                $totalActual   += max(0, $grossActual);
+                $totalOfficial += $netBank;
+                $totalActual   += $netActual;
             }
 
             $run->update([
@@ -212,6 +231,10 @@ class PayrollController extends Controller
 
     /**
      * POST /api/payroll/{year}/{month}/approve
+     *
+     * Approves the payroll batch and dispatches ERPNext Journal Entries:
+     * 1. Deductions recovery (violations + maintenance + custody)
+     * 2. Fuel expense (consolidated fuel allowance)
      */
     public function approve(Request $request, int $year, int $month): JsonResponse
     {
@@ -227,6 +250,52 @@ class PayrollController extends Controller
             'approved_at' => now(),
         ]);
 
-        return response()->json(['message' => "Payroll {$year}/{$month} approved."]);
+        // ── Aggregate from all slips in this batch ──
+        $slips = PayrollSlip::where('payroll_run_id', $run->id)->get();
+
+        $totalViolations  = round($slips->sum('violations_deduction'), 3);
+        $totalMaintenance = round($slips->sum('maintenance_deduction'), 3);
+        $totalCustody     = round($slips->sum('custody_deduction'), 3);
+        $totalDeductions  = $totalViolations + $totalMaintenance + $totalCustody;
+        $totalFuel        = round($slips->sum('fuel_allowance'), 3);
+
+        $paddedMonth = str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+
+        // ── 1. Dispatch deductions recovery Journal Entry ──
+        if ($totalDeductions > 0) {
+            ErpSync::dispatch(
+                \App\Services\ErpNext\Jobs\SyncPayrollDeductionsJob::class,
+                (string) $year,
+                $paddedMonth,
+                $totalViolations,
+                $totalMaintenance,
+                $totalCustody
+            );
+        }
+
+        // ── 2. Dispatch fuel expense Journal Entry ──
+        if ($totalFuel > 0) {
+            ErpSync::dispatch(
+                \App\Services\ErpNext\Jobs\SyncFuelExpenseJob::class,
+                (string) $year,
+                $paddedMonth,
+                $totalFuel
+            );
+        }
+
+        return response()->json([
+            'message'           => "Payroll {$year}/{$month} approved.",
+            'erp_sync' => [
+                'deductions_synced' => $totalDeductions > 0,
+                'fuel_synced'       => $totalFuel > 0,
+            ],
+            'summary' => [
+                'violations'     => $totalViolations,
+                'maintenance'    => $totalMaintenance,
+                'custody'        => $totalCustody,
+                'total_deducted' => $totalDeductions,
+                'fuel_allowance' => $totalFuel,
+            ],
+        ]);
     }
 }

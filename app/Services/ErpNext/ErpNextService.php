@@ -10,6 +10,9 @@ use App\Services\ErpNext\Mappers\JournalMapper;
 use App\Services\ErpNext\Mappers\PaymentMapper;
 use App\Services\ErpNext\Mappers\PayrollMapper;
 use App\Services\ErpNext\Mappers\StockMapper;
+use App\Services\ErpNext\Mappers\PayrollDeductionMapper;
+use App\Services\ErpNext\Mappers\FuelExpenseMapper;
+use App\Services\ErpNext\Mappers\FixedInvoiceMapper;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -153,6 +156,44 @@ class ErpNextService
     }
 
     // ──────────────────────────────────────────────
+    // Fixed Contract → Sales Invoice (Monthly)
+    // ──────────────────────────────────────────────
+
+    /**
+     * Sync a fixed-monthly contract → ERPNext Sales Invoice.
+     *
+     * Called by the monthly scheduler. Creates a single Sales Invoice
+     * for the contract's fixed_monthly amount.
+     *
+     * @param array  $contract  Contract data (with client relation)
+     * @param array  $client    Client data (with erp_id)
+     * @param string $year      Billing year
+     * @param string $month     Billing month (zero-padded)
+     * @return string ERPNext Sales Invoice name
+     */
+    public function syncFixedContractInvoice(
+        array $contract,
+        array $client,
+        string $year,
+        string $month
+    ): string {
+        $data = FixedInvoiceMapper::toErpNext($contract, $client, $year, $month);
+
+        $result = $this->client->createDocument('Sales Invoice', $data);
+        $erpName = $result['name'];
+
+        Log::channel('erpnext')->info("Created Fixed Contract Sales Invoice in ERPNext", [
+            'name'        => $erpName,
+            'contract_id' => $contract['id'],
+            'client'      => $client['name'],
+            'period'      => "{$year}-{$month}",
+            'amount'      => $contract['fixed_monthly'],
+        ]);
+
+        return $erpName;
+    }
+
+    // ──────────────────────────────────────────────
     // Violation → Journal Entry
     // ──────────────────────────────────────────────
 
@@ -266,6 +307,79 @@ class ErpNextService
             'name' => $erpName,
             'employee' => $employee['erp_employee_id'],
             'month' => "{$year}-{$month}",
+        ]);
+
+        return $erpName;
+    }
+
+    // ──────────────────────────────────────────────
+    // Payroll Deductions → Journal Entry (Batch)
+    // ──────────────────────────────────────────────
+
+    /**
+     * Sync aggregated payroll deductions → ERPNext Journal Entry.
+     *
+     * Called when a payroll batch is approved. Creates a single JE that
+     * balances the ledger: Debit cash (recovered), Credit receivables/expenses.
+     *
+     * @param string $year
+     * @param string $month
+     * @param float  $totalViolations   Sum of driver-liable violations deducted
+     * @param float  $totalMaintenance  Sum of driver-charged maintenance deducted
+     * @param float  $totalCustody      Sum of custody damage/loss charges
+     * @return string ERPNext Journal Entry name
+     */
+    public function syncPayrollDeductions(
+        string $year,
+        string $month,
+        float $totalViolations,
+        float $totalMaintenance,
+        float $totalCustody = 0
+    ): string {
+        $data = PayrollDeductionMapper::toJournalEntry(
+            $year, $month, $totalViolations, $totalMaintenance, $totalCustody
+        );
+
+        $result = $this->client->createDocument('Journal Entry', $data);
+        $erpName = $result['name'];
+
+        Log::channel('erpnext')->info("Created Payroll Deductions Journal Entry in ERPNext", [
+            'name'         => $erpName,
+            'period'       => "{$year}-{$month}",
+            'violations'   => $totalViolations,
+            'maintenance'  => $totalMaintenance,
+            'custody'      => $totalCustody,
+        ]);
+
+        return $erpName;
+    }
+
+    // ──────────────────────────────────────────────
+    // Fuel Allowance → Journal Entry (Batch)
+    // ──────────────────────────────────────────────
+
+    /**
+     * Sync consolidated monthly fuel allowance → ERPNext Journal Entry.
+     *
+     * Called when a payroll batch is approved. Creates a single JE:
+     * Debit fuel_expense (company cost), Credit cash_in_hand (paid out).
+     *
+     * @param string $year
+     * @param string $month
+     * @param float  $totalAmount  Sum of fuel_allowance from all slips
+     * @return string ERPNext Journal Entry name
+     */
+    public function syncFuelExpense(string $year, string $month, float $totalAmount): string
+    {
+        $data = FuelExpenseMapper::toJournalEntry($year, $month, $totalAmount);
+
+        $result = $this->client->createDocument('Journal Entry', $data);
+        $erpName = $result['name'];
+
+        Log::channel('erpnext')->info("Created Fuel Expense Journal Entry in ERPNext", [
+            'name'   => $erpName,
+            'period' => "{$year}-{$month}",
+            'amount' => $totalAmount,
         ]);
 
         return $erpName;

@@ -123,6 +123,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('pending-cash', [ReportController::class, 'pendingCash']);
             Route::get('weekly-orders', [ReportController::class, 'weeklyOrders']);
             Route::get('fleet-status', [ReportController::class, 'fleetStatus']);
+            Route::get('vehicle-profitability', [ReportController::class, 'vehicleProfitability']);
+            Route::get('driver-status', [ReportController::class, 'driverStatus']);
+            Route::get('contract-profitability', [ReportController::class, 'contractProfitability']);
         });
     });
 });
