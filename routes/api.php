@@ -127,5 +127,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('driver-status', [ReportController::class, 'driverStatus']);
             Route::get('contract-profitability', [ReportController::class, 'contractProfitability']);
         });
+
+        // Settings
+        Route::get('settings', [\App\Http\Controllers\Api\SettingsController::class, 'index']);
+        Route::put('settings', [\App\Http\Controllers\Api\SettingsController::class, 'update']);
+
+        // WhatsApp
+        Route::post('whatsapp/test-connection', [\App\Http\Controllers\Api\WhatsAppController::class, 'testConnection']);
+        Route::post('whatsapp/send', [\App\Http\Controllers\Api\WhatsAppController::class, 'sendMessage']);
     });
 });

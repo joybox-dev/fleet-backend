@@ -53,7 +53,6 @@ class ContractController extends Controller
 
         $validated = $request->validate([
             'name'           => 'sometimes|string|max:255',
-            'rate_per_order' => 'sometimes|numeric|min:0',
             'fixed_monthly'  => 'sometimes|numeric|min:0',
             'end_date'       => 'nullable|date',
             'is_active'      => 'sometimes|boolean',

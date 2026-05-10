@@ -76,6 +76,8 @@ class EmployeeController extends Controller
             'name'                   => 'sometimes|string|max:255',
             'name_ar'                => 'nullable|string|max:255',
             'phone'                  => "nullable|string|max:30|unique:employees,phone,{$employee->id}",
+            'has_whatsapp'           => 'nullable|boolean',
+            'whatsapp_company_number'=> 'nullable|string|max:30',
             'status'                 => 'sometimes|in:active,inactive,on_leave,probation',
             'status_reason'          => 'nullable|string|max:255',
             'official_salary'        => 'sometimes|numeric|min:0',

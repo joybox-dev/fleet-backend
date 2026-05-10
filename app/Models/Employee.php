@@ -12,7 +12,7 @@ class Employee extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'name', 'name_ar', 'employee_number', 'nationality', 'civil_id', 'phone',
+        'name', 'name_ar', 'employee_number', 'nationality', 'civil_id', 'phone', 'has_whatsapp', 'whatsapp_company_number',
         'gender', 'date_of_birth', 'date_of_joining', 'employee_type',
         'status', 'status_reason', 'status_changed_at', 'probation_end_date',
         'pay_type', 'official_salary', 'actual_salary', 'rate_per_order', 'has_end_of_service',
