@@ -35,7 +35,7 @@ class PayrollController extends Controller
 
         // Prevent duplicate runs
         if (PayrollRun::where('year', $year)->where('month', $month)->exists()) {
-            return response()->json(['message' => "Payroll for {$year}/{$month} already exists."], 422);
+            return response()->json(['message' => 'تم احتساب واعتماد رواتب هذا الشهر مسبقاً.'], 422);
         }
 
         $startDate = "{$year}-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-01";
@@ -168,11 +168,11 @@ class PayrollController extends Controller
 
         } catch (\Throwable $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Payroll generation failed: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'فشل في احتساب الرواتب: ' . $e->getMessage()], 500);
         }
 
         return response()->json([
-            'message'        => "Payroll for {$year}/{$month} generated successfully.",
+            'message'        => 'تم احتساب رواتب الشهر بنجاح.',
             'run_id'         => $run->id,
             'employees'      => $employees->count(),
             'total_official' => $run->total_official,
@@ -241,7 +241,7 @@ class PayrollController extends Controller
         $run = PayrollRun::where('year', $year)->where('month', $month)->firstOrFail();
 
         if ($run->status !== 'draft') {
-            return response()->json(['message' => 'Only draft payroll can be approved.'], 422);
+            return response()->json(['message' => 'لا يمكن اعتماد الرواتب إلا في حالة المسودة.'], 422);
         }
 
         $run->update([
@@ -284,7 +284,7 @@ class PayrollController extends Controller
         }
 
         return response()->json([
-            'message'           => "Payroll {$year}/{$month} approved.",
+            'message'           => 'تم اعتماد رواتب الشهر بنجاح.',
             'erp_sync' => [
                 'deductions_synced' => $totalDeductions > 0,
                 'fuel_synced'       => $totalFuel > 0,
