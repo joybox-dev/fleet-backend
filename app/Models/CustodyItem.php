@@ -11,7 +11,7 @@ class CustodyItem extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'employee_id', 'issued_by', 'item_type', 'item_description',
+        'employee_id', 'issued_by', 'item_type', 'custody_type_id', 'item_description',
         'serial_number', 'value', 'issued_date', 'returned_date',
         'is_returned', 'return_condition', 'deduction_amount', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
@@ -25,4 +25,5 @@ class CustodyItem extends Model
 
     public function employee(): BelongsTo { return $this->belongsTo(Employee::class); }
     public function issuedBy(): BelongsTo { return $this->belongsTo(User::class, 'issued_by'); }
+    public function custodyType(): BelongsTo { return $this->belongsTo(CustodyType::class); }
 }

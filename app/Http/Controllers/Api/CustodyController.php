@@ -12,9 +12,10 @@ class CustodyController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $items = CustodyItem::with(['employee:id,name', 'issuedBy:id,name'])
+        $items = CustodyItem::with(['employee:id,name', 'issuedBy:id,name', 'custodyType:id,name,icon'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->item_type, fn($q) => $q->where('item_type', $request->item_type))
+            ->when($request->custody_type_id, fn($q) => $q->where('custody_type_id', $request->custody_type_id))
             ->when($request->boolean('not_returned'), fn($q) => $q->where('is_returned', false))
             ->orderByDesc('issued_date')
             ->paginate(50);
@@ -26,7 +27,8 @@ class CustodyController extends Controller
     {
         $validated = $request->validate([
             'employee_id'     => 'required|exists:employees,id',
-            'item_type'       => 'required|in:phone,sim,clothing,cash,other',
+            'item_type'       => 'nullable|in:phone,sim,clothing,cash,other',
+            'custody_type_id' => 'nullable|exists:custody_types,id',
             'item_description'=> 'nullable|string|max:255',
             'serial_number'   => 'nullable|string|max:100|unique:custody_items,serial_number',
             'value'           => 'nullable|numeric|min:0',
@@ -40,12 +42,12 @@ class CustodyController extends Controller
 
         ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncCustodyJob::class, $item->id, 'issue');
 
-        return response()->json($item->load('employee:id,name'), 201);
+        return response()->json($item->load(['employee:id,name', 'custodyType:id,name,icon']), 201);
     }
 
     public function show(CustodyItem $custody): JsonResponse
     {
-        return response()->json($custody->load(['employee', 'issuedBy:id,name']));
+        return response()->json($custody->load(['employee', 'issuedBy:id,name', 'custodyType:id,name,icon']));
     }
 
     public function update(Request $request, CustodyItem $custody): JsonResponse

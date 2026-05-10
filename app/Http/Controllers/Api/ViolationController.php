@@ -15,6 +15,9 @@ class ViolationController extends Controller
         $violations = Violation::with(['employee:id,name', 'vehicle:id,plate_number'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
+            ->when($request->date_from, fn($q) => $q->whereDate('violation_date', '>=', $request->date_from))
+            ->when($request->date_to, fn($q) => $q->whereDate('violation_date', '<=', $request->date_to))
+            ->when($request->has('is_driver_liable'), fn($q) => $q->where('is_driver_liable', $request->boolean('is_driver_liable')))
             ->when($request->boolean('undeducted'), fn($q) => $q->where('is_deducted', false)->where('is_driver_liable', true))
             ->orderByDesc('violation_date')
             ->paginate(50);

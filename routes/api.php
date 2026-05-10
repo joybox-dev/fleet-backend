@@ -101,6 +101,9 @@ Route::middleware('auth:sanctum')->group(function () {
         // Custody Items — full CRUD + return
         Route::apiResource('custody', CustodyController::class);
         Route::post('custody/{custody}/return', [CustodyController::class, 'returnItem']);
+
+        // Custody Types — manage types
+        Route::apiResource('custody-types', \App\Http\Controllers\Api\CustodyTypeController::class)->except(['show']);
     });
 
     // ═══════════════════════════════════════════════════════════════════

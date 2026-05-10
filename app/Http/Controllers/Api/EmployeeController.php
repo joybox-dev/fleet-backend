@@ -16,7 +16,7 @@ class EmployeeController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $employees = Employee::query()
+        $employees = Employee::with(['activeAssignment.vehicle:id,plate_number'])
             ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn($q) => $q->where('pay_type', $request->pay_type))
