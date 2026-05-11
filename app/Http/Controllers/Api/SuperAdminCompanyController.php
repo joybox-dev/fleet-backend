@@ -193,6 +193,32 @@ class SuperAdminCompanyController extends Controller
     }
 
     /**
+     * POST /api/admin/companies/{company}/users/create — create a new user for this company.
+     */
+    public function createUser(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'name'     => 'required|string|max:255',
+            'email'    => 'required|email|max:255|unique:users,email',
+            'password' => 'required|string|min:6',
+            'role'     => 'required|in:admin,operator,accountant',
+        ]);
+
+        $user = User::create([
+            'name'       => $validated['name'],
+            'email'      => $validated['email'],
+            'password'   => bcrypt($validated['password']),
+            'role'       => $validated['role'],
+            'company_id' => $company->id,
+        ]);
+
+        return response()->json([
+            'message' => 'تم إنشاء المستخدم بنجاح.',
+            'user'    => $user->only(['id', 'name', 'email', 'role', 'company_id']),
+        ], 201);
+    }
+
+    /**
      * DELETE /api/admin/companies/{company}/users/{user} — remove user from company.
      */
     public function removeUser(Company $company, User $user): JsonResponse

@@ -163,6 +163,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::put('companies/{company}/branding', [SuperAdminCompanyController::class, 'updateBranding']);
         Route::get('companies/{company}/users', [SuperAdminCompanyController::class, 'users']);
         Route::post('companies/{company}/users', [SuperAdminCompanyController::class, 'addUser']);
+        Route::post('companies/{company}/users/create', [SuperAdminCompanyController::class, 'createUser']);
         Route::delete('companies/{company}/users/{user}', [SuperAdminCompanyController::class, 'removeUser']);
         Route::get('dashboard', [SuperAdminCompanyController::class, 'dashboard']);
     });
