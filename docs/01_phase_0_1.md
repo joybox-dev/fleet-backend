@@ -10,6 +10,7 @@
 - Added `is_super_admin` boolean to `users` table
 - Added `company_id` to `users` table (each user → one company, SaaS model)
 - Dropped `company_user` pivot table (simplified from many-to-many to belongsTo)
+- Ran `php artisan storage:link` for logo uploads
 
 ### Backend Architecture
 - **`BelongsToCompany` trait** — Auto-scoping global scope + auto-set on creation. Applied to 17 models.
@@ -18,14 +19,31 @@
 - **`SuperAdminOnly` middleware** — Restricts management endpoints.
 - **`CheckRole` middleware** — Uses `users.role` directly, super admin bypass.
 - **`AuthController`** — Returns `current_company` with branding/modules on login.
-- **`CompanyController`** — Single `current()` endpoint for user's company info.
-- **`SuperAdminCompanyController`** — Full CRUD, branding, modules, user assignment via `company_id`.
+- **`CompanyController`** — `current()` for user's company info + `update()` for admin self-service.
+- **`SuperAdminCompanyController`** — Full CRUD, branding, modules, user CRUD (create/update/remove with safety guards).
+
+### Super Admin Platform Management
+- **Admin Dashboard** (`/admin/dashboard`) — Cross-company stats: total companies, employees, vehicles, pending cash.
+- **Company Management** (`/admin/companies`) — Create/edit/delete companies, toggle modules, manage users.
+- **User CRUD** — Create new users for a company, update name/email/role/password, remove (with protection).
+- **Safety Guards** — Can't remove yourself, can't remove super admins (both frontend + backend enforced).
+
+### Company Self-Service (Settings Page)
+- **Company Info Tab** — Edit name (EN/AR), phone, email, address, tax number.
+- **Branding Tab** — Upload logo + pick primary/accent colors with color pickers.
+- Info boxes explain what each color affects.
+- Changes apply instantly (no re-login needed) via `refreshCompany()`.
+- **WhatsApp Tab** — API credentials (existing).
+- **Custody Types Tab** — CRUD for custody item types (existing).
 
 ### Frontend
-- **`CompanyContext`** — Manages branding (CSS custom properties), module gating.
-- **`Sidebar`** — Module-gated navigation, dynamic company logo.
+- **`CompanyContext`** — `initFromLogin()`, `hasModule()`, `refreshCompany()`, branding CSS vars.
+- **Branding maps to `--accent-primary`** (buttons, sidebar, links, login page, table rows).
+- **`Sidebar`** — Module-gated navigation, dynamic company logo, admin section.
 - **`Header`** — Super admin badge.
 - **`api/client.js`** — Axios injects `X-Company-Id` header automatically.
+- **`api/index.js`** — `adminApi` (platform management) + `companyApi` (self-service).
+- **`vite.config.js`** — Proxy `/api` + `/storage` to backend for dev.
 
 ### Data Migration
 - `MigrateToMultiTenantSeeder` — Creates default company, backfills all existing data.
@@ -36,6 +54,36 @@
 2. **Single database**: Shared DB with column-level isolation via `company_id`
 3. **Role on users table**: `users.role` column (admin/operator/accountant), not on pivot
 4. **Super admin**: Platform-level flag, can view any company via header override
+5. **Module gating**: SA sees all, regular users see only enabled modules
+6. **Branding**: Stored in `companies.branding` JSON, applied as CSS custom properties
+
+### Complete API Reference (Phase 0)
+```
+# Auth
+POST /api/auth/login                             → login (returns user + company + branding)
+POST /api/auth/logout                            → logout
+GET  /api/auth/me                                → current user info
+
+# Company Self-Service (admin role required)
+GET  /api/company                                → CompanyController@current
+PUT  /api/company                                → CompanyController@update (info + branding)
+POST /api/company                                → CompanyController@update (with logo upload)
+
+# Super Admin — Platform Management
+GET    /api/admin/companies                      → list all companies
+POST   /api/admin/companies                      → create company
+GET    /api/admin/companies/{id}                 → show company
+PUT    /api/admin/companies/{id}                 → update company
+DELETE /api/admin/companies/{id}                 → delete company
+PUT    /api/admin/companies/{id}/modules         → toggle modules
+PUT    /api/admin/companies/{id}/branding        → update branding
+GET    /api/admin/companies/{id}/users           → list users
+POST   /api/admin/companies/{id}/users           → assign existing user
+POST   /api/admin/companies/{id}/users/create    → create new user
+PUT    /api/admin/companies/{id}/users/{uid}     → update user (name/email/role/password)
+DELETE /api/admin/companies/{id}/users/{uid}     → remove user (protected)
+GET    /api/admin/dashboard                      → aggregate dashboard
+```
 
 ---
 

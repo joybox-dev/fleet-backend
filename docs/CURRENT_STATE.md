@@ -16,12 +16,13 @@ Phase 0 (multi-tenant foundation) is COMPLETE. Read this file first before doing
 User → belongsTo → Company (via users.company_id)
 All business models → BelongsToCompany trait → scoped by company_id
 Super Admin → is_super_admin=true → can view all companies
+Company Admin → role=admin → can customize own company (settings, branding, logo)
 ```
 
 ### Key Rule: ONE user = ONE company
 - `users.company_id` (FK to companies)
 - `users.role` = admin | operator | accountant
-- `users.is_super_admin` = platform owner (bypasses everything)
+- `users.is_super_admin` = platform owner (bypasses module checks, sees admin panel)
 - NO pivot table. No multi-company per user.
 
 ---
@@ -47,8 +48,8 @@ Super Admin → is_super_admin=true → can view all companies
 | `app/Http/Middleware/SuperAdminOnly.php` | Restricts to is_super_admin users |
 | `app/Http/Middleware/CheckRole.php` | Role check from `users.role`, super admin bypass |
 | `app/Http/Controllers/Api/AuthController.php` | Login returns `current_company` with branding |
-| `app/Http/Controllers/Api/CompanyController.php` | `current()` — user's company info |
-| `app/Http/Controllers/Api/SuperAdminCompanyController.php` | Full CRUD, branding, modules, users |
+| `app/Http/Controllers/Api/CompanyController.php` | `current()` + `update()` — user's own company |
+| `app/Http/Controllers/Api/SuperAdminCompanyController.php` | Full CRUD, branding, modules, users, createUser, updateUser |
 
 ### Models with `use BelongsToCompany` (17 models — ALREADY DONE)
 Client, Contract, Employee, Vehicle, VehicleAssignment, DailyLog, Violation,
@@ -58,34 +59,40 @@ PayrollSlip, LeaveType, EmployeeLeave, Setting, EmployeeLeave
 ### Routes (in `routes/api.php` — ALREADY REGISTERED)
 ```
 # Regular users (middleware: auth:sanctum, company)
-GET  /api/company                          → CompanyController@current
+GET  /api/company                              → CompanyController@current
+PUT  /api/company                              → CompanyController@update (admin only)
+POST /api/company                              → CompanyController@update (multipart/logo)
 
 # Super admin only (middleware: super_admin)
-GET  /api/admin/companies                  → SuperAdminCompanyController@index
-POST /api/admin/companies                  → SuperAdminCompanyController@store
-GET  /api/admin/companies/{id}             → SuperAdminCompanyController@show
-PUT  /api/admin/companies/{id}             → SuperAdminCompanyController@update
-DELETE /api/admin/companies/{id}           → SuperAdminCompanyController@destroy
-PUT  /api/admin/companies/{id}/modules     → updateModules
-PUT  /api/admin/companies/{id}/branding    → updateBranding
-GET  /api/admin/companies/{id}/users       → users
-POST /api/admin/companies/{id}/users       → addUser (sets user.company_id)
-DELETE /api/admin/companies/{id}/users/{u} → removeUser (nulls user.company_id)
-GET  /api/admin/dashboard                  → dashboard (cross-company)
+GET    /api/admin/companies                    → SuperAdminCompanyController@index
+POST   /api/admin/companies                    → SuperAdminCompanyController@store
+GET    /api/admin/companies/{id}               → SuperAdminCompanyController@show
+PUT    /api/admin/companies/{id}               → SuperAdminCompanyController@update
+DELETE /api/admin/companies/{id}               → SuperAdminCompanyController@destroy
+PUT    /api/admin/companies/{id}/modules       → updateModules
+PUT    /api/admin/companies/{id}/branding      → updateBranding
+GET    /api/admin/companies/{id}/users         → users (list)
+POST   /api/admin/companies/{id}/users         → addUser (assign existing)
+POST   /api/admin/companies/{id}/users/create  → createUser (create new)
+PUT    /api/admin/companies/{id}/users/{uid}   → updateUser (name/email/role/password)
+DELETE /api/admin/companies/{id}/users/{uid}   → removeUser (protected: can't remove self/SA)
+GET    /api/admin/dashboard                    → dashboard (cross-company aggregate)
 ```
 
 ### Frontend Files (ALREADY EXIST)
 | File | Purpose |
 |------|---------|
-| `src/context/CompanyContext.jsx` | `initFromLogin()`, `hasModule()`, branding CSS vars |
+| `src/context/CompanyContext.jsx` | `initFromLogin()`, `hasModule()`, `refreshCompany()`, branding CSS vars |
 | `src/context/AuthContext.jsx` | Integrated with CompanyContext |
 | `src/api/client.js` | Axios injects `X-Company-Id` header |
-| `src/api/index.js` | `adminApi` — CRUD, modules, branding, users, dashboard |
+| `src/api/index.js` | `adminApi` + `companyApi` — all endpoints |
 | `src/components/layout/Sidebar.jsx` | Module-gated links, dynamic logo, admin section |
-| `src/components/layout/Header.jsx` | Super admin badge (no company switcher) |
+| `src/components/layout/Header.jsx` | Super admin badge |
 | `src/pages/admin/companies/AdminCompanies.jsx` | Company CRUD + modules toggle + user management |
 | `src/pages/admin/dashboard/AdminDashboard.jsx` | Cross-company aggregate dashboard |
+| `src/pages/settings/SettingsPage.jsx` | Company info + branding/logo + WhatsApp + custody types |
 | `src/App.jsx` | Routes: `/admin/companies`, `/admin/dashboard` |
+| `vite.config.js` | Proxy `/api` + `/storage` to backend |
 
 ### Container Bindings (set by SetCurrentCompany middleware)
 ```php
@@ -94,6 +101,36 @@ app('current_company')     // Company model — used by CheckModuleEnabled
 app('current_company_role') // string — admin/operator/accountant
 app('is_super_admin')      // bool
 ```
+
+---
+
+## Branding System
+
+The primary color is mapped to these CSS variables (applied instantly via `refreshCompany()`):
+```
+--accent-primary       → buttons, active sidebar link, login page
+--accent-primary-hover → button hover
+--accent-primary-rgb   → rgba backgrounds (tables, cards)
+--color-primary        → misc highlights
+```
+
+### How it works:
+1. Company admin goes to Settings → الهوية البصرية
+2. Picks color + uploads logo → saves
+3. `handleCompanySave()` calls API → then `refreshCompany()`
+4. `CompanyContext` fetches fresh data → updates CSS vars → UI updates instantly
+
+---
+
+## Safety Guards
+
+| Guard | Detail |
+|-------|--------|
+| Can't remove yourself | Frontend hides 🗑️ + backend returns 422 |
+| Can't remove super admin | Frontend hides 🗑️ + backend returns 422 |
+| Only admin/SA can update company | Backend returns 403 for operator/accountant |
+| Module gating | Sidebar hides links + `middleware('module:xxx')` blocks API |
+| Super admin bypass | `hasModule()` returns true + all sidebar links visible |
 
 ---
 
