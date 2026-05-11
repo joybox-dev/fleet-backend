@@ -9,9 +9,12 @@ return new class extends Migration
     public function up()
     {
         Schema::table('employees', function (Blueprint $table) {
-            $table->string('status_reason')->nullable()->after('status');
-            $table->boolean('has_whatsapp')->default(false)->after('phone');
-            $table->string('whatsapp_company_number')->nullable()->after('has_whatsapp');
+            if (!Schema::hasColumn('employees', 'has_whatsapp')) {
+                $table->boolean('has_whatsapp')->default(false)->after('phone');
+            }
+            if (!Schema::hasColumn('employees', 'whatsapp_company_number')) {
+                $table->string('whatsapp_company_number')->nullable()->after('has_whatsapp');
+            }
         });
     }
 
