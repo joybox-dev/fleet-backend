@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 
 class Setting extends Model
 {
+    use BelongsToCompany;
+
     protected $fillable = ['key', 'value', 'type', 'group'];
 
     public static function get(string $key, $default = null)

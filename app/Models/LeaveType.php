@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LeaveType extends Model
 {
+    use BelongsToCompany;
+
     protected $fillable = [
         'name', 'name_ar', 'is_paid', 'max_days_per_year',
         'requires_approval', 'penalty_multiplier', 'is_active',

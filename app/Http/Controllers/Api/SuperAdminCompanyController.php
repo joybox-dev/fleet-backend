@@ -1,0 +1,240 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Company;
+use App\Models\User;
+use App\Models\Employee;
+use App\Models\Vehicle;
+use App\Models\DailyLog;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Super-admin-only company management endpoints.
+ * Full CRUD, module toggling, branding, user management.
+ */
+class SuperAdminCompanyController extends Controller
+{
+    /**
+     * GET /api/admin/companies — list all companies with stats.
+     */
+    public function index(): JsonResponse
+    {
+        $companies = Company::orderBy('name')
+            ->withCount([
+                'users' => fn($q) => $q,
+            ])
+            ->get()
+            ->map(function ($c) {
+                return [
+                    'id'              => $c->id,
+                    'name'            => $c->name,
+                    'name_ar'         => $c->name_ar,
+                    'code'            => $c->code,
+                    'logo_path'       => $c->logo_path,
+                    'is_active'       => $c->is_active,
+                    'currency'        => $c->currency,
+                    'users_count'     => $c->users_count,
+                    'modules_count'   => count($c->enabled_modules ?? []),
+                    'created_at'      => $c->created_at,
+                ];
+            });
+
+        return response()->json(['companies' => $companies]);
+    }
+
+    /**
+     * POST /api/admin/companies — create a new company.
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name'     => 'required|string|max:255',
+            'name_ar'  => 'nullable|string|max:255',
+            'code'     => 'required|string|max:50|unique:companies,code|alpha_dash',
+            'phone'    => 'nullable|string|max:20',
+            'email'    => 'nullable|email|max:255',
+            'address'  => 'nullable|string|max:500',
+            'tax_number' => 'nullable|string|max:50',
+            'currency' => 'nullable|string|max:3',
+        ]);
+
+        $validated['enabled_modules'] = Company::DEFAULT_MODULES;
+        $validated['is_active'] = true;
+
+        $company = Company::create($validated);
+
+        return response()->json([
+            'message' => 'تم إنشاء الشركة بنجاح.',
+            'company' => $company,
+        ], 201);
+    }
+
+    /**
+     * GET /api/admin/companies/{company} — show company details.
+     */
+    public function show(Company $company): JsonResponse
+    {
+        $company->loadCount('users');
+
+        return response()->json(['company' => $company]);
+    }
+
+    /**
+     * PUT /api/admin/companies/{company} — update company info.
+     */
+    public function update(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'name'      => 'sometimes|string|max:255',
+            'name_ar'   => 'nullable|string|max:255',
+            'code'      => 'sometimes|string|max:50|alpha_dash|unique:companies,code,' . $company->id,
+            'phone'     => 'nullable|string|max:20',
+            'email'     => 'nullable|email|max:255',
+            'address'   => 'nullable|string|max:500',
+            'tax_number'=> 'nullable|string|max:50',
+            'currency'  => 'nullable|string|max:3',
+            'is_active' => 'nullable|boolean',
+        ]);
+
+        $company->update($validated);
+
+        return response()->json([
+            'message' => 'تم تحديث بيانات الشركة.',
+            'company' => $company->fresh(),
+        ]);
+    }
+
+    /**
+     * PUT /api/admin/companies/{company}/modules — toggle enabled modules.
+     */
+    public function updateModules(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled_modules'   => 'required|array',
+            'enabled_modules.*' => 'string|in:' . implode(',', Company::ALL_MODULES),
+        ]);
+
+        $company->update(['enabled_modules' => $validated['enabled_modules']]);
+
+        return response()->json([
+            'message'         => 'تم تحديث الوحدات المفعّلة.',
+            'enabled_modules' => $company->enabled_modules,
+        ]);
+    }
+
+    /**
+     * PUT /api/admin/companies/{company}/branding — update branding/theme.
+     */
+    public function updateBranding(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'branding'              => 'required|array',
+            'branding.primary_color'=> 'nullable|string|max:20',
+            'branding.accent_color' => 'nullable|string|max:20',
+            'branding.sidebar_bg'   => 'nullable|string|max:20',
+            'branding.sidebar_text' => 'nullable|string|max:20',
+            'branding.header_bg'    => 'nullable|string|max:20',
+            'branding.font_family'  => 'nullable|string|max:50',
+            'logo'                  => 'nullable|image|max:2048',
+        ]);
+
+        if ($request->hasFile('logo')) {
+            $path = $request->file('logo')->store('logos', 'public');
+            $company->logo_path = '/storage/' . $path;
+        }
+
+        $company->branding = $validated['branding'];
+        $company->save();
+
+        return response()->json([
+            'message'  => 'تم تحديث الهوية البصرية.',
+            'branding' => $company->branding,
+            'logo_path'=> $company->logo_path,
+        ]);
+    }
+
+    /**
+     * GET /api/admin/companies/{company}/users — list company users.
+     */
+    public function users(Company $company): JsonResponse
+    {
+        $users = $company->users()
+            ->select('users.id', 'users.name', 'users.email', 'users.is_super_admin')
+            ->get()
+            ->map(fn($u) => [
+                'id'             => $u->id,
+                'name'           => $u->name,
+                'email'          => $u->email,
+                'role'           => $u->pivot->role,
+                'is_default'     => $u->pivot->is_default,
+                'is_super_admin' => $u->is_super_admin,
+            ]);
+
+        return response()->json(['users' => $users]);
+    }
+
+    /**
+     * POST /api/admin/companies/{company}/users — add user to company.
+     */
+    public function addUser(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'role'    => 'required|in:admin,operator,accountant',
+        ]);
+
+        if ($company->users()->where('users.id', $validated['user_id'])->exists()) {
+            return response()->json(['message' => 'المستخدم موجود بالفعل في هذه الشركة.'], 422);
+        }
+
+        $company->users()->attach($validated['user_id'], [
+            'role'       => $validated['role'],
+            'is_default' => !$company->users()->where('users.id', $validated['user_id'])->exists(),
+        ]);
+
+        return response()->json(['message' => 'تم إضافة المستخدم للشركة.'], 201);
+    }
+
+    /**
+     * DELETE /api/admin/companies/{company}/users/{user} — remove user from company.
+     */
+    public function removeUser(Company $company, User $user): JsonResponse
+    {
+        if (!$company->users()->where('users.id', $user->id)->exists()) {
+            return response()->json(['message' => 'المستخدم غير موجود في هذه الشركة.'], 404);
+        }
+
+        $company->users()->detach($user->id);
+
+        return response()->json(['message' => 'تم إزالة المستخدم من الشركة.']);
+    }
+
+    /**
+     * GET /api/admin/dashboard — cross-company aggregate dashboard.
+     */
+    public function dashboard(): JsonResponse
+    {
+        $companies = Company::where('is_active', true)->get()->map(fn($c) => [
+            'id'              => $c->id,
+            'name'            => $c->name,
+            'name_ar'         => $c->name_ar,
+            'code'            => $c->code,
+            'is_active'       => $c->is_active,
+            'employees_count' => Employee::withoutGlobalScopes()->where('company_id', $c->id)->count(),
+            'vehicles_count'  => Vehicle::withoutGlobalScopes()->where('company_id', $c->id)->count(),
+            'pending_cash'    => DailyLog::withoutGlobalScopes()->where('company_id', $c->id)->sum('cash_pending'),
+            'modules_count'   => count($c->enabled_modules ?? []),
+        ]);
+
+        return response()->json([
+            'total_companies'  => $companies->count(),
+            'total_employees'  => $companies->sum('employees_count'),
+            'total_vehicles'   => $companies->sum('vehicles_count'),
+            'total_pending_cash' => $companies->sum('pending_cash'),
+            'companies'        => $companies,
+        ]);
+    }
+}

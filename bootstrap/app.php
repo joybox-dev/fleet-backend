@@ -19,7 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Register named middleware
         $middleware->alias([
-            'role' => \App\Http\Middleware\CheckRole::class,
+            'role'        => \App\Http\Middleware\CheckRole::class,
+            'company'     => \App\Http\Middleware\SetCurrentCompany::class,
+            'module'      => \App\Http\Middleware\CheckModuleEnabled::class,
+            'super_admin' => \App\Http\Middleware\SuperAdminOnly::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

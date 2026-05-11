@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PayrollSlip extends Model
 {
+    use BelongsToCompany;
+
     protected $fillable = [
         'payroll_run_id', 'employee_id',
         'base_official', 'base_actual', 'orders_bonus', 'fuel_allowance',

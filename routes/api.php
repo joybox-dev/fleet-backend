@@ -16,6 +16,8 @@ use App\Http\Controllers\Api\LeaveController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\UploadController;
+use App\Http\Controllers\Api\CompanyController;
+use App\Http\Controllers\Api\SuperAdminCompanyController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,10 +33,15 @@ Route::prefix('auth')->group(function () {
 });
 
 // ─── Protected: Requires valid Sanctum token ─────────────────────────
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::get('auth/me', [AuthController::class, 'me']);
+
+    // ── Company switching (all authenticated users) ──────────────
+    Route::get('companies/mine', [CompanyController::class, 'mine']);
+    Route::get('companies/current', [CompanyController::class, 'current']);
+    Route::post('companies/switch/{company}', [CompanyController::class, 'switch']);
 
     // ── File Uploads (all roles) ─────────────────────────────────────
     Route::post('upload', [UploadController::class, 'store']);
@@ -147,5 +154,18 @@ Route::middleware('auth:sanctum')->group(function () {
         // WhatsApp
         Route::post('whatsapp/test-connection', [\App\Http\Controllers\Api\WhatsAppController::class, 'testConnection']);
         Route::post('whatsapp/send', [\App\Http\Controllers\Api\WhatsAppController::class, 'sendMessage']);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SUPER ADMIN: Platform management
+    // ═══════════════════════════════════════════════════════════════════
+    Route::middleware('super_admin')->prefix('admin')->group(function () {
+        Route::apiResource('companies', SuperAdminCompanyController::class);
+        Route::put('companies/{company}/modules', [SuperAdminCompanyController::class, 'updateModules']);
+        Route::put('companies/{company}/branding', [SuperAdminCompanyController::class, 'updateBranding']);
+        Route::get('companies/{company}/users', [SuperAdminCompanyController::class, 'users']);
+        Route::post('companies/{company}/users', [SuperAdminCompanyController::class, 'addUser']);
+        Route::delete('companies/{company}/users/{user}', [SuperAdminCompanyController::class, 'removeUser']);
+        Route::get('dashboard', [SuperAdminCompanyController::class, 'dashboard']);
     });
 });

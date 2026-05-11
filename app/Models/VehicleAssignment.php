@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class VehicleAssignment extends Model
 {
+    use BelongsToCompany;
+
     protected $fillable = [
         'vehicle_id', 'employee_id', 'contract_id',
         'assigned_date', 'unassigned_date', 'is_active', 'notes',
