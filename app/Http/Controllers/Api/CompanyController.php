@@ -44,4 +44,50 @@ class CompanyController extends Controller
             ],
         ]);
     }
+
+    /**
+     * PUT /api/company — update current company info (admin only).
+     */
+    public function update(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $company = $user->company;
+
+        if (!$company) {
+            return response()->json(['message' => 'لا توجد شركة مرتبطة بحسابك.'], 404);
+        }
+
+        // Only admins can update company info
+        if ($user->role !== 'admin' && !$user->is_super_admin) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات الشركة.'], 403);
+        }
+
+        $validated = $request->validate([
+            'name'       => 'sometimes|string|max:255',
+            'name_ar'    => 'nullable|string|max:255',
+            'phone'      => 'nullable|string|max:50',
+            'email'      => 'nullable|email|max:255',
+            'address'    => 'nullable|string|max:500',
+            'tax_number' => 'nullable|string|max:50',
+            'branding'   => 'nullable|array',
+            'branding.primary_color' => 'nullable|string|max:20',
+            'branding.accent_color'  => 'nullable|string|max:20',
+            'branding.sidebar_bg'    => 'nullable|string|max:20',
+            'branding.sidebar_text'  => 'nullable|string|max:20',
+            'branding.header_bg'     => 'nullable|string|max:20',
+        ]);
+
+        // Handle logo upload
+        if ($request->hasFile('logo')) {
+            $path = $request->file('logo')->store('logos', 'public');
+            $validated['logo_path'] = '/storage/' . $path;
+        }
+
+        $company->update($validated);
+
+        return response()->json([
+            'message' => 'تم تحديث بيانات الشركة.',
+            'company' => $company->fresh(),
+        ]);
+    }
 }

@@ -40,6 +40,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
     // ── Company info (user's own) ────────────────────────────────────
     Route::get('company', [CompanyController::class, 'current']);
+    Route::put('company', [CompanyController::class, 'update']);
+    Route::post('company', [CompanyController::class, 'update']); // multipart fallback
 
     // ── File Uploads (all roles) ─────────────────────────────────────
     Route::post('upload', [UploadController::class, 'store']);
