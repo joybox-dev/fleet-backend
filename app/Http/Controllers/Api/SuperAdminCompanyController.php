@@ -219,12 +219,52 @@ class SuperAdminCompanyController extends Controller
     }
 
     /**
-     * DELETE /api/admin/companies/{company}/users/{user} — remove user from company.
+     * PUT /api/admin/companies/{company}/users/{user} — update user info.
      */
-    public function removeUser(Company $company, User $user): JsonResponse
+    public function updateUser(Request $request, Company $company, User $user): JsonResponse
     {
         if ($user->company_id !== $company->id) {
             return response()->json(['message' => 'المستخدم غير موجود في هذه الشركة.'], 404);
+        }
+
+        $validated = $request->validate([
+            'name'     => 'sometimes|string|max:255',
+            'email'    => 'sometimes|email|max:255|unique:users,email,' . $user->id,
+            'password' => 'nullable|string|min:6',
+            'role'     => 'sometimes|in:admin,operator,accountant',
+        ]);
+
+        if (!empty($validated['password'])) {
+            $validated['password'] = bcrypt($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
+
+        $user->update($validated);
+
+        return response()->json([
+            'message' => 'تم تحديث بيانات المستخدم.',
+            'user'    => $user->fresh()->only(['id', 'name', 'email', 'role', 'is_super_admin', 'company_id']),
+        ]);
+    }
+
+    /**
+     * DELETE /api/admin/companies/{company}/users/{user} — remove user from company.
+     */
+    public function removeUser(Request $request, Company $company, User $user): JsonResponse
+    {
+        if ($user->company_id !== $company->id) {
+            return response()->json(['message' => 'المستخدم غير موجود في هذه الشركة.'], 404);
+        }
+
+        // Prevent removing yourself
+        if ($user->id === $request->user()->id) {
+            return response()->json(['message' => 'لا يمكنك إزالة نفسك.'], 422);
+        }
+
+        // Prevent removing super admins
+        if ($user->is_super_admin) {
+            return response()->json(['message' => 'لا يمكن إزالة مسؤول أعلى.'], 422);
         }
 
         $user->update(['company_id' => null]);
