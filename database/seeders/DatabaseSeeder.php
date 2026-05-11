@@ -12,7 +12,7 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            CleanDemoSeeder::class,  // ✅ Clean minimal demo data
+            MasterScenarioSeeder::class,  // ✅ Full production testing data
         ]);
 
         // ── Old Seeders (commented out) ──────────────────────────────
