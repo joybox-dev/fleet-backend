@@ -30,15 +30,8 @@ class AuthController extends Controller
         $user  = Auth::user();
         $token = $user->createToken('fleetops-api')->plainTextToken;
 
-        // Load user's companies
-        $companies = $user->isSuperAdmin()
-            ? \App\Models\Company::where('is_active', true)->orderBy('name')->get()
-            : $user->companies()->where('is_active', true)->orderBy('name')->get();
-
-        // Determine default company
-        $defaultCompany = $user->isSuperAdmin()
-            ? $companies->first()
-            : $companies->firstWhere('pivot.is_default', true) ?? $companies->first();
+        // Load user's company
+        $company = $user->company;
 
         return response()->json([
             'token' => $token,
@@ -46,27 +39,19 @@ class AuthController extends Controller
                 'id'             => $user->id,
                 'name'           => $user->name,
                 'email'          => $user->email,
-                'role'           => $defaultCompany?->pivot?->role ?? ($user->isSuperAdmin() ? 'admin' : $user->role),
+                'role'           => $user->role,
                 'is_super_admin' => $user->isSuperAdmin(),
+                'company_id'     => $user->company_id,
             ],
-            'companies' => $companies->map(fn($c) => [
-                'id'       => $c->id,
-                'name'     => $c->name,
-                'name_ar'  => $c->name_ar,
-                'code'     => $c->code,
-                'logo_path'=> $c->logo_path,
-                'role'     => $c->pivot?->role ?? 'admin',
-                'is_default' => $c->pivot?->is_default ?? false,
-            ]),
-            'current_company' => $defaultCompany ? [
-                'id'              => $defaultCompany->id,
-                'name'            => $defaultCompany->name,
-                'name_ar'         => $defaultCompany->name_ar,
-                'code'            => $defaultCompany->code,
-                'logo_path'       => $defaultCompany->logo_path,
-                'branding'        => $defaultCompany->branding,
-                'enabled_modules' => $defaultCompany->enabled_modules,
-                'currency'        => $defaultCompany->currency,
+            'current_company' => $company ? [
+                'id'              => $company->id,
+                'name'            => $company->name,
+                'name_ar'         => $company->name_ar,
+                'code'            => $company->code,
+                'logo_path'       => $company->logo_path,
+                'branding'        => $company->branding,
+                'enabled_modules' => $company->enabled_modules,
+                'currency'        => $company->currency,
             ] : null,
         ]);
     }

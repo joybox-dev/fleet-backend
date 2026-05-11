@@ -10,8 +10,8 @@ use Symfony\Component\HttpFoundation\Response;
  * Resolves and sets the current company context for every request.
  *
  * SECURITY: This is the tenant-isolation gatekeeper.
- * - Regular users can only access companies they belong to.
- * - Super admins can access any company via X-Company-Id header.
+ * - Regular users: company comes from users.company_id (one company per user).
+ * - Super admins: can override via X-Company-Id header to view any company.
  * - All downstream global scopes (BelongsToCompany) depend on this.
  */
 class SetCurrentCompany
@@ -23,12 +23,13 @@ class SetCurrentCompany
             return $next($request);
         }
 
-        // ── Super admin: can access any company ──
+        // ── Super admin: can access any company via header ──
         if ($user->isSuperAdmin()) {
-            $companyId = $request->header('X-Company-Id')
-                ?? $request->query('company_id');
-
             app()->instance('is_super_admin', true);
+
+            // Use header override, or fall back to user's own company
+            $companyId = $request->header('X-Company-Id')
+                ?? $user->company_id;
 
             if ($companyId) {
                 $company = \App\Models\Company::find($companyId);
@@ -38,30 +39,25 @@ class SetCurrentCompany
                     app()->instance('current_company', $company);
                 }
             }
-            // Super admin without company header → no company scope (global view)
+
             return $next($request);
         }
 
-        // ── Regular user: resolve company ──
-        $companyId = $request->header('X-Company-Id')
-            ?? $user->companies()->wherePivot('is_default', true)->value('companies.id')
-            ?? $user->companies()->first()?->id;
-
-        if (!$companyId) {
+        // ── Regular user: company from users.company_id ──
+        if (!$user->company_id) {
             return response()->json([
                 'message' => 'لا توجد شركة مرتبطة بحسابك. تواصل مع المسؤول.',
             ], 403);
         }
 
-        // Verify user actually belongs to this company
-        $company = $user->companies()->where('companies.id', $companyId)->first();
+        $company = $user->company;
+
         if (!$company) {
             return response()->json([
-                'message' => 'غير مصرح لك بالوصول إلى هذه الشركة.',
+                'message' => 'الشركة غير موجودة. تواصل مع المسؤول.',
             ], 403);
         }
 
-        // Check company is active
         if (!$company->is_active) {
             return response()->json([
                 'message' => 'هذه الشركة معطّلة حالياً. تواصل مع المسؤول.',
@@ -69,11 +65,12 @@ class SetCurrentCompany
         }
 
         // Bind to container — BelongsToCompany trait reads these
-        app()->instance('current_company_id', (int) $companyId);
-        app()->instance('current_company_role', $company->pivot->role);
+        app()->instance('current_company_id', (int) $user->company_id);
+        app()->instance('current_company_role', $user->role);
         app()->instance('current_company', $company);
         app()->instance('is_super_admin', false);
 
         return $next($request);
     }
 }
+

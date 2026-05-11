@@ -162,16 +162,8 @@ class SuperAdminCompanyController extends Controller
     public function users(Company $company): JsonResponse
     {
         $users = $company->users()
-            ->select('users.id', 'users.name', 'users.email', 'users.is_super_admin')
-            ->get()
-            ->map(fn($u) => [
-                'id'             => $u->id,
-                'name'           => $u->name,
-                'email'          => $u->email,
-                'role'           => $u->pivot->role,
-                'is_default'     => $u->pivot->is_default,
-                'is_super_admin' => $u->is_super_admin,
-            ]);
+            ->select('id', 'name', 'email', 'role', 'is_super_admin')
+            ->get();
 
         return response()->json(['users' => $users]);
     }
@@ -186,13 +178,15 @@ class SuperAdminCompanyController extends Controller
             'role'    => 'required|in:admin,operator,accountant',
         ]);
 
-        if ($company->users()->where('users.id', $validated['user_id'])->exists()) {
+        $user = User::findOrFail($validated['user_id']);
+
+        if ($user->company_id === $company->id) {
             return response()->json(['message' => 'المستخدم موجود بالفعل في هذه الشركة.'], 422);
         }
 
-        $company->users()->attach($validated['user_id'], [
+        $user->update([
+            'company_id' => $company->id,
             'role'       => $validated['role'],
-            'is_default' => !$company->users()->where('users.id', $validated['user_id'])->exists(),
         ]);
 
         return response()->json(['message' => 'تم إضافة المستخدم للشركة.'], 201);
@@ -203,11 +197,11 @@ class SuperAdminCompanyController extends Controller
      */
     public function removeUser(Company $company, User $user): JsonResponse
     {
-        if (!$company->users()->where('users.id', $user->id)->exists()) {
+        if ($user->company_id !== $company->id) {
             return response()->json(['message' => 'المستخدم غير موجود في هذه الشركة.'], 404);
         }
 
-        $company->users()->detach($user->id);
+        $user->update(['company_id' => null]);
 
         return response()->json(['message' => 'تم إزالة المستخدم من الشركة.']);
     }

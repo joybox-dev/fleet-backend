@@ -7,12 +7,10 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Role-based access control middleware (multi-tenant aware).
+ * Role-based access control middleware.
  *
  * Usage in routes: ->middleware('role:admin') or ->middleware('role:admin,accountant')
- *
- * Roles are now read from the company_user pivot table,
- * set by the SetCurrentCompany middleware.
+ * Role is read from users.role column.
  * Super admins bypass all role checks.
  */
 class CheckRole
@@ -26,14 +24,11 @@ class CheckRole
         }
 
         // Super admin bypasses all role checks
-        if (app()->bound('is_super_admin') && app('is_super_admin')) {
+        if ($user->isSuperAdmin()) {
             return $next($request);
         }
 
-        // Read role from company context (set by SetCurrentCompany middleware)
-        $userRole = app()->bound('current_company_role')
-            ? app('current_company_role')
-            : $user->role; // Fallback to legacy column during migration
+        $userRole = $user->role;
 
         if (!in_array($userRole, $roles)) {
             return response()->json([

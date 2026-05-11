@@ -28,23 +28,45 @@ class CleanDemoSeeder extends Seeder
     public function run(): void
     {
         // ════════════════════════════════════════════════════════════════
+        // 0. COMPANY CONTEXT — All records will be scoped to this company
+        // ════════════════════════════════════════════════════════════════
+        $company = \App\Models\Company::firstOrCreate(
+            ['code' => 'default'],
+            [
+                'name'            => 'الشركة الافتراضية',
+                'name_ar'         => 'الشركة الافتراضية',
+                'is_active'       => true,
+                'currency'        => 'KWD',
+                'enabled_modules' => \App\Models\Company::DEFAULT_MODULES,
+            ]
+        );
+        app()->instance('current_company_id', $company->id);
+
+        // ════════════════════════════════════════════════════════════════
         // 1. USERS
         // ════════════════════════════════════════════════════════════════
         $admin = User::firstOrCreate(['email' => 'mersal@fleetops.kw'], [
-            'name'     => 'Mersal',
-            'email'    => 'mersal@fleetops.kw',
-            'password' => Hash::make('abuhadram'),
-            'role'     => 'admin',
+            'name'           => 'Mersal',
+            'email'          => 'mersal@fleetops.kw',
+            'password'       => Hash::make('abuhadram'),
+            'role'           => 'admin',
+            'is_super_admin' => true,
+            'company_id'     => $company->id,
         ]);
 
         $operator = User::firstOrCreate(['email' => 'op@fleetops.kw'], [
-            'name'     => 'المشغّل',
-            'email'    => 'op@fleetops.kw',
-            'password' => Hash::make('abuhadram'),
-            'role'     => 'operator',
+            'name'       => 'المشغّل',
+            'email'      => 'op@fleetops.kw',
+            'password'   => Hash::make('abuhadram'),
+            'role'       => 'operator',
+            'company_id' => $company->id,
         ]);
 
-        $this->command->info('✓ Users: mersal@fleetops.kw / abuhadram');
+        // Ensure company_id is set (in case users already existed)
+        $admin->update(['company_id' => $company->id]);
+        $operator->update(['company_id' => $company->id]);
+
+        $this->command->info('✓ Users: mersal@fleetops.kw / abuhadram (👑 super admin)');
 
         // ════════════════════════════════════════════════════════════════
         // 2. CLIENTS (3)

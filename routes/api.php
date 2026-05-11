@@ -38,10 +38,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::get('auth/me', [AuthController::class, 'me']);
 
-    // ── Company switching (all authenticated users) ──────────────
-    Route::get('companies/mine', [CompanyController::class, 'mine']);
-    Route::get('companies/current', [CompanyController::class, 'current']);
-    Route::post('companies/switch/{company}', [CompanyController::class, 'switch']);
+    // ── Company info (user's own) ────────────────────────────────────
+    Route::get('company', [CompanyController::class, 'current']);
 
     // ── File Uploads (all roles) ─────────────────────────────────────
     Route::post('upload', [UploadController::class, 'store']);

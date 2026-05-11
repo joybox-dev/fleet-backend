@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Company extends Model
@@ -45,11 +44,9 @@ class Company extends Model
 
     /* ── Relationships ── */
 
-    public function users(): BelongsToMany
+    public function users(): HasMany
     {
-        return $this->belongsToMany(User::class, 'company_user')
-            ->withPivot('role', 'is_default')
-            ->withTimestamps();
+        return $this->hasMany(User::class);
     }
 
     public function employees(): HasMany
