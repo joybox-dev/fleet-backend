@@ -39,12 +39,12 @@ class ReportController extends Controller
                 'id'           => $v->id,
                 'plate_number' => $v->plate_number,
                 'label'        => "{$v->make} {$v->model}",
-                'alerts'       => array_filter([
-                    $this->docAlert('تأمين السيارة', $v->insurance_expiry, $today),
-                    $this->docAlert('تأمين شامل', $v->comprehensive_insurance_expiry, $today),
-                    $this->docAlert('رخصة هيئة الغذاء', $v->food_authority_license_expiry, $today),
-                    $this->docAlert('صيانة دورية', $v->next_service_due, $today),
-                ]),
+                'alerts'       => array_values(array_filter([
+                    $this->docStatus('تأمين السيارة', $v->insurance_expiry, $today, $alertDate),
+                    $this->docStatus('تأمين شامل', $v->comprehensive_insurance_expiry, $today, $alertDate),
+                    $this->docStatus('رخصة هيئة الغذاء', $v->food_authority_license_expiry, $today, $alertDate),
+                    $this->docStatus('صيانة دورية', $v->next_service_due, $today, $alertDate),
+                ])),
             ]);
 
         $employees = Employee::select('id', 'name',
@@ -61,12 +61,12 @@ class ReportController extends Controller
             ->map(fn($e) => [
                 'id'     => $e->id,
                 'name'   => $e->name,
-                'alerts' => array_filter([
-                    $this->docAlert('كرت صحي', $e->health_card_expiry, $today),
-                    $this->docAlert('إقامة', $e->residence_expiry, $today),
-                    $this->docAlert('رخصة قيادة', $e->driving_license_expiry, $today),
-                    $this->docAlert('إذن عمل', $e->work_permit_expiry, $today),
-                ]),
+                'alerts' => array_values(array_filter([
+                    $this->docStatus('كرت صحي', $e->health_card_expiry, $today, $alertDate),
+                    $this->docStatus('إقامة', $e->residence_expiry, $today, $alertDate),
+                    $this->docStatus('رخصة قيادة', $e->driving_license_expiry, $today, $alertDate),
+                    $this->docStatus('إذن عمل', $e->work_permit_expiry, $today, $alertDate),
+                ])),
             ]);
 
         return response()->json([
@@ -76,10 +76,21 @@ class ReportController extends Controller
         ]);
     }
 
-    private function docAlert(string $label, ?string $expiry, string $today): ?array
+    /**
+     * 3-tier doc status: expired | warning | valid
+     */
+    private function docStatus(string $label, ?string $expiry, string $today, string $alertDate): ?array
     {
         if (!$expiry) return null;
-        $status = $expiry < $today ? 'expired' : 'warning';
+
+        if ($expiry < $today) {
+            $status = 'expired';
+        } elseif ($expiry <= $alertDate) {
+            $status = 'warning';
+        } else {
+            $status = 'valid';
+        }
+
         return ['label' => $label, 'expiry' => $expiry, 'status' => $status];
     }
 

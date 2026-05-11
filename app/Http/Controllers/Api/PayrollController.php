@@ -7,6 +7,7 @@ use App\Helpers\ErpSync;
 use App\Models\PayrollRun;
 use App\Models\PayrollSlip;
 use App\Models\Employee;
+use App\Models\EmployeeLeave;
 use App\Models\DailyLog;
 use App\Models\Violation;
 use App\Models\MaintenanceRecord;
@@ -84,6 +85,21 @@ class PayrollController extends Controller
                     ->where('deduction_amount', '>', 0)
                     ->sum('deduction_amount');
 
+                // Leave deductions — approved unpaid leaves in this payroll period
+                $leaveQuery = EmployeeLeave::where('employee_id', $employee->id)
+                    ->where('status', 'approved')
+                    ->where('is_paid', false)
+                    ->where(function ($q) use ($startDate, $endDate) {
+                        $q->whereBetween('start_date', [$startDate, $endDate])
+                          ->orWhereBetween('end_date', [$startDate, $endDate])
+                          ->orWhere(function ($q2) use ($startDate, $endDate) {
+                              $q2->where('start_date', '<=', $startDate)
+                                 ->where('end_date', '>=', $endDate);
+                          });
+                    });
+                $leaveDeduction   = (float) $leaveQuery->sum('total_deduction');
+                $unpaidLeaveDays  = (int)   $leaveQuery->sum('days_count');
+
                 $fuelAllowance = $employee->vehicleAssignments()
                     ->whereDate('assigned_date', '<=', $endDate)
                     ->where(fn($q) => $q->whereNull('unassigned_date')->orWhereDate('unassigned_date', '>=', $startDate))
@@ -110,8 +126,8 @@ class PayrollController extends Controller
                 $totalBonuses    = $ordersBonus + $fuelAllowance;
                 $totalGrossActual = $baseActual + $totalBonuses;
 
-                // ── Step 2: Total Deductions ──
-                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction;
+                // ── Step 2: Total Deductions (violations + maintenance + custody + leave) ──
+                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction;
 
                 // ── Step 3: Net Actual (what the employee truly deserves) ──
                 $netActual = max(0, $totalGrossActual - $totalDeductions);
@@ -136,6 +152,8 @@ class PayrollController extends Controller
                     'violations_deduction'  => $violationsDeduction,
                     'maintenance_deduction' => $maintenanceDeduction,
                     'custody_deduction'     => $custodyDeduction,
+                    'leave_deduction'       => $leaveDeduction,
+                    'unpaid_leave_days'     => $unpaidLeaveDays,
                     'gross_official'        => $netBank,     // Bank receives this
                     'gross_actual'          => $netActual,   // True net pay
                     'cash_portion'          => $netCash,     // Cash envelope
@@ -211,7 +229,7 @@ class PayrollController extends Controller
             'official_sheet' => [   // Bank / Ministry sheet
                 'base'       => $slip->base_official,
                 'fuel'       => $slip->fuel_allowance,
-                'deductions' => $slip->violations_deduction + $slip->maintenance_deduction + $slip->custody_deduction,
+                'deductions' => $slip->violations_deduction + $slip->maintenance_deduction + $slip->custody_deduction + $slip->leave_deduction,
                 'net'        => $slip->gross_official,
             ],
             'internal_sheet' => [   // Full internal breakdown
@@ -222,6 +240,8 @@ class PayrollController extends Controller
                 'violations_deduction'  => $slip->violations_deduction,
                 'maintenance_deduction' => $slip->maintenance_deduction,
                 'custody_deduction'     => $slip->custody_deduction,
+                'leave_deduction'       => $slip->leave_deduction,
+                'unpaid_leave_days'     => $slip->unpaid_leave_days,
                 'gross'                 => $slip->gross_actual,
                 'bank_portion'          => $slip->gross_official,
                 'cash_portion'          => $slip->cash_portion,

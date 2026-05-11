@@ -14,6 +14,8 @@ use App\Models\DailyLog;
 use App\Models\Violation;
 use App\Models\MaintenanceRecord;
 use App\Models\CustodyItem;
+use App\Models\LeaveType;
+use App\Models\EmployeeLeave;
 
 /**
  * FleetOps — Clean Demo Seeder
@@ -285,6 +287,79 @@ class CleanDemoSeeder extends Seeder
             ]
         );
         $this->command->info('✓ 3 custody items');
+
+        // ════════════════════════════════════════════════════════════════
+        // 11. LEAVE TYPES (5)
+        // ════════════════════════════════════════════════════════════════
+        $lt1 = LeaveType::firstOrCreate(['name' => 'Annual Leave'], [
+            'name' => 'Annual Leave', 'name_ar' => 'إجازة سنوية',
+            'is_paid' => true, 'max_days_per_year' => 30,
+            'requires_approval' => true, 'penalty_multiplier' => 1.0,
+        ]);
+        $lt2 = LeaveType::firstOrCreate(['name' => 'Sick Leave'], [
+            'name' => 'Sick Leave', 'name_ar' => 'إجازة مرضية',
+            'is_paid' => true, 'max_days_per_year' => 15,
+            'requires_approval' => true, 'penalty_multiplier' => 1.0,
+        ]);
+        $lt3 = LeaveType::firstOrCreate(['name' => 'Unpaid Leave'], [
+            'name' => 'Unpaid Leave', 'name_ar' => 'إجازة بدون راتب',
+            'is_paid' => false, 'max_days_per_year' => null,
+            'requires_approval' => true, 'penalty_multiplier' => 1.0,
+        ]);
+        $lt4 = LeaveType::firstOrCreate(['name' => 'Emergency Leave'], [
+            'name' => 'Emergency Leave', 'name_ar' => 'إجازة طارئة',
+            'is_paid' => true, 'max_days_per_year' => 3,
+            'requires_approval' => true, 'penalty_multiplier' => 1.0,
+        ]);
+        $lt5 = LeaveType::firstOrCreate(['name' => 'Absence'], [
+            'name' => 'Absence', 'name_ar' => 'غياب بدون إذن',
+            'is_paid' => false, 'max_days_per_year' => null,
+            'requires_approval' => false, 'penalty_multiplier' => 2.0,
+        ]);
+        $this->command->info('✓ 5 leave types');
+
+        // ════════════════════════════════════════════════════════════════
+        // 12. EMPLOYEE LEAVES (3 — sample records)
+        // ════════════════════════════════════════════════════════════════
+        EmployeeLeave::firstOrCreate(
+            ['employee_id' => $e1->id, 'start_date' => '2026-04-10'],
+            [
+                'employee_id' => $e1->id, 'leave_type_id' => $lt1->id,
+                'start_date' => '2026-04-10', 'end_date' => '2026-04-12',
+                'days_count' => 3, 'status' => 'approved',
+                'is_paid' => true, 'daily_rate' => 8.333,
+                'penalty_multiplier' => 1.0, 'formula_version' => 'v1_actual_div_30',
+                'total_deduction' => 0,
+                'approved_by' => $admin->id, 'approved_at' => '2026-04-09',
+                'reason' => 'إجازة شخصية',
+            ]
+        );
+        EmployeeLeave::firstOrCreate(
+            ['employee_id' => $e1->id, 'start_date' => '2026-05-15'],
+            [
+                'employee_id' => $e1->id, 'leave_type_id' => $lt3->id,
+                'start_date' => '2026-05-15', 'end_date' => '2026-05-17',
+                'days_count' => 3, 'status' => 'approved',
+                'is_paid' => false, 'daily_rate' => 8.333,
+                'penalty_multiplier' => 1.0, 'formula_version' => 'v1_actual_div_30',
+                'total_deduction' => 24.999,
+                'approved_by' => $admin->id, 'approved_at' => '2026-05-14',
+                'reason' => 'ظروف عائلية',
+            ]
+        );
+        EmployeeLeave::firstOrCreate(
+            ['employee_id' => $e2->id, 'start_date' => '2026-05-20'],
+            [
+                'employee_id' => $e2->id, 'leave_type_id' => $lt2->id,
+                'start_date' => '2026-05-20', 'end_date' => '2026-05-21',
+                'days_count' => 2, 'status' => 'pending',
+                'is_paid' => true, 'daily_rate' => 0,
+                'penalty_multiplier' => 1.0, 'formula_version' => 'v1_actual_div_30',
+                'total_deduction' => 0,
+                'reason' => 'زيارة طبيب',
+            ]
+        );
+        $this->command->info('✓ 3 employee leaves');
 
         // ════════════════════════════════════════════════════════════════
         $this->command->newLine();

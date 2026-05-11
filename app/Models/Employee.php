@@ -64,4 +64,9 @@ class Employee extends Model
     {
         return $this->hasMany(PayrollSlip::class);
     }
+
+    public function leaves(): HasMany
+    {
+        return $this->hasMany(EmployeeLeave::class);
+    }
 }

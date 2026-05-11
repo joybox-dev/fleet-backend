@@ -11,7 +11,7 @@ class PayrollSlip extends Model
         'payroll_run_id', 'employee_id',
         'base_official', 'base_actual', 'orders_bonus', 'fuel_allowance',
         'other_bonuses', 'total_orders',
-        'violations_deduction', 'maintenance_deduction', 'custody_deduction', 'other_deductions',
+        'violations_deduction', 'maintenance_deduction', 'custody_deduction', 'leave_deduction', 'unpaid_leave_days', 'other_deductions',
         'gross_official', 'gross_actual', 'cash_portion',
         'erp_id', 'erp_synced_at', 'erp_sync_status', 'notes',
     ];
@@ -24,6 +24,7 @@ class PayrollSlip extends Model
         'violations_deduction'   => 'decimal:3',
         'maintenance_deduction'  => 'decimal:3',
         'custody_deduction'      => 'decimal:3',
+        'leave_deduction'        => 'decimal:3',
         'gross_official'         => 'decimal:3',
         'gross_actual'           => 'decimal:3',
         'cash_portion'           => 'decimal:3',

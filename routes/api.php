@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\MaintenanceController;
 use App\Http\Controllers\Api\CustodyController;
 use App\Http\Controllers\Api\CashSettlementController;
 use App\Http\Controllers\Api\PayrollController;
+use App\Http\Controllers\Api\LeaveController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\UploadController;
@@ -41,6 +42,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── Dashboard (all roles) ────────────────────────────────────────
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
+    Route::get('dashboard/expiry-alerts', [DashboardController::class, 'expiryAlerts']);
 
     // ═══════════════════════════════════════════════════════════════════
     // OPERATOR + ADMIN: Daily operations
@@ -69,6 +71,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('cash-settlements', [CashSettlementController::class, 'store']);
         Route::get('cash-settlements', [CashSettlementController::class, 'index']);
         Route::get('cash-settlements/pending', [CashSettlementController::class, 'pending']);
+
+        // Leaves — CRUD + approve/reject (admin + operator)
+        Route::get('leave-types', [LeaveController::class, 'types']);
+        Route::get('leaves/balance/{employee}', [LeaveController::class, 'balance']);
+        Route::apiResource('leaves', LeaveController::class);
+        Route::post('leaves/{leave}/approve', [LeaveController::class, 'approve']);
+        Route::post('leaves/{leave}/reject', [LeaveController::class, 'reject']);
     });
 
     // ═══════════════════════════════════════════════════════════════════
