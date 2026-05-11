@@ -80,9 +80,12 @@ GET  /api/admin/dashboard                  → dashboard (cross-company)
 | `src/context/CompanyContext.jsx` | `initFromLogin()`, `hasModule()`, branding CSS vars |
 | `src/context/AuthContext.jsx` | Integrated with CompanyContext |
 | `src/api/client.js` | Axios injects `X-Company-Id` header |
-| `src/components/layout/Sidebar.jsx` | Module-gated links, dynamic logo |
+| `src/api/index.js` | `adminApi` — CRUD, modules, branding, users, dashboard |
+| `src/components/layout/Sidebar.jsx` | Module-gated links, dynamic logo, admin section |
 | `src/components/layout/Header.jsx` | Super admin badge (no company switcher) |
-| `src/App.jsx` | Wrapped with `CompanyProvider` |
+| `src/pages/admin/companies/AdminCompanies.jsx` | Company CRUD + modules toggle + user management |
+| `src/pages/admin/dashboard/AdminDashboard.jsx` | Cross-company aggregate dashboard |
+| `src/App.jsx` | Routes: `/admin/companies`, `/admin/dashboard` |
 
 ### Container Bindings (set by SetCurrentCompany middleware)
 ```php
