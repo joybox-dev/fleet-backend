@@ -58,16 +58,15 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // ── ERPNext Sync Observers ──────────────────────────────────────
-        // These ensure that ALL data changes (web UI, API, artisan, seeders)
-        // automatically dispatch sync jobs to the erpnext-sync queue.
-        Company::observe(CompanyObserver::class);
-        Employee::observe(EmployeeObserver::class);
-        Client::observe(ClientObserver::class);
-        Vehicle::observe(VehicleObserver::class);
-        Violation::observe(ViolationObserver::class);
-        DailyLog::observe(DailyLogObserver::class);
-        CashSettlement::observe(CashSettlementObserver::class);
-        SalaryAdvance::observe(SalaryAdvanceObserver::class);
+        // ── ERPNext Sync Observers (DISABLED — building native accounting) ──
+        // Full ERPNext integration preserved on branch 'feature/multi-tenant'.
+        // Company::observe(CompanyObserver::class);
+        // Employee::observe(EmployeeObserver::class);
+        // Client::observe(ClientObserver::class);
+        // Vehicle::observe(VehicleObserver::class);
+        // Violation::observe(ViolationObserver::class);
+        // DailyLog::observe(DailyLogObserver::class);
+        // CashSettlement::observe(CashSettlementObserver::class);
+        // SalaryAdvance::observe(SalaryAdvanceObserver::class);
     }
 }
