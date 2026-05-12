@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * StockMapper
  *
@@ -13,13 +15,14 @@ namespace App\Services\ErpNext\Mappers;
  */
 class StockMapper
 {
-    public static function custodyIssueToStockEntry(array $custodyItem, array $employee): array
+    public static function custodyIssueToStockEntry(array $custodyItem, array $employee, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'        => 'Stock Entry',
             'stock_entry_type' => 'Material Issue',
             'posting_date'   => $custodyItem['issued_date'],
-            'company'        => config('erpnext.company'),
+            'company'        => $ctx->company,
             'remarks'        => "تسليم عهدة إلى {$employee['name_ar'] ?? $employee['name']} - "
                 . "{$custodyItem['item_description']} - FleetOps #{$custodyItem['id']}",
 
@@ -30,7 +33,7 @@ class StockMapper
                     's_warehouse'  => config('erpnext.warehouse'),
                     'serial_no'    => $custodyItem['serial_number'] ?? '',
                     'basic_rate'   => $custodyItem['value'] ?? 0,
-                    'cost_center'  => config('erpnext.cost_center'),
+                    'cost_center'  => $ctx->costCenter,
                 ],
             ],
 
@@ -39,13 +42,14 @@ class StockMapper
         ];
     }
 
-    public static function custodyReturnToStockEntry(array $custodyItem, array $employee): array
+    public static function custodyReturnToStockEntry(array $custodyItem, array $employee, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'        => 'Stock Entry',
             'stock_entry_type' => 'Material Receipt',
             'posting_date'   => $custodyItem['returned_date'] ?? now()->toDateString(),
-            'company'        => config('erpnext.company'),
+            'company'        => $ctx->company,
             'remarks'        => "استرجاع عهدة من {$employee['name_ar'] ?? $employee['name']} - "
                 . "{$custodyItem['item_description']} - FleetOps #{$custodyItem['id']}",
 
@@ -56,7 +60,7 @@ class StockMapper
                     't_warehouse'  => config('erpnext.warehouse'),
                     'serial_no'    => $custodyItem['serial_number'] ?? '',
                     'basic_rate'   => $custodyItem['value'] ?? 0,
-                    'cost_center'  => config('erpnext.cost_center'),
+                    'cost_center'  => $ctx->costCenter,
                 ],
             ],
 

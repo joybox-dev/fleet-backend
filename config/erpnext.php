@@ -66,6 +66,9 @@ return [
         // Asset accounts
         'vehicle_asset' => env('ERPNEXT_ACCOUNT_VEHICLE_ASSET', '1710 - Capital Equipment - FO'),
         'depreciation' => env('ERPNEXT_ACCOUNT_DEPRECIATION', '1780 - Accumulated Depreciation - FO'),
+
+        // Advance accounts
+        'advance_receivable' => env('ERPNEXT_ACCOUNT_ADVANCE_RECEIVABLE', '1320 - Employee Advances - FO'),
     ],
 
     /*

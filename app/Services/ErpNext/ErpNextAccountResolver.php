@@ -113,6 +113,13 @@ class ErpNextAccountResolver
             'root_type' => 'Asset',
             'config_key' => 'erpnext.accounts.depreciation',
         ],
+        'advance_receivable' => [
+            'match_type'  => 'name_contains',
+            'values'      => [],
+            'match_name'  => ['Advance', 'Loan', 'Employee Advance'],
+            'root_type'   => 'Asset',
+            'config_key'  => 'erpnext.accounts.advance_receivable',
+        ],
     ];
 
     public function __construct(ErpNextClient $client)
@@ -126,9 +133,9 @@ class ErpNextAccountResolver
      * @param string $key Internal key (e.g., 'cash_in_hand', 'salary_expense')
      * @return string ERPNext account name (e.g., '1110 - Cash - FO')
      */
-    public function get(string $key): string
+    public function get(string $key, ?string $erpCompanyName = null): string
     {
-        $map = $this->getAccountMap();
+        $map = $this->getAccountMap($erpCompanyName);
         return $map[$key] ?? config(self::ACCOUNT_RULES[$key]['config_key'] ?? "erpnext.accounts.{$key}", '');
     }
 
@@ -154,13 +161,17 @@ class ErpNextAccountResolver
     /**
      * Get the cached account map, or discover from ERPNext.
      */
-    private function getAccountMap(): array
+    private function getAccountMap(?string $erpCompanyName = null): array
     {
-        return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, function () {
+        $company = $erpCompanyName ?: config('erpnext.company');
+        $cacheKey = self::CACHE_KEY . ':' . $company;
+
+        return Cache::remember($cacheKey, self::CACHE_TTL, function () use ($company) {
             try {
-                return $this->discoverAccounts();
+                return $this->discoverAccounts($company);
             } catch (\Exception $e) {
                 Log::channel('erpnext')->warning('Account discovery failed, using config defaults', [
+                    'company' => $company,
                     'error' => $e->getMessage(),
                 ]);
                 return $this->getConfigDefaults();
@@ -171,9 +182,8 @@ class ErpNextAccountResolver
     /**
      * Discover accounts from ERPNext by fetching the Chart of Accounts.
      */
-    private function discoverAccounts(): array
+    private function discoverAccounts(string $company): array
     {
-        $company = config('erpnext.company');
 
         // Fetch all leaf accounts for our company
         $accounts = $this->client->listDocuments('Account', [

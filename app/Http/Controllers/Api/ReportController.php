@@ -404,5 +404,56 @@ class ReportController extends Controller
             'totals'    => $totals,
         ]);
     }
+
+    /**
+     * GET /api/reports/missing-docs
+     * Employees with NULL/missing critical documents.
+     */
+    public function missingDocs(): JsonResponse
+    {
+        $docFields = [
+            'civil_id'              => 'البطاقة المدنية',
+            'residence_expiry'      => 'تاريخ انتهاء الإقامة',
+            'work_permit_expiry'    => 'تاريخ انتهاء إذن العمل',
+            'health_card_expiry'    => 'تاريخ انتهاء الكرت الصحي',
+            'driving_license_expiry'=> 'تاريخ انتهاء رخصة القيادة',
+        ];
+
+        $employees = Employee::whereIn('status', ['active', 'probation'])
+            ->where(function ($q) use ($docFields) {
+                foreach (array_keys($docFields) as $field) {
+                    $q->orWhereNull($field);
+                }
+            })
+            ->select('id', 'name', 'name_ar', 'employee_number', 'employee_type', 'status',
+                'civil_id', 'residence_expiry', 'work_permit_expiry',
+                'health_card_expiry', 'driving_license_expiry')
+            ->orderBy('name')
+            ->get()
+            ->map(function ($emp) use ($docFields) {
+                $missing = [];
+                foreach ($docFields as $field => $label) {
+                    if (is_null($emp->$field)) {
+                        $missing[] = $label;
+                    }
+                }
+                return [
+                    'id'              => $emp->id,
+                    'name'            => $emp->name,
+                    'name_ar'         => $emp->name_ar,
+                    'employee_number' => $emp->employee_number,
+                    'employee_type'   => $emp->employee_type,
+                    'status'          => $emp->status,
+                    'missing_docs'    => $missing,
+                    'missing_count'   => count($missing),
+                ];
+            });
+
+        return response()->json([
+            'total_employees'         => $employees->count(),
+            'total_missing_documents' => $employees->sum('missing_count'),
+            'employees'               => $employees->values(),
+        ]);
+    }
 }
 

@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * VehicleMapper
  *
@@ -12,13 +14,14 @@ namespace App\Services\ErpNext\Mappers;
  */
 class VehicleMapper
 {
-    public static function toErpNext(array $vehicle): array
+    public static function toErpNext(array $vehicle, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'               => 'Asset',
             'asset_name'            => "Vehicle {$vehicle['plate_number']}",
             'asset_category'        => 'Vehicles',
-            'company'               => config('erpnext.company'),
+            'company'               => $ctx->company,
             'location'              => 'Kuwait',
             'purchase_date'         => $vehicle['created_at'] ?? now()->toDateString(),
             'is_existing_asset'     => 1,

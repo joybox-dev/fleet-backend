@@ -453,4 +453,24 @@ class ErpNextService
             'connection_alive' => $this->client->ping(),
         ];
     }
+
+    // ──────────────────────────────────────────────
+    // Generic Document Operations (for sync jobs)
+    // ──────────────────────────────────────────────
+
+    /**
+     * Create a document in ERPNext (generic).
+     */
+    public function createDocument(string $doctype, array $data): array
+    {
+        return $this->client->createDocument($doctype, $data);
+    }
+
+    /**
+     * Get a document from ERPNext (generic).
+     */
+    public function getDocument(string $doctype, string $name, array $fields = []): ?array
+    {
+        return $this->client->getDocument($doctype, $name, $fields);
+    }
 }

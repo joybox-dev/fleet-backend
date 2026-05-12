@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * PayrollMapper
  *
@@ -15,15 +17,16 @@ class PayrollMapper
     /**
      * Create a Salary Slip in ERPNext for OFFICIAL salary only.
      */
-    public static function toOfficialSalarySlip(array $employee, string $year, string $month): array
+    public static function toOfficialSalarySlip(array $employee, string $year, string $month, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         $startDate = "{$year}-{$month}-01";
         $endDate = date('Y-m-t', strtotime($startDate));
 
         return [
             'doctype'          => 'Salary Slip',
             'employee'         => $employee['erp_id'] ?? '',
-            'company'          => config('erpnext.company'),
+            'company'          => $ctx->company,
             'posting_date'     => $endDate,
             'start_date'       => $startDate,
             'end_date'         => $endDate,

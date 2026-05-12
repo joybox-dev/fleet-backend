@@ -61,18 +61,9 @@ class MigrateToMultiTenantSeeder extends Seeder
         }
 
         // ── Step 4: Assign all users to default company ──
-        $users = User::all();
-        $attached = 0;
-        foreach ($users as $user) {
-            if (!$user->companies()->where('companies.id', $company->id)->exists()) {
-                $user->companies()->attach($company->id, [
-                    'role'       => $user->role ?? 'operator',
-                    'is_default' => true,
-                ]);
-                $attached++;
-            }
-        }
-        $this->command->info("  👥 Assigned {$attached} users to default company");
+        $updated = User::whereNull('company_id')
+            ->update(['company_id' => $company->id]);
+        $this->command->info("  👥 Assigned {$updated} users to default company");
 
         // ── Verify: check for any remaining NULLs ──
         $hasNulls = false;

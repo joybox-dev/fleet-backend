@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * EmployeeMapper
  *
@@ -14,14 +16,15 @@ namespace App\Services\ErpNext\Mappers;
  */
 class EmployeeMapper
 {
-    public static function toErpNext(array $employee): array
+    public static function toErpNext(array $employee, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'             => 'Employee',
             'employee_name'       => $employee['name_ar'] ?? $employee['name'],
             'first_name'          => self::extractFirstName($employee['name_ar'] ?? $employee['name']),
             'last_name'           => self::extractLastName($employee['name_ar'] ?? $employee['name']),
-            'company'             => config('erpnext.company'),
+            'company'             => $ctx->company,
             'status'              => self::mapStatus($employee['status']),
             'gender'              => ucfirst($employee['gender'] ?? 'Male'),
             'date_of_birth'       => $employee['date_of_birth'] ?? null,
@@ -29,7 +32,7 @@ class EmployeeMapper
             'cell_phone'          => $employee['phone'] ?? '',
             'nationality'         => $employee['nationality'] ?? '',
 
-            'payroll_cost_center' => config('erpnext.cost_center'),
+            'payroll_cost_center' => $ctx->costCenter,
             'mode_of_payment'     => 'Bank',
 
             'fleetops_employee_id' => $employee['id'],
@@ -37,15 +40,16 @@ class EmployeeMapper
         ];
     }
 
-    public static function toSalaryStructureAssignment(array $employee, string $erpEmployeeName): array
+    public static function toSalaryStructureAssignment(array $employee, string $erpEmployeeName, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'           => 'Salary Structure Assignment',
             'employee'          => $erpEmployeeName,
             'salary_structure'  => 'FleetOps Basic Structure',
             'from_date'         => $employee['date_of_joining'],
             'base'              => $employee['official_salary'],
-            'company'           => config('erpnext.company'),
+            'company'           => $ctx->company,
         ];
     }
 

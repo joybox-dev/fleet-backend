@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * FixedInvoiceMapper
  *
@@ -23,8 +25,9 @@ class FixedInvoiceMapper
      * @param string $month     Billing month (zero-padded)
      * @return array ERPNext Sales Invoice payload
      */
-    public static function toErpNext(array $contract, array $client, string $year, string $month): array
+    public static function toErpNext(array $contract, array $client, string $year, string $month, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         $amount   = (float) ($contract['fixed_monthly'] ?? 0);
         $period   = "{$year}-{$month}";
         $lastDay  = \Carbon\Carbon::createFromDate($year, (int) $month, 1)->endOfMonth()->toDateString();
@@ -35,7 +38,7 @@ class FixedInvoiceMapper
             'customer'          => $customer,
             'posting_date'      => $lastDay,
             'due_date'          => $lastDay,
-            'company'           => config('erpnext.company'),
+            'company'           => $ctx->company,
             'currency'          => config('erpnext.default_currency'),
             'selling_price_list' => 'Standard Selling',
 
@@ -48,8 +51,8 @@ class FixedInvoiceMapper
                     'qty'            => 1,
                     'rate'           => $amount,
                     'amount'         => $amount,
-                    'income_account' => config('erpnext.accounts.delivery_income'),
-                    'cost_center'    => config('erpnext.cost_center'),
+                    'income_account' => $ctx->account('delivery_income'),
+                    'cost_center'    => $ctx->costCenter,
                 ],
             ],
 

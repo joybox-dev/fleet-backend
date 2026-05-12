@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * FuelExpenseMapper
  *
@@ -26,15 +28,16 @@ class FuelExpenseMapper
      * @param float  $amount Total fuel allowance for all drivers
      * @return array ERPNext Journal Entry payload
      */
-    public static function toJournalEntry(string $year, string $month, float $amount): array
+    public static function toJournalEntry(string $year, string $month, float $amount, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         $period = "{$year}-{$month}";
 
         return [
             'doctype'      => 'Journal Entry',
             'voucher_type' => 'Journal Entry',
             'posting_date' => now()->toDateString(),
-            'company'      => config('erpnext.company'),
+            'company'      => $ctx->company,
             'user_remark'  => "بدل وقود شهر {$month}/{$year} — إجمالي: {$amount} KWD"
                 . " — مُصرف ضمن رواتب الموظفين (كاش)",
 
@@ -42,19 +45,19 @@ class FuelExpenseMapper
                 // ── DEBIT: Fuel Expense ──────────────────────
                 // Company incurred this expense for driver transportation
                 [
-                    'account'    => config('erpnext.accounts.fuel_expense'),
+                    'account'    => $ctx->account('fuel_expense'),
                     'debit_in_account_currency'  => round($amount, 3),
                     'credit_in_account_currency' => 0,
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                     'user_remark' => "بدل وقود — {$period}",
                 ],
                 // ── CREDIT: Cash In Hand ─────────────────────
                 // Paid out from company cash as part of the salary envelope
                 [
-                    'account'    => config('erpnext.accounts.cash_in_hand'),
+                    'account'    => $ctx->account('cash_in_hand'),
                     'debit_in_account_currency'  => 0,
                     'credit_in_account_currency' => round($amount, 3),
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                     'user_remark' => "صرف بدل وقود — {$period}",
                 ],
             ],

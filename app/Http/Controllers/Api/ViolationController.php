@@ -43,6 +43,24 @@ class ViolationController extends Controller
 
         $violation = Violation::create($validated);
 
+        // ── WhatsApp auto-notify driver ──
+        $employee = $violation->employee;
+        if ($employee?->has_whatsapp && $employee?->phone) {
+            try {
+                app(\App\Services\WhatsAppService::class)->sendMessage(
+                    $employee->phone,
+                    "⚠️ مخالفة مرورية\nالتاريخ: {$violation->violation_date}\n"
+                    . "النوع: {$violation->violation_type}\n"
+                    . "المبلغ: {$violation->amount} د.ك"
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('WhatsApp send failed for violation', [
+                    'violation_id' => $violation->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncViolationJob::class, $violation->id);
 
         return response()->json($violation->load(['employee:id,name', 'vehicle:id,plate_number']), 201);

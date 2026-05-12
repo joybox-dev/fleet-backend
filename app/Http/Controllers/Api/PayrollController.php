@@ -12,6 +12,8 @@ use App\Models\DailyLog;
 use App\Models\Violation;
 use App\Models\MaintenanceRecord;
 use App\Models\CustodyItem;
+use App\Models\SalaryAdvance;
+use App\Models\AdvanceDeduction;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -80,7 +82,7 @@ class PayrollController extends Controller
                     ->sum('driver_deduction');
 
                 $custodyDeduction = CustodyItem::where('employee_id', $employee->id)
-                    ->where('is_returned', true)
+                    ->where('status', 'returned')
                     ->whereIn('return_condition', ['damaged', 'lost'])
                     ->where('deduction_amount', '>', 0)
                     ->sum('deduction_amount');
@@ -99,6 +101,19 @@ class PayrollController extends Controller
                     });
                 $leaveDeduction   = (float) $leaveQuery->sum('total_deduction');
                 $unpaidLeaveDays  = (int)   $leaveQuery->sum('days_count');
+
+                // ── Salary Advance installment deduction ──
+                $advanceDeduction = 0;
+                $activeAdvances = SalaryAdvance::where('employee_id', $employee->id)
+                    ->where('status', 'active')
+                    ->get();
+
+                foreach ($activeAdvances as $advance) {
+                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
+                    if ($installment <= 0) continue;
+                    $advanceDeduction += $installment;
+                    // Track: will create AdvanceDeduction after slip is created (need slip ID)
+                }
 
                 $fuelAllowance = $employee->vehicleAssignments()
                     ->whereDate('assigned_date', '<=', $endDate)
@@ -126,8 +141,8 @@ class PayrollController extends Controller
                 $totalBonuses    = $ordersBonus + $fuelAllowance;
                 $totalGrossActual = $baseActual + $totalBonuses;
 
-                // ── Step 2: Total Deductions (violations + maintenance + custody + leave) ──
-                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction;
+                // ── Step 2: Total Deductions (violations + maintenance + custody + leave + advances) ──
+                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction + $advanceDeduction;
 
                 // ── Step 3: Net Actual (what the employee truly deserves) ──
                 $netActual = max(0, $totalGrossActual - $totalDeductions);
@@ -152,6 +167,7 @@ class PayrollController extends Controller
                     'violations_deduction'  => $violationsDeduction,
                     'maintenance_deduction' => $maintenanceDeduction,
                     'custody_deduction'     => $custodyDeduction,
+                    'advance_deduction'     => $advanceDeduction,
                     'leave_deduction'       => $leaveDeduction,
                     'unpaid_leave_days'     => $unpaidLeaveDays,
                     'gross_official'        => $netBank,     // Bank receives this
@@ -164,6 +180,27 @@ class PayrollController extends Controller
                     ->where('is_driver_liable', true)
                     ->where('is_deducted', false)
                     ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
+
+                // ── Create AdvanceDeduction records & update advances ──
+                foreach ($activeAdvances as $advance) {
+                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
+                    if ($installment <= 0) continue;
+
+                    AdvanceDeduction::create([
+                        'salary_advance_id' => $advance->id,
+                        'payroll_slip_id'   => $slip->id,
+                        'amount'            => $installment,
+                        'deduction_date'    => $endDate,
+                        'company_id'        => $advance->company_id,
+                    ]);
+
+                    $advance->paid_installments += 1;
+                    $advance->remaining_balance  = max(0, (float) $advance->remaining_balance - $installment);
+                    if ($advance->remaining_balance <= 0) {
+                        $advance->status = 'completed';
+                    }
+                    $advance->save();
+                }
 
                 $totalOfficial += $netBank;
                 $totalActual   += $netActual;
@@ -276,7 +313,8 @@ class PayrollController extends Controller
         $totalViolations  = round($slips->sum('violations_deduction'), 3);
         $totalMaintenance = round($slips->sum('maintenance_deduction'), 3);
         $totalCustody     = round($slips->sum('custody_deduction'), 3);
-        $totalDeductions  = $totalViolations + $totalMaintenance + $totalCustody;
+        $totalAdvances    = round($slips->sum('advance_deduction'), 3);
+        $totalDeductions  = $totalViolations + $totalMaintenance + $totalCustody + $totalAdvances;
         $totalFuel        = round($slips->sum('fuel_allowance'), 3);
 
         $paddedMonth = str_pad((string) $month, 2, '0', STR_PAD_LEFT);
@@ -289,7 +327,8 @@ class PayrollController extends Controller
                 $paddedMonth,
                 $totalViolations,
                 $totalMaintenance,
-                $totalCustody
+                $totalCustody,
+                $totalAdvances
             );
         }
 

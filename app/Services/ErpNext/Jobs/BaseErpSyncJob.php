@@ -5,6 +5,7 @@ namespace App\Services\ErpNext\Jobs;
 use App\Services\ErpNext\ErpNextService;
 use App\Services\ErpNext\ErpNextConnectionException;
 use App\Services\ErpNext\ErpNextCircuitOpenException;
+use App\Services\ErpNext\CompanyErpContext;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\DB;
  * 3. Failed jobs update erp_sync_status = 'failed' in FleetOps DB
  * 4. Successful jobs update erp_sync_status = 'synced' with ERP reference
  * 5. Circuit-breaker failures release the job for later retry
+ * 6. Multi-tenant: each job resolves the ERPNext company from the entity's company_id
  */
 abstract class BaseErpSyncJob implements ShouldQueue
 {
@@ -46,6 +48,18 @@ abstract class BaseErpSyncJob implements ShouldQueue
     public function viaQueue(): string
     {
         return config('erpnext.sync.queue', 'erpnext-sync');
+    }
+
+    /**
+     * Resolve ERPNext company context from a FleetOps company_id.
+     * Falls back to global config if company has no ERPNext mapping yet.
+     */
+    protected function resolveErpContext(?int $companyId): CompanyErpContext
+    {
+        if ($companyId) {
+            return CompanyErpContext::forCompany($companyId);
+        }
+        return CompanyErpContext::fromGlobalConfig();
     }
 
     /**

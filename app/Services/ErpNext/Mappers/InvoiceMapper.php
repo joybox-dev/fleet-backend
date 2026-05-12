@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * InvoiceMapper
  *
@@ -16,8 +18,9 @@ namespace App\Services\ErpNext\Mappers;
  */
 class InvoiceMapper
 {
-    public static function toErpNext(array $dailyLog, array $contract, array $vehicle): array
+    public static function toErpNext(array $dailyLog, array $contract, array $vehicle, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         $orderCount = $dailyLog['orders_count'];
         $ratePerOrder = $dailyLog['rate_per_order'] ?? $contract['rate_per_order'] ?? 0;
         $totalIncome = $dailyLog['income_amount'] ?? ($orderCount * $ratePerOrder);
@@ -27,7 +30,7 @@ class InvoiceMapper
             'customer'          => $contract['erp_id'] ?? "Client-{$contract['client_id']}",
             'posting_date'      => $dailyLog['log_date'],
             'due_date'          => $dailyLog['log_date'],
-            'company'           => config('erpnext.company'),
+            'company'           => $ctx->company,
             'currency'          => config('erpnext.default_currency'),
             'selling_price_list' => 'Standard Selling',
 
@@ -39,8 +42,8 @@ class InvoiceMapper
                     'qty'           => $orderCount,
                     'rate'          => $ratePerOrder,
                     'amount'        => $totalIncome,
-                    'income_account' => config('erpnext.accounts.delivery_income'),
-                    'cost_center'   => config('erpnext.cost_center'),
+                    'income_account' => $ctx->account('delivery_income'),
+                    'cost_center'   => $ctx->costCenter,
                 ],
             ],
 

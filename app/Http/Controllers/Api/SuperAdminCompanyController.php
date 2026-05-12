@@ -10,6 +10,8 @@ use App\Models\Vehicle;
 use App\Models\DailyLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Helpers\ErpSync;
+use App\Services\ErpNext\Jobs\SyncCompanyJob;
 
 /**
  * Super-admin-only company management endpoints.
@@ -65,6 +67,9 @@ class SuperAdminCompanyController extends Controller
         $validated['is_active'] = true;
 
         $company = Company::create($validated);
+
+        // Provision ERPNext Company (async)
+        ErpSync::dispatch(SyncCompanyJob::class, $company->id);
 
         return response()->json([
             'message' => 'تم إنشاء الشركة بنجاح.',

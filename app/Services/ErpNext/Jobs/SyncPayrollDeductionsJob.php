@@ -26,13 +26,14 @@ class SyncPayrollDeductionsJob extends BaseErpSyncJob
         private float  $totalViolations,
         private float  $totalMaintenance,
         private float  $totalCustody = 0,
+        private float  $totalAdvances = 0,
     ) {}
 
     public function handle(ErpNextService $service): void
     {
         if (!config('erpnext.sync.enabled')) return;
 
-        $totalDeductions = $this->totalViolations + $this->totalMaintenance + $this->totalCustody;
+        $totalDeductions = $this->totalViolations + $this->totalMaintenance + $this->totalCustody + $this->totalAdvances;
 
         // Skip if no deductions to sync
         if ($totalDeductions <= 0) {
@@ -48,7 +49,8 @@ class SyncPayrollDeductionsJob extends BaseErpSyncJob
                 $this->month,
                 $this->totalViolations,
                 $this->totalMaintenance,
-                $this->totalCustody
+                $this->totalCustody,
+                $this->totalAdvances
             );
 
             Log::channel('erpnext')->info("Payroll deductions Journal Entry created", [
@@ -57,6 +59,7 @@ class SyncPayrollDeductionsJob extends BaseErpSyncJob
                 'violations'        => $this->totalViolations,
                 'maintenance'       => $this->totalMaintenance,
                 'custody'           => $this->totalCustody,
+                'advances'          => $this->totalAdvances,
                 'total'             => $totalDeductions,
             ]);
         } catch (ErpNextCircuitOpenException $e) {

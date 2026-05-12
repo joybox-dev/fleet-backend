@@ -14,14 +14,13 @@ class CustodyItem extends Model
     protected $fillable = [
         'employee_id', 'issued_by', 'item_type', 'custody_type_id', 'item_description',
         'serial_number', 'value', 'issued_date', 'returned_date',
-        'is_returned', 'return_condition', 'deduction_amount', 'notes',
+        'status', 'return_condition', 'deduction_amount', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
     ];
 
     protected $casts = [
         'value'            => 'decimal:3',
         'deduction_amount' => 'decimal:3',
-        'is_returned'      => 'boolean',
     ];
 
     public function employee(): BelongsTo { return $this->belongsTo(Employee::class); }

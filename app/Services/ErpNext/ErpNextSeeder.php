@@ -25,6 +25,7 @@ class ErpNextSeeder
 {
     private ErpNextClient $client;
     private array $results = [];
+    private string $companyName;
 
     public function __construct(ErpNextClient $client)
     {
@@ -36,9 +37,10 @@ class ErpNextSeeder
      *
      * @return array Results of each seed step
      */
-    public function seed(): array
+    public function seed(?string $companyName = null): array
     {
         $this->results = [];
+        $this->companyName = $companyName ?: config('erpnext.company');
 
         $this->seedItemGroups();
         $this->seedItems();
@@ -166,7 +168,7 @@ class ErpNextSeeder
         // Get the depreciation account from config
         $depreciationAccount = config('erpnext.accounts.depreciation', '1780 - Accumulated Depreciation - FO');
         $assetAccount = config('erpnext.accounts.vehicle_asset', '1710 - Capital Equipment - FO');
-        $company = config('erpnext.company');
+        $company = $this->companyName;
 
         $category = [
             'asset_category_name' => 'Vehicles',
@@ -204,7 +206,7 @@ class ErpNextSeeder
 
         $structure = [
             'name' => 'FleetOps Official Salary',
-            'company' => config('erpnext.company'),
+            'company' => $this->companyName,
             'payroll_frequency' => config('erpnext.payroll.payroll_frequency', 'Monthly'),
             'is_active' => 'Yes',
             'earnings' => [

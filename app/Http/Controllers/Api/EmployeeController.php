@@ -53,6 +53,15 @@ class EmployeeController extends Controller
             'notes'                 => 'nullable|string',
         ]);
 
+        // ── Auto-generate employee number: EMP-0001, EMP-0002, ... ──
+        // Use DB::table to bypass ALL Eloquent global scopes reliably
+        $lastNum = \DB::table('employees')
+            ->where('company_id', app('current_company_id'))
+            ->where('employee_number', 'like', 'EMP-%')
+            ->selectRaw("MAX(CAST(SUBSTR(employee_number, 5) AS INTEGER)) as max_num")
+            ->value('max_num');
+        $validated['employee_number'] = 'EMP-' . str_pad(($lastNum ?? 0) + 1, 4, '0', STR_PAD_LEFT);
+
         // Auto-set probation period: 3 months from joining
         $validated['status'] = 'probation';
         $validated['probation_end_date'] = \Carbon\Carbon::parse($validated['date_of_joining'])->addMonths(3)->toDateString();

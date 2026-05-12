@@ -16,7 +16,8 @@ class CustodyController extends Controller
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->item_type, fn($q) => $q->where('item_type', $request->item_type))
             ->when($request->custody_type_id, fn($q) => $q->where('custody_type_id', $request->custody_type_id))
-            ->when($request->boolean('not_returned'), fn($q) => $q->where('is_returned', false))
+            ->when($request->status, fn($q) => $q->where('status', $request->status))
+            ->when($request->boolean('not_returned'), fn($q) => $q->where('status', '!=', 'returned'))
             ->orderByDesc('issued_date')
             ->paginate(50);
 
@@ -37,6 +38,7 @@ class CustodyController extends Controller
         ]);
 
         $validated['issued_by'] = $request->user()->id;
+        $validated['status'] = 'active';
 
         $item = CustodyItem::create($validated);
 
@@ -52,12 +54,13 @@ class CustodyController extends Controller
 
     public function update(Request $request, CustodyItem $custody): JsonResponse
     {
-        if ($custody->is_returned) {
-            return response()->json(['message' => 'Item already returned.'], 422);
+        if ($custody->status === 'returned') {
+            return response()->json(['message' => 'لا يمكن تعديل عُهدة تم إرجاعها.'], 422);
         }
 
         $validated = $request->validate([
             'item_description' => 'nullable|string',
+            'status'           => 'nullable|in:active,held',
             'notes'            => 'nullable|string',
         ]);
 
@@ -76,8 +79,8 @@ class CustodyController extends Controller
      */
     public function returnItem(Request $request, CustodyItem $custody): JsonResponse
     {
-        if ($custody->is_returned) {
-            return response()->json(['message' => 'Item already returned.'], 422);
+        if ($custody->status === 'returned') {
+            return response()->json(['message' => 'تم إرجاع العُهدة مسبقاً.'], 422);
         }
 
         $validated = $request->validate([
@@ -91,12 +94,12 @@ class CustodyController extends Controller
             'returned_date'    => $validated['returned_date'],
             'return_condition' => $validated['return_condition'],
             'deduction_amount' => $validated['deduction_amount'] ?? 0,
-            'is_returned'      => true,
+            'status'           => 'returned',
             'notes'            => $validated['notes'] ?? $custody->notes,
         ]);
 
         ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncCustodyJob::class, $custody->id, 'return');
 
-        return response()->json(['message' => 'Item returned.', 'item' => $custody->fresh()]);
+        return response()->json(['message' => 'تم إرجاع العُهدة.', 'item' => $custody->fresh()]);
     }
 }

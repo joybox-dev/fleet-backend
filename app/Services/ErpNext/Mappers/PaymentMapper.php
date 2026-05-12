@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * PaymentMapper
  *
@@ -12,13 +14,14 @@ namespace App\Services\ErpNext\Mappers;
  */
 class PaymentMapper
 {
-    public static function toErpNext(array $settlement, array $employee): array
+    public static function toErpNext(array $settlement, array $employee, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'          => 'Payment Entry',
             'payment_type'     => 'Receive',
             'posting_date'     => $settlement['settlement_date'],
-            'company'          => config('erpnext.company'),
+            'company'          => $ctx->company,
             'mode_of_payment'  => 'Cash',
             'party_type'       => 'Employee',
             'party'            => $employee['erp_id'] ?? '',
@@ -28,8 +31,8 @@ class PaymentMapper
             'target_exchange_rate' => 1,
             'source_exchange_rate' => 1,
 
-            'paid_from'        => config('erpnext.accounts.pending_cash'),
-            'paid_to'          => config('erpnext.accounts.cash_in_hand'),
+            'paid_from'        => $ctx->account('pending_cash'),
+            'paid_to'          => $ctx->account('cash_in_hand'),
 
             'remarks'          => "تسوية كاش - FleetOps #{$settlement['id']} - "
                 . "سائق: {$employee['name_ar'] ?? $employee['name']} - "
@@ -43,13 +46,15 @@ class PaymentMapper
 
     public static function maintenancePaymentToErpNext(
         array $maintenanceRequest,
-        array $approvedQuote
+        array $approvedQuote,
+        ?CompanyErpContext $ctx = null,
     ): array {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'          => 'Payment Entry',
             'payment_type'     => 'Pay',
             'posting_date'     => now()->toDateString(),
-            'company'          => config('erpnext.company'),
+            'company'          => $ctx->company,
             'mode_of_payment'  => 'Cash',
             'party_type'       => 'Supplier',
             'party'            => $approvedQuote['garage_name'] ?? 'Unknown',
@@ -58,8 +63,8 @@ class PaymentMapper
             'target_exchange_rate' => 1,
             'source_exchange_rate' => 1,
 
-            'paid_from'        => config('erpnext.accounts.cash_in_hand'),
-            'paid_to'          => config('erpnext.accounts.accounts_payable'),
+            'paid_from'        => $ctx->account('cash_in_hand'),
+            'paid_to'          => $ctx->account('accounts_payable'),
 
             'remarks'          => "دفعة صيانة - طلب #{$maintenanceRequest['id']}",
 

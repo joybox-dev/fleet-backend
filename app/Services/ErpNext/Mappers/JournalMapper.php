@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * JournalMapper
  *
@@ -12,28 +14,29 @@ namespace App\Services\ErpNext\Mappers;
  */
 class JournalMapper
 {
-    public static function violationToJournalEntry(array $violation, array $employee): array
+    public static function violationToJournalEntry(array $violation, array $employee, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'      => 'Journal Entry',
             'voucher_type' => 'Journal Entry',
             'posting_date' => $violation['violation_date'],
-            'company'      => config('erpnext.company'),
+            'company'      => $ctx->company,
             'user_remark'  => "مخالفة مرورية #{$violation['reference_number']} - سائق {$employee['name_ar'] ?? $employee['name']} - "
                 . "سيارة {$violation['vehicle_id']} - {$violation['violation_type']} - {$violation['amount']} KWD",
 
             'accounts' => [
                 [
-                    'account'    => config('erpnext.accounts.violation_receivable'),
+                    'account'    => $ctx->account('violation_receivable'),
                     'party_type' => 'Employee',
                     'party'      => $employee['erp_id'] ?? '',
                     'debit_in_account_currency' => $violation['amount'],
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                 ],
                 [
-                    'account'    => config('erpnext.accounts.cash_in_hand'),
+                    'account'    => $ctx->account('cash_in_hand'),
                     'credit_in_account_currency' => $violation['amount'],
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                 ],
             ],
 
@@ -45,28 +48,30 @@ class JournalMapper
     public static function maintenanceChargeToJournalEntry(
         array $maintenanceRequest,
         array $employee,
-        float $chargeAmount
+        float $chargeAmount,
+        ?CompanyErpContext $ctx = null,
     ): array {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
         return [
             'doctype'      => 'Journal Entry',
             'voucher_type' => 'Journal Entry',
             'posting_date' => now()->toDateString(),
-            'company'      => config('erpnext.company'),
+            'company'      => $ctx->company,
             'user_remark'  => "خصم صيانة على السائق {$employee['name_ar'] ?? $employee['name']} - "
                 . "طلب صيانة #{$maintenanceRequest['id']} - {$chargeAmount} KWD",
 
             'accounts' => [
                 [
-                    'account'    => config('erpnext.accounts.violation_receivable'),
+                    'account'    => $ctx->account('violation_receivable'),
                     'party_type' => 'Employee',
                     'party'      => $employee['erp_id'] ?? '',
                     'debit_in_account_currency' => $chargeAmount,
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                 ],
                 [
-                    'account'    => config('erpnext.accounts.maintenance_expense'),
+                    'account'    => $ctx->account('maintenance_expense'),
                     'credit_in_account_currency' => $chargeAmount,
-                    'cost_center' => config('erpnext.cost_center'),
+                    'cost_center' => $ctx->costCenter,
                 ],
             ],
 

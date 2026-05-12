@@ -34,14 +34,37 @@ return new class extends Migration
 
     public function up(): void
     {
+        // Auto-backfill: if any rows have NULL company_id, assign them to the
+        // default company (code='default') or the first company in the table.
+        // This makes `migrate:fresh` work without needing a manual seeder step,
+        // since some migrations (e.g. create_custody_types) insert seed data
+        // before the company_id column exists.
+        $defaultCompanyId = DB::table('companies')->where('code', 'default')->value('id')
+            ?? DB::table('companies')->orderBy('id')->value('id');
+
+        if (!$defaultCompanyId) {
+            // Create a default company if none exists
+            $defaultCompanyId = DB::table('companies')->insertGetId([
+                'name'            => 'الشركة الافتراضية',
+                'name_ar'         => 'الشركة الافتراضية',
+                'code'            => 'default',
+                'is_active'       => true,
+                'currency'        => 'KWD',
+                'enabled_modules' => json_encode([
+                    'dashboard', 'clients', 'contracts', 'employees', 'vehicles',
+                    'daily_logs', 'violations', 'maintenance', 'cash',
+                    'custody', 'leaves', 'payroll', 'reports', 'settings',
+                ]),
+                'created_at'      => now(),
+                'updated_at'      => now(),
+            ]);
+        }
+
         foreach ($this->tables as $table) {
-            // Safety check: ensure no NULLs remain
+            // Auto-backfill NULL rows
             $nullCount = DB::table($table)->whereNull('company_id')->count();
             if ($nullCount > 0) {
-                throw new \RuntimeException(
-                    "Table [{$table}] still has {$nullCount} rows with NULL company_id. "
-                    . "Run: php artisan db:seed --class=MigrateToMultiTenantSeeder first."
-                );
+                DB::table($table)->whereNull('company_id')->update(['company_id' => $defaultCompanyId]);
             }
 
             Schema::table($table, function (Blueprint $t) {

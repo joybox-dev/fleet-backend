@@ -67,14 +67,42 @@ class MasterScenarioSeeder extends Seeder
         $this->command->info('✓ Tables truncated');
 
         // ════════════════════════════════════════════════════════════════
+        // 0. COMPANY CONTEXT — All records will be scoped to this company
+        // ════════════════════════════════════════════════════════════════
+        $company = \App\Models\Company::firstOrCreate(
+            ['code' => 'default'],
+            [
+                'name'            => 'الشركة الافتراضية',
+                'name_ar'         => 'الشركة الافتراضية',
+                'is_active'       => true,
+                'currency'        => 'KWD',
+                'enabled_modules' => \App\Models\Company::DEFAULT_MODULES,
+            ]
+        );
+        app()->instance('current_company_id', $company->id);
+
+        // ════════════════════════════════════════════════════════════════
         // 1. USER
         // ════════════════════════════════════════════════════════════════
         $admin = User::firstOrCreate(['email' => 'mersal@fleetops.kw'], [
-            'name'     => 'Mersal',
-            'password' => Hash::make('abuhadram'),
-            'role'     => 'admin',
+            'name'           => 'Mersal',
+            'password'       => Hash::make('abuhadram'),
+            'role'           => 'admin',
+            'is_super_admin' => true,
+            'company_id'     => $company->id,
         ]);
-        $this->command->info('✓ Admin: mersal@fleetops.kw / abuhadram');
+        // Ensure company_id is set (in case user already existed)
+        $admin->update(['company_id' => $company->id, 'is_super_admin' => true]);
+        $this->command->info('✓ Admin: mersal@fleetops.kw / abuhadram (👑 super admin)');
+
+        $operator = User::firstOrCreate(['email' => 'op@fleetops.kw'], [
+            'name'       => 'المشغّل',
+            'password'   => Hash::make('abuhadram'),
+            'role'       => 'operator',
+            'company_id' => $company->id,
+        ]);
+        $operator->update(['company_id' => $company->id]);
+        $this->command->info('✓ Operator: op@fleetops.kw / abuhadram');
 
         // ════════════════════════════════════════════════════════════════
         // 2. CLIENTS

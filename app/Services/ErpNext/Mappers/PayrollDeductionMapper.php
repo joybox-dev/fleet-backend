@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * PayrollDeductionMapper
  *
@@ -37,9 +39,12 @@ class PayrollDeductionMapper
         string $month,
         float $violations,
         float $maintenance,
-        float $custody = 0
+        float $custody = 0,
+        float $advances = 0,
+        ?CompanyErpContext $ctx = null,
     ): array {
-        $totalDeductions = $violations + $maintenance + $custody;
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $totalDeductions = $violations + $maintenance + $custody + $advances;
         $period = "{$year}-{$month}";
 
         // Build line items — only include accounts with actual amounts
@@ -48,20 +53,20 @@ class PayrollDeductionMapper
         // ── DEBIT: Cash In Hand ──────────────────────────────
         // The company retained this cash from the driver's envelope
         $accounts[] = [
-            'account'    => config('erpnext.accounts.cash_in_hand'),
+            'account'    => $ctx->account('cash_in_hand'),
             'debit_in_account_currency' => round($totalDeductions, 3),
             'credit_in_account_currency' => 0,
-            'cost_center' => config('erpnext.cost_center'),
+            'cost_center' => $ctx->costCenter,
             'user_remark' => "استرداد خصومات رواتب {$period} — إجمالي: {$totalDeductions} KWD",
         ];
 
         // ── CREDIT: Violation Receivable ─────────────────────
         if ($violations > 0) {
             $accounts[] = [
-                'account'    => config('erpnext.accounts.violation_receivable'),
+                'account'    => $ctx->account('violation_receivable'),
                 'debit_in_account_currency' => 0,
                 'credit_in_account_currency' => round($violations, 3),
-                'cost_center' => config('erpnext.cost_center'),
+                'cost_center' => $ctx->costCenter,
                 'user_remark' => "تصفية مخالفات مرورية — {$period}",
             ];
         }
@@ -69,10 +74,10 @@ class PayrollDeductionMapper
         // ── CREDIT: Maintenance Expense ──────────────────────
         if ($maintenance > 0) {
             $accounts[] = [
-                'account'    => config('erpnext.accounts.maintenance_expense'),
+                'account'    => $ctx->account('maintenance_expense'),
                 'debit_in_account_currency' => 0,
                 'credit_in_account_currency' => round($maintenance, 3),
-                'cost_center' => config('erpnext.cost_center'),
+                'cost_center' => $ctx->costCenter,
                 'user_remark' => "استرداد تكاليف صيانة من السائقين — {$period}",
             ];
         }
@@ -80,11 +85,22 @@ class PayrollDeductionMapper
         // ── CREDIT: Custody Deduction (if applicable) ────────
         if ($custody > 0) {
             $accounts[] = [
-                'account'    => config('erpnext.accounts.violation_receivable'), // Reuse receivable for custody
+                'account'    => $ctx->account('violation_receivable'), // Reuse receivable for custody
                 'debit_in_account_currency' => 0,
                 'credit_in_account_currency' => round($custody, 3),
-                'cost_center' => config('erpnext.cost_center'),
+                'cost_center' => $ctx->costCenter,
                 'user_remark' => "خصم عُهد تالفة/مفقودة — {$period}",
+            ];
+        }
+
+        // ── CREDIT: Advance Receivable (salary advance recovery) ──
+        if ($advances > 0) {
+            $accounts[] = [
+                'account'    => $ctx->account('advance_receivable'),
+                'debit_in_account_currency' => 0,
+                'credit_in_account_currency' => round($advances, 3),
+                'cost_center' => $ctx->costCenter,
+                'user_remark' => "استرداد أقساط سلف موظفين — {$period}",
             ];
         }
 
@@ -92,10 +108,11 @@ class PayrollDeductionMapper
             'doctype'      => 'Journal Entry',
             'voucher_type' => 'Journal Entry',
             'posting_date' => now()->toDateString(),
-            'company'      => config('erpnext.company'),
+            'company'      => $ctx->company,
             'user_remark'  => "تسوية خصومات رواتب شهر {$month}/{$year} — "
                 . "مخالفات: {$violations} KWD, صيانة: {$maintenance} KWD"
                 . ($custody > 0 ? ", عُهد: {$custody} KWD" : '')
+                . ($advances > 0 ? ", سلف: {$advances} KWD" : '')
                 . " — إجمالي: {$totalDeductions} KWD",
             'accounts'     => $accounts,
             'docstatus'    => 1, // Submit immediately

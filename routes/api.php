@@ -18,6 +18,9 @@ use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\UploadController;
 use App\Http\Controllers\Api\CompanyController;
 use App\Http\Controllers\Api\SuperAdminCompanyController;
+use App\Http\Controllers\Api\DriverGuaranteeController;
+use App\Http\Controllers\Api\VehicleExpenseController;
+use App\Http\Controllers\Api\SalaryAdvanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -145,6 +148,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('vehicle-profitability', [ReportController::class, 'vehicleProfitability']);
             Route::get('driver-status', [ReportController::class, 'driverStatus']);
             Route::get('contract-profitability', [ReportController::class, 'contractProfitability']);
+            Route::get('missing-docs', [ReportController::class, 'missingDocs']);
         });
 
         // Settings
@@ -154,6 +158,20 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // WhatsApp
         Route::post('whatsapp/test-connection', [\App\Http\Controllers\Api\WhatsAppController::class, 'testConnection']);
         Route::post('whatsapp/send', [\App\Http\Controllers\Api\WhatsAppController::class, 'sendMessage']);
+
+        // ── Phase 2: New Modules ──────────────────────────────
+
+        // Driver Guarantees
+        Route::apiResource('guarantees', DriverGuaranteeController::class)->except(['update']);
+        Route::post('guarantees/{guarantee}/return', [DriverGuaranteeController::class, 'returnItem']);
+
+        // Vehicle Expenses
+        Route::get('vehicle-expenses/summary', [VehicleExpenseController::class, 'summary']);
+        Route::apiResource('vehicle-expenses', VehicleExpenseController::class);
+
+        // Salary Advances
+        Route::apiResource('salary-advances', SalaryAdvanceController::class)->except(['update']);
+        Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
     });
 
     // ═══════════════════════════════════════════════════════════════════
