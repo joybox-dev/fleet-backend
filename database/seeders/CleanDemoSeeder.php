@@ -287,7 +287,7 @@ class CleanDemoSeeder extends Seeder
                 'employee_id' => $e1->id, 'issued_by' => $admin->id,
                 'item_type' => 'phone', 'item_description' => 'iPhone 13 - Black',
                 'serial_number' => 'IMEI-001122334455', 'value' => 75.000,
-                'issued_date' => '2025-06-05', 'is_returned' => false,
+                'issued_date' => '2025-06-05', 'status' => 'active',
             ]
         );
         CustodyItem::firstOrCreate(
@@ -296,7 +296,7 @@ class CleanDemoSeeder extends Seeder
                 'employee_id' => $e1->id, 'issued_by' => $admin->id,
                 'item_type' => 'sim', 'item_description' => 'Zain SIM - Data Plan',
                 'serial_number' => 'SIM-99001122', 'value' => 5.000,
-                'issued_date' => '2025-06-05', 'is_returned' => false,
+                'issued_date' => '2025-06-05', 'status' => 'active',
             ]
         );
         CustodyItem::firstOrCreate(
@@ -305,7 +305,7 @@ class CleanDemoSeeder extends Seeder
                 'employee_id' => $e2->id, 'issued_by' => $admin->id,
                 'item_type' => 'clothing', 'item_description' => 'زي موحد - مقاس L',
                 'value' => 14.000, 'issued_date' => '2025-08-20',
-                'is_returned' => false,
+                'status' => 'active',
             ]
         );
         $this->command->info('✓ 3 custody items');

@@ -3,6 +3,7 @@
 namespace App\Services\ErpNext\Jobs;
 
 use App\Models\Vehicle;
+use App\Services\ErpNext\CompanyErpContext;
 use App\Services\ErpNext\ErpNextService;
 use App\Services\ErpNext\ErpNextCircuitOpenException;
 use Illuminate\Support\Facades\Log;
@@ -20,13 +21,16 @@ class SyncVehicleJob extends BaseErpSyncJob
         $vehicle = Vehicle::find($this->vehicleId);
         if (!$vehicle) return;
 
+        $ctx = CompanyErpContext::forCompany($vehicle->company_id);
+
         try {
-            $erpName = $service->syncVehicle($vehicle->toArray());
+            $erpName = $service->syncVehicle($vehicle->toArray(), $ctx);
             $this->updateSyncStatus('vehicles', $this->vehicleId, 'synced', $erpName);
 
             Log::channel('erpnext')->info("Vehicle synced", [
                 'vehicle_id' => $this->vehicleId,
                 'erp_asset' => $erpName,
+                'erp_company' => $ctx->company,
             ]);
         } catch (ErpNextCircuitOpenException $e) {
             $this->release(300);

@@ -23,6 +23,7 @@ class CompanyMapper
             'doctype'            => 'Company',
             'company_name'       => $company->name,
             'abbr'               => $abbr,
+            'parent_company'     => config('erpnext.company'), // child of root holding company
             'default_currency'   => $company->currency ?: 'KWD',
             'country'            => 'Kuwait',
             'chart_of_accounts'  => 'Standard',

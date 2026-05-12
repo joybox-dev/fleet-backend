@@ -3,6 +3,7 @@
 namespace App\Services\ErpNext\Jobs;
 
 use App\Models\Client;
+use App\Services\ErpNext\CompanyErpContext;
 use App\Services\ErpNext\ErpNextService;
 use App\Services\ErpNext\ErpNextCircuitOpenException;
 use Illuminate\Support\Facades\Log;
@@ -24,13 +25,17 @@ class SyncClientJob extends BaseErpSyncJob
         $client = Client::find($this->clientId);
         if (!$client) return;
 
+        // Resolve which ERPNext child company this client belongs to
+        $ctx = CompanyErpContext::forCompany($client->company_id);
+
         try {
-            $erpName = $service->syncClient($client->toArray());
+            $erpName = $service->syncClient($client->toArray(), $ctx);
             $this->updateSyncStatus('clients', $this->clientId, 'synced', $erpName);
 
             Log::channel('erpnext')->info("Client synced", [
                 'client_id' => $this->clientId,
                 'erp_customer' => $erpName,
+                'erp_company' => $ctx->company,
             ]);
         } catch (ErpNextCircuitOpenException $e) {
             $this->release(300);

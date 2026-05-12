@@ -50,9 +50,10 @@ class ErpNextService
      *
      * @return string ERPNext Customer name
      */
-    public function syncClient(array $client): string
+    public function syncClient(array $client, ?CompanyErpContext $ctx = null): string
     {
-        $data = CustomerMapper::toErpNext($client);
+        $ctx  = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $data = CustomerMapper::toErpNext($client, $ctx);
 
         // Check if already exists
         if (!empty($client['erp_id']) && $this->client->documentExists('Customer', $client['erp_id'])) {
@@ -77,9 +78,10 @@ class ErpNextService
      *
      * @return string ERPNext Employee name
      */
-    public function syncEmployee(array $employee): string
+    public function syncEmployee(array $employee, ?CompanyErpContext $ctx = null): string
     {
-        $data = EmployeeMapper::toErpNext($employee);
+        $ctx  = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $data = EmployeeMapper::toErpNext($employee, $ctx);
 
         if (!empty($employee['erp_id']) && $this->client->documentExists('Employee', $employee['erp_id'])) {
             $this->client->updateDocument('Employee', $employee['erp_id'], $data);
@@ -92,7 +94,7 @@ class ErpNextService
 
         // Create Salary Structure Assignment (OFFICIAL salary only)
         try {
-            $ssaData = EmployeeMapper::toSalaryStructureAssignment($employee, $erpName);
+            $ssaData = EmployeeMapper::toSalaryStructureAssignment($employee, $erpName, $ctx);
             $this->client->createDocument('Salary Structure Assignment', $ssaData);
             Log::channel('erpnext')->info("Created Salary Structure Assignment", ['employee' => $erpName]);
         } catch (\Exception $e) {
@@ -115,9 +117,10 @@ class ErpNextService
      *
      * @return string ERPNext Asset name
      */
-    public function syncVehicle(array $vehicle): string
+    public function syncVehicle(array $vehicle, ?CompanyErpContext $ctx = null): string
     {
-        $data = VehicleMapper::toErpNext($vehicle);
+        $ctx  = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $data = VehicleMapper::toErpNext($vehicle, $ctx);
 
         if (!empty($vehicle['erp_id']) && $this->client->documentExists('Asset', $vehicle['erp_id'])) {
             $this->client->updateDocument('Asset', $vehicle['erp_id'], $data);
@@ -141,9 +144,10 @@ class ErpNextService
      *
      * @return string ERPNext Sales Invoice name
      */
-    public function syncDailyLog(array $dailyLog, array $contract, array $vehicle): string
+    public function syncDailyLog(array $dailyLog, array $contract, array $vehicle, ?CompanyErpContext $ctx = null): string
     {
-        $data = InvoiceMapper::toErpNext($dailyLog, $contract, $vehicle);
+        $ctx  = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $data = InvoiceMapper::toErpNext($dailyLog, $contract, $vehicle, $ctx);
 
         $result = $this->client->createDocument('Sales Invoice', $data);
         $erpName = $result['name'];
@@ -202,9 +206,10 @@ class ErpNextService
      *
      * @return string ERPNext Journal Entry name
      */
-    public function syncViolation(array $violation, array $employee): string
+    public function syncViolation(array $violation, array $employee, ?CompanyErpContext $ctx = null): string
     {
-        $data = JournalMapper::violationToJournalEntry($violation, $employee);
+        $ctx  = $ctx ?? CompanyErpContext::fromGlobalConfig();
+        $data = JournalMapper::violationToJournalEntry($violation, $employee, $ctx);
 
         $result = $this->client->createDocument('Journal Entry', $data);
         $erpName = $result['name'];

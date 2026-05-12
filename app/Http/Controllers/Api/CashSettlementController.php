@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\CashSettlement;
 use App\Models\DailyLog;
 use Illuminate\Http\Request;
@@ -97,8 +97,7 @@ class CashSettlementController extends Controller
                 });
         }
 
-        // Sync to ERPNext as Payment Entry
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncSettlementJob::class, $settlement->id);
+
 
         return response()->json($settlement->load(['employee:id,name', 'receivedBy:id,name']), 201);
     }

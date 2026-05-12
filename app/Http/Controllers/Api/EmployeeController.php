@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\Employee;
 use App\Models\DailyLog;
 use App\Models\Violation;
@@ -68,8 +68,7 @@ class EmployeeController extends Controller
 
         $employee = Employee::create($validated);
 
-        // Sync to ERPNext as Employee
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncEmployeeJob::class, $employee->id);
+
 
         return response()->json($employee, 201);
     }
@@ -118,8 +117,7 @@ class EmployeeController extends Controller
 
         $employee->update($validated);
 
-        // Re-sync to ERPNext
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncEmployeeJob::class, $employee->id);
+
 
         return response()->json($employee->fresh());
     }

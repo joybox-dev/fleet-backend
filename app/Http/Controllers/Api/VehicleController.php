@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use Illuminate\Http\Request;
@@ -43,7 +43,7 @@ class VehicleController extends Controller
 
         $vehicle = Vehicle::create($validated);
 
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncVehicleJob::class, $vehicle->id);
+
 
         return response()->json($vehicle, 201);
     }

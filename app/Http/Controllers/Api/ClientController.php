@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\Client;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -34,8 +34,7 @@ class ClientController extends Controller
 
         $client = Client::create($validated);
 
-        // Sync to ERPNext as Customer
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncClientJob::class, $client->id);
+
 
         return response()->json($client, 201);
     }

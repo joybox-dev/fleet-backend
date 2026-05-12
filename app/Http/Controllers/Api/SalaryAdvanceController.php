@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\SalaryAdvance;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -64,11 +64,7 @@ class SalaryAdvanceController extends Controller
 
         $advance = SalaryAdvance::create($validated);
 
-        // ── ERPNext Bridge: Sync advance Journal Entry ──
-        ErpSync::dispatch(
-            \App\Services\ErpNext\Jobs\SyncAdvanceJob::class,
-            $advance->id
-        );
+
 
         $advance->load(['employee:id,name', 'approver:id,name']);
 

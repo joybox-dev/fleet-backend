@@ -2,6 +2,8 @@
 
 namespace App\Services\ErpNext\Mappers;
 
+use App\Services\ErpNext\CompanyErpContext;
+
 /**
  * CustomerMapper
  *
@@ -19,15 +21,18 @@ class CustomerMapper
      * Client fields: id, name, name_ar, contact_person, phone, email,
      *                tax_number, is_active, erp_id, erp_synced_at, erp_sync_status
      */
-    public static function toErpNext(array $client): array
+    public static function toErpNext(array $client, ?CompanyErpContext $ctx = null): array
     {
+        $ctx = $ctx ?? CompanyErpContext::fromGlobalConfig();
+
         return [
-            'doctype'        => 'Customer',
-            'customer_name'  => $client['name'],
-            'customer_type'  => 'Company',
-            'customer_group' => 'Commercial',
-            'territory'      => 'Kuwait',
-            'default_currency' => config('erpnext.default_currency'),
+            'doctype'          => 'Customer',
+            'customer_name'    => $client['name'],
+            'customer_type'    => 'Company',
+            'customer_group'   => 'Commercial',
+            'territory'        => 'Kuwait',
+            'default_currency' => $ctx->currency,
+            'company'          => $ctx->company,
 
             // Custom fields (to link back to FleetOps)
             'fleetops_client_id' => $client['id'],

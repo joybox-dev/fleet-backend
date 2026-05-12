@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\DailyLog;
 use App\Models\Contract;
 use Illuminate\Http\Request;
@@ -74,8 +74,7 @@ class DailyLogController extends Controller
             'cash_pending'    => $cashCollected,
         ]));
 
-        // Dispatch ERPNext sync job
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncDailyLogJob::class, $log->id);
+
 
         return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
     }
@@ -116,8 +115,7 @@ class DailyLogController extends Controller
 
         $dailyLog->update($validated);
 
-        // Re-sync to ERPNext
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncDailyLogJob::class, $dailyLog->id);
+
 
         return response()->json($dailyLog->fresh());
     }

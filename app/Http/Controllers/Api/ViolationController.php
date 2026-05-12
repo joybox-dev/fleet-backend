@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Helpers\ErpSync;
+
 use App\Models\Violation;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -61,7 +61,7 @@ class ViolationController extends Controller
             }
         }
 
-        ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncViolationJob::class, $violation->id);
+
 
         return response()->json($violation->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
     }
