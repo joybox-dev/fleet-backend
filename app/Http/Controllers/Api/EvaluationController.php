@@ -98,7 +98,7 @@ class EvaluationController extends Controller
             'notes'           => 'nullable|string',
             'scores'          => 'required|array|min:1',
             'scores.*.criterion_id' => 'required|exists:evaluation_criteria,id',
-            'scores.*.score'        => 'required|numeric|min:0|max:10',
+            'scores.*.score'        => 'required|numeric|min:0',
             'scores.*.notes'        => 'nullable|string',
         ]);
 
@@ -139,7 +139,7 @@ class EvaluationController extends Controller
             'status'          => 'sometimes|in:draft,submitted,approved',
             'scores'          => 'sometimes|array|min:1',
             'scores.*.criterion_id' => 'required_with:scores|exists:evaluation_criteria,id',
-            'scores.*.score'        => 'required_with:scores|numeric|min:0|max:10',
+            'scores.*.score'        => 'required_with:scores|numeric|min:0',
             'scores.*.notes'        => 'nullable|string',
         ]);
 
