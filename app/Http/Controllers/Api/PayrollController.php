@@ -55,72 +55,118 @@ class PayrollController extends Controller
             ]);
 
             $employees = Employee::whereIn('status', ['active', 'probation'])->get();
+            $employeeIds = $employees->pluck('id');
             $totalOfficial = 0;
             $totalActual   = 0;
 
-            foreach ($employees as $employee) {
-                // Orders this month
-                $logs = DailyLog::where('employee_id', $employee->id)
-                    ->whereBetween('log_date', [$startDate, $endDate])
-                    ->selectRaw('SUM(orders_count) as total_orders, SUM(income_amount) as total_income')
-                    ->first();
+            // ══════════════════════════════════════════════════════════════
+            // BATCH PRE-FETCH: All data in ~10 queries instead of N×8
+            // ══════════════════════════════════════════════════════════════
 
-                $totalOrders = (int) ($logs->total_orders ?? 0);
-                // Company revenue (for reporting): orders × contract rate
-                $companyRevenue = (float) ($logs->total_income ?? 0);
-                // Employee bonus: orders × employee's personal rate_per_order
+            // 1. Daily log aggregates per employee
+            $logAggregates = DailyLog::whereIn('employee_id', $employeeIds)
+                ->whereBetween('log_date', [$startDate, $endDate])
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(orders_count) as total_orders, SUM(income_amount) as total_income')
+                ->get()
+                ->keyBy('employee_id');
+
+            // 2. Violations (driver-liable, not yet deducted)
+            $violationSums = Violation::whereIn('employee_id', $employeeIds)
+                ->where('is_driver_liable', true)
+                ->where('is_deducted', false)
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(amount) as total')
+                ->pluck('total', 'employee_id');
+
+            // 3. Maintenance deductions
+            $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->groupBy('liable_employee_id')
+                ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
+                ->pluck('total', 'liable_employee_id');
+
+            // 4. Custody deductions
+            $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
+                ->where('status', 'returned')
+                ->whereIn('return_condition', ['damaged', 'lost'])
+                ->where('deduction_amount', '>', 0)
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(deduction_amount) as total')
+                ->pluck('total', 'employee_id');
+
+            // 5. Leave deductions (approved, unpaid, overlapping this period)
+            $leaveData = EmployeeLeave::whereIn('employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->where('is_paid', false)
+                ->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate])
+                      ->orWhereBetween('end_date', [$startDate, $endDate])
+                      ->orWhere(function ($q2) use ($startDate, $endDate) {
+                          $q2->where('start_date', '<=', $startDate)
+                             ->where('end_date', '>=', $endDate);
+                      });
+                })
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(total_deduction) as total_deduction, SUM(days_count) as total_days')
+                ->get()
+                ->keyBy('employee_id');
+
+            // 6. Active salary advances (need individual records for installment tracking)
+            $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
+                ->where('status', 'active')
+                ->get()
+                ->groupBy('employee_id');
+
+            // 7. Vehicle assignments for fuel allowance
+            $allAssignments = \DB::table('vehicle_assignments')
+                ->join('vehicles', 'vehicles.id', '=', 'vehicle_assignments.vehicle_id')
+                ->whereIn('vehicle_assignments.employee_id', $employeeIds)
+                ->where('vehicle_assignments.assigned_date', '<=', $endDate)
+                ->where(function ($q) use ($startDate) {
+                    $q->whereNull('vehicle_assignments.unassigned_date')
+                      ->orWhere('vehicle_assignments.unassigned_date', '>=', $startDate);
+                })
+                ->select('vehicle_assignments.employee_id', 'vehicles.monthly_fuel_allowance')
+                ->get()
+                ->groupBy('employee_id');
+
+            // ══════════════════════════════════════════════════════════════
+            // LOOP: Now uses in-memory lookups only — ZERO queries inside
+            // ══════════════════════════════════════════════════════════════
+
+            foreach ($employees as $employee) {
+                $empId = $employee->id;
+
+                // Look up pre-fetched data
+                $logAgg = $logAggregates[$empId] ?? null;
+                $totalOrders = (int) ($logAgg?->total_orders ?? 0);
+                $companyRevenue = (float) ($logAgg?->total_income ?? 0);
                 $ordersBonus = round($totalOrders * (float)($employee->rate_per_order ?? 0), 3);
 
-                // Deductions for this month
-                $violationsDeduction = Violation::where('employee_id', $employee->id)
-                    ->where('is_driver_liable', true)
-                    ->where('is_deducted', false)
-                    ->sum('amount');
+                $violationsDeduction  = (float) ($violationSums[$empId] ?? 0);
+                $maintenanceDeduction = (float) ($maintenanceSums[$empId] ?? 0);
+                $custodyDeduction     = (float) ($custodySums[$empId] ?? 0);
 
-                $maintenanceDeduction = MaintenanceRecord::where('liable_employee_id', $employee->id)
-                    ->where('status', 'approved')
-                    ->sum('driver_deduction');
+                $leaveInfo = $leaveData[$empId] ?? null;
+                $leaveDeduction  = (float) ($leaveInfo?->total_deduction ?? 0);
+                $unpaidLeaveDays = (int)   ($leaveInfo?->total_days ?? 0);
 
-                $custodyDeduction = CustodyItem::where('employee_id', $employee->id)
-                    ->where('status', 'returned')
-                    ->whereIn('return_condition', ['damaged', 'lost'])
-                    ->where('deduction_amount', '>', 0)
-                    ->sum('deduction_amount');
-
-                // Leave deductions — approved unpaid leaves in this payroll period
-                $leaveQuery = EmployeeLeave::where('employee_id', $employee->id)
-                    ->where('status', 'approved')
-                    ->where('is_paid', false)
-                    ->where(function ($q) use ($startDate, $endDate) {
-                        $q->whereBetween('start_date', [$startDate, $endDate])
-                          ->orWhereBetween('end_date', [$startDate, $endDate])
-                          ->orWhere(function ($q2) use ($startDate, $endDate) {
-                              $q2->where('start_date', '<=', $startDate)
-                                 ->where('end_date', '>=', $endDate);
-                          });
-                    });
-                $leaveDeduction   = (float) $leaveQuery->sum('total_deduction');
-                $unpaidLeaveDays  = (int)   $leaveQuery->sum('days_count');
-
-                // ── Salary Advance installment deduction ──
+                // Salary advance installments
                 $advanceDeduction = 0;
-                $activeAdvances = SalaryAdvance::where('employee_id', $employee->id)
-                    ->where('status', 'active')
-                    ->get();
-
+                $activeAdvances = $allAdvances[$empId] ?? collect();
                 foreach ($activeAdvances as $advance) {
                     $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
                     if ($installment <= 0) continue;
                     $advanceDeduction += $installment;
-                    // Track: will create AdvanceDeduction after slip is created (need slip ID)
                 }
 
-                $fuelAllowance = $employee->vehicleAssignments()
-                    ->whereDate('assigned_date', '<=', $endDate)
-                    ->where(fn($q) => $q->whereNull('unassigned_date')->orWhereDate('unassigned_date', '>=', $startDate))
-                    ->with('vehicle:id,monthly_fuel_allowance')
-                    ->get()
-                    ->sum(fn($a) => $a->vehicle?->monthly_fuel_allowance ?? 0);
+                // Fuel allowance from vehicle assignments
+                $fuelAllowance = 0;
+                $empAssignments = $allAssignments[$empId] ?? collect();
+                foreach ($empAssignments as $a) {
+                    $fuelAllowance += (float) ($a->monthly_fuel_allowance ?? 0);
+                }
 
                 // ═══════════════════════════════════════════════════════════
                 // DUAL-PAYROLL CALCULATION — 5-STEP PROTECTED FORMULA

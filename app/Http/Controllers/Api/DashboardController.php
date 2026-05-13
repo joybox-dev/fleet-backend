@@ -195,15 +195,15 @@ class DashboardController extends Controller
             ->toArray();
 
         // Pending cash — from meeting: "الفلوس المعلقة خطيرة لأنها أمانة وليست ملك الشركة"
-        $pendingCash = DailyLog::query()
-            ->where('cash_pending', '>', 0)
-            ->selectRaw('employee_id, SUM(cash_pending) as total_pending')
-            ->with('employee:id,name')
-            ->groupBy('employee_id')
+        $pendingCash = DailyLog::join('employees', 'employees.id', '=', 'daily_logs.employee_id')
+            ->where('daily_logs.cash_pending', '>', 0)
+            ->groupBy('daily_logs.employee_id', 'employees.name')
+            ->selectRaw('daily_logs.employee_id, employees.name as employee_name, SUM(daily_logs.cash_pending) as total_pending')
+            ->orderByDesc('total_pending')
             ->get()
             ->map(fn($row) => [
                 'employee_id'   => $row->employee_id,
-                'employee_name' => $row->employee?->name,
+                'employee_name' => $row->employee_name,
                 'total_pending' => (float) $row->total_pending,
             ]);
 

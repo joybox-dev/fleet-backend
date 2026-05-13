@@ -263,18 +263,23 @@ class LeaveController extends Controller
 
         $types = LeaveType::where('is_active', true)->get();
 
-        $balances = $types->map(function ($type) use ($employee, $year) {
-            $used = EmployeeLeave::where('employee_id', $employee->id)
-                ->where('leave_type_id', $type->id)
-                ->whereIn('status', ['approved'])
-                ->whereYear('start_date', $year)
-                ->sum('days_count');
+        // Batch: all leave usage for this employee in one query
+        $usageData = EmployeeLeave::where('employee_id', $employee->id)
+            ->whereYear('start_date', $year)
+            ->whereIn('status', ['approved', 'pending'])
+            ->groupBy('leave_type_id', 'status')
+            ->selectRaw('leave_type_id, status, SUM(days_count) as total_days')
+            ->get();
 
-            $pending = EmployeeLeave::where('employee_id', $employee->id)
-                ->where('leave_type_id', $type->id)
-                ->where('status', 'pending')
-                ->whereYear('start_date', $year)
-                ->sum('days_count');
+        // Index by type → status
+        $usageMap = [];
+        foreach ($usageData as $row) {
+            $usageMap[$row->leave_type_id][$row->status] = (int) $row->total_days;
+        }
+
+        $balances = $types->map(function ($type) use ($usageMap) {
+            $used    = $usageMap[$type->id]['approved'] ?? 0;
+            $pending = $usageMap[$type->id]['pending'] ?? 0;
 
             return [
                 'leave_type_id'   => $type->id,
@@ -282,8 +287,8 @@ class LeaveController extends Controller
                 'name_ar'         => $type->name_ar,
                 'is_paid'         => $type->is_paid,
                 'max_days'        => $type->max_days_per_year,
-                'used'            => (int) $used,
-                'pending'         => (int) $pending,
+                'used'            => $used,
+                'pending'         => $pending,
                 'remaining'       => $type->max_days_per_year
                     ? max(0, $type->max_days_per_year - $used)
                     : null,
