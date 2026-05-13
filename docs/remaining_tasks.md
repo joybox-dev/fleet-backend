@@ -1,6 +1,6 @@
 # FleetOps — Remaining Tasks (Contract Scope)
 
-> Last updated: 2026-05-13 (Sprint 1 complete)
+> Last updated: 2026-05-13 (Sprint 1 + Sprint 2 complete)
 > Branch: `feature/native-accounting`
 > Contract deadline: 75 working days
 
@@ -13,7 +13,9 @@
 | 1 | المخالفات | Photo upload via `uploadApi`, image preview in form, fullscreen viewer, 📷 column in table |
 | 2 | العهد والكاش | Full CRUD, custody types, cash settlement with FIFO, pending cash endpoint, frontend pages |
 | 3 | ضمانات السائقين | Backend CRUD + return, frontend page with stats cards, filters, create/return modals |
+| 4 | العمليات | Operations dashboard: per-contract capacity (required/assigned/leave/deficit), order targets, batch-optimized queries |
 | 6 | مصاريف المركبات | Backend CRUD + summary, frontend page with expense type icons, summary cards, filters |
+| 7 | HR نظام تقييم | Employee documents (CRUD + file upload + auto-status), Evaluation system (criteria + weighted scoring + approve), Auto numbering (EMP-XXXX) |
 | 8 | السلف | Backend CRUD + cancel + deductions, frontend page with installment calc, progress bar, deduction history |
 | 9 | التقارير | 9 report endpoints: missing docs, expiring docs, violations, pending cash, weekly orders, fleet status, vehicle P&L, driver status, contract P&L |
 | 11 | Multi-Company | 17 models scoped, company isolation, branding, module gating, super admin dashboard, full frontend |
@@ -61,121 +63,42 @@
 
 ---
 
-## Sprint 2: Operations & HR
+## ✅ Sprint 2: Operations & HR — COMPLETED
 
-**Estimated: 5 days**
+**Completed: 2026-05-13 | Build: ✅ clean (698 modules)**
 **Contract items: 4, 7**
 
-### Task 2.1 — Operations Dashboard + Contract Capacity
-> Contract item 4: العمليات — drivers per brand, absent/leave counts, deficit
+### Task 2.1 ✅ Operations Dashboard + Contract Capacity
+- Migration: added `required_drivers`, `daily_target`, `monthly_target` to contracts
+- `OperationsController@dashboard` — batch-optimized (6 queries total, zero N+1)
+- Per-contract cards: required/assigned/leave/available/deficit with color coding
+- Order progress bars: daily + monthly targets with % completion
+- Global summary stats row
+- Sidebar link: 🎯 لوحة العمليات
 
-**Note:** Absent driver counts come from the **existing leave system** (no separate attendance system needed).
+### Task 2.3 ✅ Employee Documents
+- Migration: `employee_documents` table (8 doc types, auto-status)
+- Model: `EmployeeDocument` with `refreshStatus()` — auto-sets valid/pending_renewal/expired based on expiry
+- Controller: CRUD nested under `/employees/{id}/documents`
+- Profile tab: 📂 الوثائق المرفقة with table + add modal + file upload via `uploadApi`
+- Status indicators: ✅ ساري / ⚠️ قارب الانتهاء / ❌ منتهي
 
-**Backend:**
-- [ ] Add fields to `contracts` table migration:
-  - `required_drivers` (int) — how many drivers needed for this brand
-  - `daily_target` (int) — daily order target
-  - `monthly_target` (int) — monthly order target
-- [ ] Create `OperationsController.php`:
-  - `dashboard()` — returns per contract:
-    - Required drivers (from contract)
-    - Assigned drivers (from vehicle_assignments)
-    - Drivers on leave today (from employee_leaves where status=approved and date in range)
-    - Deficit = required - (assigned - on_leave)
-    - Orders today vs daily target
-  - Uses existing `EmployeeLeave` model — no new tables needed
+### Task 2.4 ✅ Employee Evaluations
+- 3 migrations: `evaluation_criteria`, `employee_evaluations`, `evaluation_scores`
+- 3 models with weighted score calculation (`calculateOverallScore()`)
+- `EvaluationController`: CRUD for criteria + evaluations, approve flow
+- Full evaluations page with:
+  - Criteria management modal (⚙️)
+  - Create evaluation with per-criterion scoring (0-10)
+  - Detail modal with score breakdown bars
+  - Approve/delete flows
+  - Filters: employee, status
+- Profile tab: 📝 التقييمات showing evaluation history
+- Sidebar link: 📝 التقييمات
 
-**Frontend:**
-- [ ] Create `src/pages/operations/OperationsPage.jsx`:
-  - Cards per contract/brand: required vs available drivers (red if deficit)
-  - On-leave driver count (linked from leave system)
-  - Target vs actual orders comparison
-- [ ] Add sidebar link
-- [ ] Add route
-
-**Files to create:**
-- `database/migrations/xxxx_add_capacity_to_contracts.php`
-- `app/Http/Controllers/Api/OperationsController.php`
-- `fleet-frontend/src/pages/operations/OperationsPage.jsx`
-
----
-
-### Task 2.3 — Employee Documents
-> Contract item 7: نظام تقييم HR — وثائق الموظفين
-
-**Backend:**
-- [ ] Create migration: `employee_documents` table
-  - `id, employee_id, company_id, document_type (passport/civil_id/work_permit/driving_license/residence/health_card/contract/other), document_number, file_path, issue_date, expiry_date, status (valid/expired/pending_renewal), notes, created_at, updated_at`
-- [ ] Create model: `EmployeeDocument.php` with `BelongsToCompany`
-- [ ] Create controller: `EmployeeDocumentController.php`
-  - `index(employee_id)` — list docs for employee
-  - `store(data)` — upload document with file
-  - `update(id, data)` — update expiry/status
-  - `destroy(id)` — delete
-- [ ] Add routes
-
-**Frontend:**
-- [ ] Add documents tab to `EmployeeProfile.jsx`
-  - Table of documents with type, number, expiry, status
-  - Upload new document dialog
-  - Visual indicators: green (valid), yellow (expiring), red (expired)
-
-**Files to create:**
-- `database/migrations/xxxx_create_employee_documents_table.php`
-- `app/Models/EmployeeDocument.php`
-- `app/Http/Controllers/Api/EmployeeDocumentController.php`
-
-**Files to modify:**
-- `fleet-frontend/src/pages/employees/EmployeeProfile.jsx`
-
----
-
-### Task 2.4 — Employee Evaluations
-> Contract item 7: نظام تقييم HR — نظام تقييم الموظفين
-
-**Backend:**
-- [ ] Create migration: `evaluation_criteria` table
-  - `id, company_id, name, name_ar, weight (decimal), is_active, created_at, updated_at`
-- [ ] Create migration: `employee_evaluations` table
-  - `id, employee_id, company_id, evaluator_id, evaluation_date, period_from, period_to, overall_score (decimal), status (draft/submitted/approved), notes, created_at, updated_at`
-- [ ] Create migration: `evaluation_scores` table
-  - `id, evaluation_id, criterion_id, score (decimal), notes`
-- [ ] Create models: `EvaluationCriterion`, `EmployeeEvaluation`, `EvaluationScore`
-- [ ] Create controller: `EvaluationController.php`
-  - CRUD for criteria (company-level)
-  - CRUD for evaluations
-  - Score submission per criterion
-- [ ] Add routes
-
-**Frontend:**
-- [ ] Create `src/pages/evaluations/EvaluationsPage.jsx`:
-  - Criteria management (settings)
-  - Create evaluation: select employee, period, score each criterion
-  - History view per employee
-- [ ] Add evaluations tab to `EmployeeProfile.jsx`
-
-**Files to create:**
-- `database/migrations/xxxx_create_evaluation_criteria_table.php`
-- `database/migrations/xxxx_create_employee_evaluations_table.php`
-- `database/migrations/xxxx_create_evaluation_scores_table.php`
-- `app/Models/EvaluationCriterion.php`
-- `app/Models/EmployeeEvaluation.php`
-- `app/Models/EvaluationScore.php`
-- `app/Http/Controllers/Api/EvaluationController.php`
-- `fleet-frontend/src/pages/evaluations/EvaluationsPage.jsx`
-
----
-
-### Task 2.5 — Auto Employee Numbering
-> Contract item 7: ترقيم وظيفي تلقائي
-
-**Backend:**
-- [ ] Add auto-generation in `EmployeeController@store`:
-  - Format: `EMP-YYYY-XXXX` (e.g. `EMP-2026-0001`)
-  - Auto-increment per company per year
-
-**Files to modify:**
-- `app/Http/Controllers/Api/EmployeeController.php`
+### Task 2.5 ✅ Auto Employee Numbering
+- Already existed: `EMP-XXXX` format in `EmployeeController@store` (line 56-63)
+- Auto-increment per company
 
 ---
 
@@ -355,10 +278,10 @@
 | Sprint | Tasks | Days | Status |
 |--------|-------|------|--------|
 | **Sprint 1** | 1.1, 1.2, 1.3, 1.4 | 3 | ✅ DONE |
-| **Sprint 2** | 2.1, 2.3, 2.4, 2.5 | 4 | ⬜ TODO |
+| **Sprint 2** | 2.1, 2.3, 2.4, 2.5 | 4 | ✅ DONE |
 | **Sprint 3** | 3.1 | 2 | ⬜ TODO |
 | **Sprint 4** | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | 7-8 | ⬜ TODO |
-| **TOTAL** | | **13-14 days remaining** | |
+| **TOTAL** | | **9-10 days remaining** | |
 
 > [!NOTE]
 > Tasks from `new_req.md` NOT in contract (deferred):

@@ -16,6 +16,7 @@ class Contract extends Model
         'client_id', 'contract_number', 'name', 'payment_type',
         'rate_per_order', 'fixed_monthly', 'start_date', 'end_date',
         'is_active', 'is_locked', 'notes',
+        'required_drivers', 'daily_target', 'monthly_target',
     ];
 
     protected $casts = [
@@ -23,6 +24,9 @@ class Contract extends Model
         'is_locked' => 'boolean',
         'rate_per_order' => 'decimal:3',
         'fixed_monthly'  => 'decimal:3',
+        'required_drivers' => 'integer',
+        'daily_target'     => 'integer',
+        'monthly_target'   => 'integer',
     ];
 
     public function client(): BelongsTo

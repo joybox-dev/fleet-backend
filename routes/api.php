@@ -21,6 +21,9 @@ use App\Http\Controllers\Api\SuperAdminCompanyController;
 use App\Http\Controllers\Api\DriverGuaranteeController;
 use App\Http\Controllers\Api\VehicleExpenseController;
 use App\Http\Controllers\Api\SalaryAdvanceController;
+use App\Http\Controllers\Api\OperationsController;
+use App\Http\Controllers\Api\EmployeeDocumentController;
+use App\Http\Controllers\Api\EvaluationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -88,6 +91,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::apiResource('leaves', LeaveController::class);
         Route::post('leaves/{leave}/approve', [LeaveController::class, 'approve']);
         Route::post('leaves/{leave}/reject', [LeaveController::class, 'reject']);
+
+        // Operations Dashboard
+        Route::get('operations/dashboard', [OperationsController::class, 'dashboard']);
     });
 
     // ═══════════════════════════════════════════════════════════════════
@@ -105,6 +111,21 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Employees — full CRUD + balance
         Route::apiResource('employees', EmployeeController::class);
         Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
+
+        // Employee Documents
+        Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);
+        Route::post('employees/{employee}/documents', [EmployeeDocumentController::class, 'store']);
+        Route::put('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'update']);
+        Route::delete('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'destroy']);
+
+        // Evaluation Criteria (company settings)
+        Route::get('evaluation-criteria', [EvaluationController::class, 'criteriaIndex']);
+        Route::post('evaluation-criteria', [EvaluationController::class, 'criteriaStore']);
+        Route::put('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaUpdate']);
+        Route::delete('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaDestroy']);
+
+        // Employee Evaluations
+        Route::apiResource('evaluations', EvaluationController::class);
 
         // Vehicles — create/update/delete (operators can only view)
         Route::post('vehicles', [VehicleController::class, 'store']);
