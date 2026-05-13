@@ -66,7 +66,7 @@ class EvaluationController extends Controller
     /** GET /api/evaluations */
     public function index(Request $request): JsonResponse
     {
-        $evaluations = EmployeeEvaluation::with(['employee:id,name,employee_number', 'evaluator:id,name'])
+        $evaluations = EmployeeEvaluation::with(['employee:id,name,employee_number', 'evaluator:id,name', 'scores.criterion'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->orderByDesc('evaluation_date')
