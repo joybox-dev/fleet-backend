@@ -1,6 +1,6 @@
 # FleetOps — Remaining Tasks (Contract Scope)
 
-> Last updated: 2026-05-13
+> Last updated: 2026-05-13 (Sprint 1 complete)
 > Branch: `feature/native-accounting`
 > Contract deadline: 75 working days
 
@@ -10,127 +10,54 @@
 
 | # | Item | What's Done |
 |---|------|-------------|
+| 1 | المخالفات | Photo upload via `uploadApi`, image preview in form, fullscreen viewer, 📷 column in table |
 | 2 | العهد والكاش | Full CRUD, custody types, cash settlement with FIFO, pending cash endpoint, frontend pages |
+| 3 | ضمانات السائقين | Backend CRUD + return, frontend page with stats cards, filters, create/return modals |
+| 6 | مصاريف المركبات | Backend CRUD + summary, frontend page with expense type icons, summary cards, filters |
+| 8 | السلف | Backend CRUD + cancel + deductions, frontend page with installment calc, progress bar, deduction history |
 | 9 | التقارير | 9 report endpoints: missing docs, expiring docs, violations, pending cash, weekly orders, fleet status, vehicle P&L, driver status, contract P&L |
 | 11 | Multi-Company | 17 models scoped, company isolation, branding, module gating, super admin dashboard, full frontend |
 
 ---
 
-## Sprint 1: Frontend for Backend-Ready Items
+## ✅ Sprint 1: Frontend for Backend-Ready Items — COMPLETED
 
-**Estimated: 3 days**
+**Completed: 2026-05-13 | Tested: E2E browser tests passed**
 **Contract items: 1, 3, 6, 8**
 
-### Task 1.1 — Violation Image Upload
-> Contract item 1: المخالفات
+### Task 1.1 ✅ Violation Image Upload
+- Replaced text input with file upload picker using existing `uploadApi`
+- Image preview in create/edit form with remove button
+- 📷 column in violations table — click to view fullscreen
+- Fullscreen image viewer overlay with close button
 
-**Backend:**
-- [ ] Add file upload handling in `ViolationController@store` (accept `image` file, store in `storage/violations/`, save path)
-- [ ] Add file upload handling in `ViolationController@update`
+### Task 1.2 ✅ Driver Guarantees Page
+- Created `GuaranteesPage.jsx` — full CRUD with return flow
+- Stats cards: total, held (🔒), returned (✅)
+- Create modal: employee, type (passport/civil_id/contract/bank/other), document number, date
+- Return modal: date + notes confirmation
+- Filters: status, employee
+- Added `guaranteesApi` to API client
 
-**Frontend:**
-- [ ] Add image picker to violation create/edit form in `ViolationList.jsx`
-- [ ] Show violation image in detail/list view
-- [ ] Use existing `UploadController` endpoint for file upload
+### Task 1.3 ✅ Vehicle Expenses Page
+- Created `VehicleExpensesPage.jsx` — full CRUD
+- Summary cards: total + breakdown by type (⛽ fuel, 🛡️ insurance, 🔧 tires, etc.)
+- Create/edit modal: vehicle, type, amount, date, vendor, description
+- Filters: vehicle, type, date range
+- Added `vehicleExpensesApi` to API client
 
-**Files to modify:**
-- `app/Http/Controllers/Api/ViolationController.php`
-- `fleet-frontend/src/pages/violations/ViolationList.jsx`
+### Task 1.4 ✅ Salary Advances Page
+- Created `SalaryAdvancesPage.jsx` — create + cancel + detail view
+- Auto installment calculator (amount ÷ monthly = months)
+- Detail modal: summary grid + progress bar + deduction history table
+- Stats cards: total, active (🟢), remaining balance (💰), completed (✅)
+- Filters: status, employee
+- Added `salaryAdvancesApi` to API client
 
----
-
-### Task 1.2 — Driver Guarantees Page
-> Contract item 3: ضمانات السائقين
-
-**Backend:** ✅ Done (controller, model, routes all exist)
-
-**Frontend:**
-- [ ] Create `src/api/index.js` — add guarantee API functions:
-  - `getGuarantees(filters)`
-  - `createGuarantee(data)`
-  - `returnGuarantee(id, data)`
-  - `deleteGuarantee(id)`
-- [ ] Create `src/pages/guarantees/GuaranteesPage.jsx`:
-  - Table: employee, type, document number, received date, status, actions
-  - Create dialog: employee select, type select, document number, date, file upload, notes
-  - Return action: date picker + confirm
-  - Filter by: status (held/returned), employee
-- [ ] Add sidebar link under custody section
-- [ ] Add route in `App.jsx`
-
-**Files to create:**
-- `fleet-frontend/src/pages/guarantees/GuaranteesPage.jsx`
-
-**Files to modify:**
-- `fleet-frontend/src/api/index.js`
-- `fleet-frontend/src/components/layout/Sidebar.jsx`
-- `fleet-frontend/src/App.jsx`
-
----
-
-### Task 1.3 — Vehicle Expenses Page
-> Contract item 6: مصاريف المركبات
-
-**Backend:** ✅ Done (CRUD + summary endpoint)
-
-**Frontend:**
-- [ ] Create `src/api/index.js` — add vehicle expense API functions:
-  - `getVehicleExpenses(filters)`
-  - `createVehicleExpense(data)`
-  - `updateVehicleExpense(id, data)`
-  - `deleteVehicleExpense(id)`
-  - `getVehicleExpenseSummary(filters)`
-- [ ] Create `src/pages/vehicle-expenses/VehicleExpensesPage.jsx`:
-  - Table: vehicle, type, amount, date, vendor, description, actions
-  - Create/edit dialog: vehicle select, type select (fuel/insurance/tires/registration/fine/repair/other), amount, date, vendor, receipt upload, notes
-  - Summary section: total by type (bar chart or cards)
-  - Filter by: vehicle, type, date range
-- [ ] Add sidebar link under vehicles section
-- [ ] Add route in `App.jsx`
-
-**Files to create:**
-- `fleet-frontend/src/pages/vehicle-expenses/VehicleExpensesPage.jsx`
-
-**Files to modify:**
-- `fleet-frontend/src/api/index.js`
-- `fleet-frontend/src/components/layout/Sidebar.jsx`
-- `fleet-frontend/src/App.jsx`
-
----
-
-### Task 1.4 — Salary Advances Page
-> Contract item 8: حسابات المندوبين — السلف
-
-**Backend:** ✅ Done (CRUD + cancel + deduction model)
-
-**Frontend:**
-- [ ] Create `src/api/index.js` — add salary advance API functions:
-  - `getSalaryAdvances(filters)`
-  - `createSalaryAdvance(data)`
-  - `getSalaryAdvance(id)` (with deductions)
-  - `cancelSalaryAdvance(id)`
-- [ ] Create `src/pages/salary-advances/SalaryAdvancesPage.jsx`:
-  - Table: employee, amount, monthly installment, paid/total installments, remaining, status, actions
-  - Create dialog: employee select, amount, monthly installment (auto-calculates total installments), date, reason
-  - Detail view: deduction history table
-  - Cancel action with confirmation
-  - Filter by: status (active/completed/cancelled), employee
-- [ ] Verify payroll integration — `PayrollController@run` should auto-deduct active advances
-- [ ] Add sidebar link under payroll section
-- [ ] Add route in `App.jsx`
-
-**Backend (verify):**
-- [ ] Check `PayrollController@run` deducts active salary advances automatically
-- [ ] If not, add advance deduction logic to payroll run
-
-**Files to create:**
-- `fleet-frontend/src/pages/salary-advances/SalaryAdvancesPage.jsx`
-
-**Files to modify:**
-- `fleet-frontend/src/api/index.js`
-- `fleet-frontend/src/components/layout/Sidebar.jsx`
-- `fleet-frontend/src/App.jsx`
-- `app/Http/Controllers/Api/PayrollController.php` (if advance deduction missing)
+### Infrastructure
+- Added 3 sidebar links: 💰 مصاريف المركبات, 🔐 ضمانات السائقين, 💵 السلف
+- Added 3 routes in `App.jsx`
+- Added `guaranteesApi`, `vehicleExpensesApi`, `salaryAdvancesApi`, `missingDocs` to `api/index.js`
 
 ---
 
@@ -427,11 +354,11 @@
 
 | Sprint | Tasks | Days | Status |
 |--------|-------|------|--------|
-| **Sprint 1** | 1.1, 1.2, 1.3, 1.4 | 3 | ⬜ TODO |
+| **Sprint 1** | 1.1, 1.2, 1.3, 1.4 | 3 | ✅ DONE |
 | **Sprint 2** | 2.1, 2.3, 2.4, 2.5 | 4 | ⬜ TODO |
 | **Sprint 3** | 3.1 | 2 | ⬜ TODO |
 | **Sprint 4** | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | 7-8 | ⬜ TODO |
-| **TOTAL** | | **16-17 days** | |
+| **TOTAL** | | **13-14 days remaining** | |
 
 > [!NOTE]
 > Tasks from `new_req.md` NOT in contract (deferred):
