@@ -127,9 +127,10 @@ class CleanDemoSeeder extends Seeder
             'residence_expiry' => '2026-12-01',
             'driving_license_expiry' => '2027-06-01',
             'work_permit_expiry' => '2026-11-30',
-            'stage_arrived' => true, 'stage_medical_done' => true,
-            'stage_work_permit_done' => true, 'stage_driving_trial_done' => true,
-            'stage_license_obtained' => true,
+            'stage_arrived' => true, 'stage_medical_done' => true, 'stage_medical_date' => '2025-06-05',
+            'stage_work_permit_done' => true, 'stage_work_permit_date' => '2025-06-12',
+            'stage_driving_trial_done' => true,
+            'stage_license_obtained' => true, 'stage_license_date' => '2025-06-20',
         ]);
         $e2 = Employee::firstOrCreate(['employee_number' => 'EMP-002'], [
             'name' => 'Arjun Singh', 'name_ar' => 'أرجون سينغ',
@@ -144,9 +145,10 @@ class CleanDemoSeeder extends Seeder
             'residence_expiry' => '2026-09-15',
             'driving_license_expiry' => '2027-08-15',
             'work_permit_expiry' => '2026-09-14',
-            'stage_arrived' => true, 'stage_medical_done' => true,
-            'stage_work_permit_done' => true, 'stage_driving_trial_done' => true,
-            'stage_license_obtained' => true,
+            'stage_arrived' => true, 'stage_medical_done' => true, 'stage_medical_date' => '2025-08-20',
+            'stage_work_permit_done' => true, 'stage_work_permit_date' => '2025-08-28',
+            'stage_driving_trial_done' => true,
+            'stage_license_obtained' => true, 'stage_license_date' => '2025-09-05',
         ]);
         $this->command->info('✓ 2 employees');
 
