@@ -42,6 +42,7 @@ class AuthController extends Controller
                 'role'           => $user->role,
                 'is_super_admin' => $user->isSuperAdmin(),
                 'company_id'     => $user->company_id,
+                'permissions'    => $user->resolvePermissions(),
             ],
             'current_company' => $company ? [
                 'id'              => $company->id,
@@ -83,6 +84,7 @@ class AuthController extends Controller
                 'email'          => $user->email,
                 'role'           => app()->bound('current_company_role') ? app('current_company_role') : $user->role,
                 'is_super_admin' => $user->isSuperAdmin(),
+                'permissions'    => $user->resolvePermissions(),
             ],
             'current_company' => $company ? [
                 'id'              => $company->id,
