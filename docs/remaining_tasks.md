@@ -102,6 +102,58 @@
 
 ---
 
+## ✅ Sprint 2.5: Feature Integration — COMPLETED
+
+**Completed: 2026-05-14 | Scope: Cross-feature connectivity audit**
+**Objective: Ensure no feature sits standalone — everything affects everything else**
+
+### Task 2.5.1 ✅ Backend — Model Relationships
+- Added 5 missing `hasMany` relationships to `Employee.php`:
+  - `salaryAdvances()`, `guarantees()`, `documents()`, `evaluations()`, `liableMaintenance()`
+- Added `expenses()` hasMany to `Vehicle.php` → links Vehicle ↔ VehicleExpense
+- **Impact**: Enables eager loading and future count queries for all employee/vehicle sub-features
+
+### Task 2.5.2 ✅ Employee Balance — Complete Deduction Breakdown
+- Updated `EmployeeController@balance` to include 2 missing deduction sources:
+  - `debits.advances` — total salary advance installments deducted from payroll
+  - `debits.leaves` — total unpaid leave deductions
+- **Before**: Balance only showed violations + maintenance + custody (3/5 deduction types)
+- **After**: All 5 deduction types now visible in balance breakdown
+
+### Task 2.5.3 ✅ Employee Profile — 3 New Connected Sections
+Added 3 missing sections to `EmployeeProfile.jsx`:
+- **💵 السلف (Salary Advances)**: Active advances with amount, progress bar, installment tracking, remaining balance
+- **🔐 الضمانات (Guarantees)**: Held documents table (type, doc number, received date, status badge)
+- **📦 العُهد (Custody Items)**: Items on employee record with status (active, returned, lost, damaged)
+
+### Task 2.5.4 ✅ Balance Detail — Advance & Leave Rows
+- Added 2 new deduction rows to the expandable balance detail on Employee Profile:
+  - أقساط سلف (advance installments)
+  - خصم إجازات (leave deductions)
+
+### Connection Map (after fix)
+```
+Employee Profile now shows ALL related data:
+├── 📊 الحساب المالي (violations + maintenance + custody + advances + leaves)
+├── 📄 المستندات (document expiry stepper)
+├── 🚗 التعيينات (vehicle assignments)
+├── ⚠️ المخالفات (violations table)
+├── 🏖️ الإجازات (leave balance + history)
+├── 📂 الوثائق المرفقة (scanned documents)
+├── 📝 التقييمات (evaluation scores)
+├── 💵 السلف (salary advances + progress)     ← NEW
+├── 🔐 الضمانات (held guarantees)              ← NEW
+└── 📦 العُهد (custody items)                  ← NEW
+```
+
+**Files Modified:**
+- `app/Models/Employee.php` — 5 new relationships
+- `app/Models/Vehicle.php` — 1 new relationship
+- `app/Http/Controllers/Api/EmployeeController.php` — balance endpoint enhanced
+- `src/pages/employees/EmployeeProfile.jsx` — 3 new sections + 2 balance rows
+
+---
+
 ## Sprint 3: Excel Import/Export
 
 **Estimated: 3 days**
@@ -279,6 +331,7 @@
 |--------|-------|------|--------|
 | **Sprint 1** | 1.1, 1.2, 1.3, 1.4 | 3 | ✅ DONE |
 | **Sprint 2** | 2.1, 2.3, 2.4, 2.5 | 4 | ✅ DONE |
+| **Sprint 2.5** | 2.5.1–2.5.4 (Integration) | 0.5 | ✅ DONE |
 | **Sprint 3** | 3.1 | 2 | ⬜ TODO |
 | **Sprint 4** | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | 7-8 | ⬜ TODO |
 | **TOTAL** | | **9-10 days remaining** | |

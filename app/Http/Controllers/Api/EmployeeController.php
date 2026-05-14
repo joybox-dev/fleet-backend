@@ -149,7 +149,18 @@ class EmployeeController extends Controller
             ->whereIn('return_condition', ['damaged', 'lost'])
             ->sum('deduction_amount');
 
-        $totalDeductions = $violationsTotal + $maintenanceTotal + $custodyTotal;
+        // Salary advance deductions (total deducted from payroll)
+        $advanceTotal = \App\Models\AdvanceDeduction::whereHas('salaryAdvance', function ($q) use ($employee) {
+            $q->where('employee_id', $employee->id);
+        })->sum('amount');
+
+        // Leave deductions (approved, unpaid)
+        $leaveTotal = \App\Models\EmployeeLeave::where('employee_id', $employee->id)
+            ->where('status', 'approved')
+            ->where('is_paid', false)
+            ->sum('total_deduction');
+
+        $totalDeductions = $violationsTotal + $maintenanceTotal + $custodyTotal + $advanceTotal + $leaveTotal;
         $netBalance      = $ordersBonus - $totalDeductions;
 
         return response()->json([
@@ -162,6 +173,8 @@ class EmployeeController extends Controller
                 'violations'  => (float) $violationsTotal,
                 'maintenance' => (float) $maintenanceTotal,
                 'custody'     => (float) $custodyTotal,
+                'advances'    => (float) $advanceTotal,
+                'leaves'      => (float) $leaveTotal,
                 'total'       => (float) $totalDeductions,
             ],
             'net_balance' => (float) $netBalance,

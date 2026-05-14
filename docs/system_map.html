@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FleetOps — System Connection Map</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 2rem;
+            direction: ltr;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            text-align: center;
+            color: #94a3b8;
+            margin-bottom: 2rem;
+            font-size: 0.9rem;
+        }
+        .section {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid #334155;
+        }
+        .section h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1.5rem;
+            color: #60a5fa;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 0.5rem;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            background: #0f172a;
+            border-radius: 12px;
+            padding: 1.5rem;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+        th, td {
+            padding: 0.6rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+            font-size: 0.85rem;
+        }
+        th {
+            background: #1e293b;
+            color: #60a5fa;
+            font-weight: 600;
+        }
+        td:last-child {
+            text-align: center;
+            font-size: 1.1rem;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge--green { background: rgba(34,197,94,0.2); color: #22c55e; }
+        @media (max-width: 768px) {
+            body { padding: 1rem; }
+            .section { padding: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <h1>🚀 FleetOps — System Connection Map</h1>
+    <p class="subtitle">Full audit completed 2026-05-14 · Every model, controller, API endpoint, and frontend page verified · 31/31 connections ✅</p>
+
+    <!-- 1. Entity Relationship -->
+    <div class="section">
+        <h2>1. Master Entity Relationship Map</h2>
+        <div class="mermaid">
+erDiagram
+    Company ||--o{ Employee : "employs"
+    Company ||--o{ Vehicle : "owns"
+    Company ||--o{ Client : "serves"
+    Company ||--o{ Contract : "manages"
+
+    Client ||--o{ Contract : "has"
+    Contract ||--o{ VehicleAssignment : "assigns"
+    Contract ||--o{ DailyLog : "tracks"
+
+    Employee ||--o{ VehicleAssignment : "assigned to"
+    Employee ||--o{ DailyLog : "logs"
+    Employee ||--o{ Violation : "committed"
+    Employee ||--o{ EmployeeLeave : "takes"
+    Employee ||--o{ CustodyItem : "holds"
+    Employee ||--o{ SalaryAdvance : "borrows"
+    Employee ||--o{ DriverGuarantee : "deposits"
+    Employee ||--o{ EmployeeDocument : "has"
+    Employee ||--o{ EmployeeEvaluation : "evaluated"
+    Employee ||--o{ PayrollSlip : "receives"
+    Employee ||--o{ MaintenanceRecord : "liable for"
+
+    Vehicle ||--o{ VehicleAssignment : "assigned in"
+    Vehicle ||--o{ DailyLog : "used in"
+    Vehicle ||--o{ Violation : "involved in"
+    Vehicle ||--o{ MaintenanceRecord : "serviced"
+    Vehicle ||--o{ VehicleExpense : "costs"
+
+    VehicleAssignment }o--|| Contract : "under"
+    VehicleAssignment }o--|| Vehicle : "of"
+    VehicleAssignment }o--|| Employee : "to"
+
+    PayrollRun ||--o{ PayrollSlip : "contains"
+    SalaryAdvance ||--o{ AdvanceDeduction : "deducted via"
+    AdvanceDeduction }o--|| PayrollSlip : "linked to"
+    EmployeeEvaluation ||--o{ EvaluationScore : "scored by"
+    EvaluationScore }o--|| EvaluationCriterion : "using"
+        </div>
+    </div>
+
+    <!-- 2. Payroll Engine -->
+    <div class="section">
+        <h2>2. Payroll Engine — How Everything Feeds Into Salary</h2>
+        <div class="mermaid">
+flowchart LR
+    subgraph EARNINGS["💰 Earnings"]
+        DL["📝 Daily Logs\norders × rate"]
+        VA["🚗 Vehicle Assignment\nfuel allowance"]
+        BS["💳 Base Salary"]
+    end
+
+    subgraph DEDUCTIONS["🔻 Deductions"]
+        VIO["⚠️ Violations\ndriver liable"]
+        MNT["🔧 Maintenance\ndriver deduction"]
+        CUS["📦 Custody\ndamaged/lost"]
+        ADV["💵 Salary Advances\nmonthly installment"]
+        LV["🏖️ Leaves\nunpaid deduction"]
+    end
+
+    DL --> PR["⚙️ PAYROLL RUN"]
+    VA --> PR
+    BS --> PR
+
+    VIO --> PR
+    MNT --> PR
+    CUS --> PR
+    ADV --> PR
+    LV --> PR
+
+    PR --> SLIP["📄 PayrollSlip"]
+    SLIP --> BANK["🏦 Bank Sheet"]
+    SLIP --> CASH["💵 Cash Envelope"]
+    SLIP --> ERP["🔄 ERPNext Sync"]
+
+    PR -->|marks| VIO2["Violations.is_deducted=true"]
+    PR -->|creates| AD["AdvanceDeduction record"]
+    AD -->|updates| ADV2["SalaryAdvance\npaid++, balance--"]
+        </div>
+    </div>
+
+    <!-- 3. Employee Profile -->
+    <div class="section">
+        <h2>3. Employee Profile — All Connected Data</h2>
+        <div class="mermaid">
+flowchart TB
+    EMP["👷 Employee Profile Page"]
+
+    EMP --> FIN["📊 Financial Balance\n5 deduction types"]
+    EMP --> DOCS["📄 Document Expiry\nhealth, residence, license"]
+    EMP --> ASSIGN["🚗 Vehicle Assignments\nactive + historical"]
+    EMP --> VIOL["⚠️ Violations Table\nlast 5 violations"]
+    EMP --> LEAVE["🏖️ Leaves Section\nbalance + history"]
+    EMP --> SDOCS["📂 Scanned Documents\npassport, civil ID"]
+    EMP --> EVAL["⭐ Evaluations\nweighted scores"]
+    EMP --> ADVS["💵 Salary Advances\nprogress + installments"]
+    EMP --> GUAR["🔐 Guarantees\nheld documents"]
+    EMP --> CUST["📦 Custody Items\nassigned items"]
+
+    style ADVS fill:#065f46,color:#fff
+    style GUAR fill:#7c2d12,color:#fff
+    style CUST fill:#4c1d95,color:#fff
+        </div>
+    </div>
+
+    <!-- 4. Operations Dashboard -->
+    <div class="section">
+        <h2>4. Operations Dashboard — Cross-Feature Intelligence</h2>
+        <div class="mermaid">
+flowchart LR
+    subgraph INPUTS["Data Sources"]
+        CON["📋 Active Contracts\nrequired drivers + targets"]
+        VASSIGN["🚗 Vehicle Assignments\nwho is assigned where"]
+        LEAVES["🏖️ Approved Leaves\nwho is on leave today"]
+        DLOGS["📝 Daily Logs\norders per contract"]
+    end
+
+    CON --> OPS["🎯 Operations Dashboard"]
+    VASSIGN --> OPS
+    LEAVES --> OPS
+    DLOGS --> OPS
+
+    OPS --> CAP["Capacity View\nrequired vs available"]
+    OPS --> DEF["Deficit Alerts\ncontracts short on drivers"]
+    OPS --> ORD["Orders vs Target\ndaily + monthly"]
+        </div>
+    </div>
+
+    <!-- 5. Complete Flow -->
+    <div class="section">
+        <h2>5. Complete Data Flow — Daily Operations to Payroll</h2>
+        <div class="mermaid">
+flowchart TB
+    subgraph DAILY["📅 Daily Operations"]
+        OP_LOG["Operator logs\ndaily orders + cash"]
+        OP_VIO["Records violations\nwith photos"]
+        OP_MAINT["Reports maintenance"]
+        OP_CASH["Cash settlement"]
+    end
+
+    subgraph ADMIN["🏢 Admin Management"]
+        AD_EMP["Manage employees"]
+        AD_VEH["Manage vehicles"]
+        AD_CUS["Assign custody"]
+        AD_ADV["Grant salary advances"]
+        AD_GUAR["Hold guarantees"]
+        AD_LEAVE["Approve leaves"]
+    end
+
+    subgraph PAYROLL["💳 Monthly Payroll"]
+        PR_RUN["Run Payroll\nauto-collects ALL data"]
+        PR_SLIP["Generate Slips"]
+        PR_APPROVE["Approve + Sync ERP"]
+    end
+
+    subgraph OUTPUT["📊 Output"]
+        OUT_BANK["🏦 Bank Sheet"]
+        OUT_CASH["💵 Cash Envelope"]
+        OUT_PROFILE["👷 Employee Profile"]
+        OUT_REPORT["📈 Reports"]
+        OUT_DASH["📊 Dashboard"]
+    end
+
+    OP_LOG -->|orders + revenue| PR_RUN
+    OP_VIO -->|liable violations| PR_RUN
+    OP_MAINT -->|driver deductions| PR_RUN
+    OP_CASH -->|tracks pending| OUT_DASH
+
+    AD_EMP -->|salary + type| PR_RUN
+    AD_VEH -->|fuel allowance| PR_RUN
+    AD_CUS -->|damaged/lost| PR_RUN
+    AD_ADV -->|installments| PR_RUN
+    AD_LEAVE -->|unpaid days| PR_RUN
+    AD_GUAR -->|held docs| OUT_PROFILE
+
+    PR_RUN --> PR_SLIP
+    PR_SLIP --> PR_APPROVE
+
+    PR_APPROVE --> OUT_BANK
+    PR_APPROVE --> OUT_CASH
+    PR_APPROVE -->|ERP sync| ERP["🔄 ERPNext"]
+
+    OP_LOG --> OUT_REPORT
+    OP_VIO --> OUT_REPORT
+    AD_EMP --> OUT_PROFILE
+    AD_VEH --> OUT_DASH
+        </div>
+    </div>
+
+    <!-- 6. Verification Table -->
+    <div class="section">
+        <h2>6. Verification Checklist — 31/31 ✅</h2>
+        <table>
+            <thead>
+                <tr><th>Connection</th><th>Source → Target</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>DailyLog → Payroll</td><td>orders × rate = orders_bonus</td><td>✅</td></tr>
+                <tr><td>Violation → Payroll</td><td>is_driver_liable → violations_deduction</td><td>✅</td></tr>
+                <tr><td>Maintenance → Payroll</td><td>driver_deduction from approved records</td><td>✅</td></tr>
+                <tr><td>Custody → Payroll</td><td>damaged/lost → deduction_amount</td><td>✅</td></tr>
+                <tr><td>SalaryAdvance → Payroll</td><td>monthly_installment → AdvanceDeduction</td><td>✅</td></tr>
+                <tr><td>Leave → Payroll</td><td>unpaid total_deduction → leave_deduction</td><td>✅</td></tr>
+                <tr><td>Vehicle → Payroll</td><td>monthly_fuel_allowance via assignment</td><td>✅</td></tr>
+                <tr><td>Violation → Profile</td><td>Last 5 violations shown</td><td>✅</td></tr>
+                <tr><td>Leave → Profile</td><td>Balance + recent history</td><td>✅</td></tr>
+                <tr><td>Documents → Profile</td><td>Scanned docs with upload</td><td>✅</td></tr>
+                <tr><td>Evaluations → Profile</td><td>Score bars + history</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Advances → Profile</strong></td><td>Progress bar + installments</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Guarantees → Profile</strong></td><td>Held documents table</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Custody → Profile</strong></td><td>Items table with status</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Advances → Balance</strong></td><td>debits.advances in breakdown</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Leaves → Balance</strong></td><td>debits.leaves in breakdown</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Advance → PayrollSlip</strong></td><td>advance_deduction in fillable + casts</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Advance → Slip API</strong></td><td>advance_deduction in response</td><td>✅</td></tr>
+                <tr style="background: rgba(34,197,94,0.08)"><td><strong>Advance → Approve</strong></td><td>advances in summary response</td><td>✅</td></tr>
+                <tr><td>Employee → Dashboard</td><td>Status counts + doc alerts</td><td>✅</td></tr>
+                <tr><td>Vehicle → Dashboard</td><td>Fleet status + doc alerts</td><td>✅</td></tr>
+                <tr><td>Contract → Dashboard</td><td>Expiry alerts</td><td>✅</td></tr>
+                <tr><td>Contract → Operations</td><td>Capacity + deficit + targets</td><td>✅</td></tr>
+                <tr><td>DailyLog → Operations</td><td>Orders vs targets</td><td>✅</td></tr>
+                <tr><td>Leave → Operations</td><td>On-leave count per contract</td><td>✅</td></tr>
+                <tr><td>VehicleExpense → Vehicle</td><td>hasMany relationship</td><td>✅</td></tr>
+                <tr><td>Employee → children</td><td>12 hasMany relationships</td><td>✅</td></tr>
+                <tr><td>Vehicle → children</td><td>6 hasMany relationships</td><td>✅</td></tr>
+                <tr><td>Client → Contract</td><td>hasMany</td><td>✅</td></tr>
+                <tr><td>Contract → Client</td><td>belongsTo</td><td>✅</td></tr>
+                <tr><td>Payroll → ERPNext</td><td>Sync jobs on approve</td><td>✅</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                primaryColor: '#1e3a5f',
+                primaryTextColor: '#e2e8f0',
+                primaryBorderColor: '#334155',
+                lineColor: '#60a5fa',
+                secondaryColor: '#1e293b',
+                tertiaryColor: '#0f172a',
+                fontFamily: 'Segoe UI, sans-serif',
+            },
+            flowchart: { curve: 'basis' },
+        });
+    </script>
+</body>
+</html>

@@ -70,4 +70,29 @@ class Employee extends Model
     {
         return $this->hasMany(EmployeeLeave::class);
     }
+
+    public function salaryAdvances(): HasMany
+    {
+        return $this->hasMany(SalaryAdvance::class);
+    }
+
+    public function guarantees(): HasMany
+    {
+        return $this->hasMany(DriverGuarantee::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(EmployeeDocument::class);
+    }
+
+    public function evaluations(): HasMany
+    {
+        return $this->hasMany(EmployeeEvaluation::class);
+    }
+
+    public function liableMaintenance(): HasMany
+    {
+        return $this->hasMany(MaintenanceRecord::class, 'liable_employee_id');
+    }
 }

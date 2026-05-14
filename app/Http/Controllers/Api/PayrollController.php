@@ -312,7 +312,7 @@ class PayrollController extends Controller
             'official_sheet' => [   // Bank / Ministry sheet
                 'base'       => $slip->base_official,
                 'fuel'       => $slip->fuel_allowance,
-                'deductions' => $slip->violations_deduction + $slip->maintenance_deduction + $slip->custody_deduction + $slip->leave_deduction,
+                'deductions' => $slip->violations_deduction + $slip->maintenance_deduction + $slip->custody_deduction + $slip->advance_deduction + $slip->leave_deduction,
                 'net'        => $slip->gross_official,
             ],
             'internal_sheet' => [   // Full internal breakdown
@@ -323,6 +323,7 @@ class PayrollController extends Controller
                 'violations_deduction'  => $slip->violations_deduction,
                 'maintenance_deduction' => $slip->maintenance_deduction,
                 'custody_deduction'     => $slip->custody_deduction,
+                'advance_deduction'     => $slip->advance_deduction,
                 'leave_deduction'       => $slip->leave_deduction,
                 'unpaid_leave_days'     => $slip->unpaid_leave_days,
                 'gross'                 => $slip->gross_actual,
@@ -398,6 +399,7 @@ class PayrollController extends Controller
                 'violations'     => $totalViolations,
                 'maintenance'    => $totalMaintenance,
                 'custody'        => $totalCustody,
+                'advances'       => $totalAdvances,
                 'total_deducted' => $totalDeductions,
                 'fuel_allowance' => $totalFuel,
             ],
