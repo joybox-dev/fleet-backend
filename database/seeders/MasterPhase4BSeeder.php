@@ -147,7 +147,7 @@ class MasterPhase4BSeeder extends Seeder
         CustodyItem::firstOrCreate(
             ['employee_id' => $yousef->id, 'item_description' => 'تابلت Samsung', 'company_id' => $buraq->id],
             [
-                'issued_by' => $admin->id, 'item_type' => 'tablet',
+                'issued_by' => $admin->id, 'item_type' => 'other',
                 'item_description' => 'تابلت Samsung', 'value' => 50.000,
                 'issued_date' => '2025-01-15', 'status' => 'active',
                 'company_id' => $buraq->id,
@@ -156,7 +156,7 @@ class MasterPhase4BSeeder extends Seeder
         CustodyItem::firstOrCreate(
             ['employee_id' => $salem->id, 'item_description' => 'حقيبة تبريد', 'company_id' => $buraq->id],
             [
-                'issued_by' => $admin->id, 'item_type' => 'bag',
+                'issued_by' => $admin->id, 'item_type' => 'other',
                 'item_description' => 'حقيبة تبريد', 'value' => 35.000,
                 'issued_date' => '2025-04-10', 'status' => 'returned',
                 'returned_date' => '2026-05-08', 'return_condition' => 'lost',

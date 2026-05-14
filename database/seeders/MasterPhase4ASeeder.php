@@ -175,7 +175,7 @@ class MasterPhase4ASeeder extends Seeder
         CustodyItem::firstOrCreate(
             ['employee_id' => $khaled->id, 'item_description' => 'حقيبة توصيل', 'company_id' => $eagle->id],
             [
-                'issued_by' => $admin->id, 'item_type' => 'bag',
+                'issued_by' => $admin->id, 'item_type' => 'other',
                 'item_description' => 'حقيبة توصيل', 'value' => 20.000,
                 'issued_date' => '2026-05-01', 'status' => 'active',
                 'company_id' => $eagle->id,
