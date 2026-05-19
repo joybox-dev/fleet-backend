@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\SalaryAdvanceController;
 use App\Http\Controllers\Api\OperationsController;
 use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
+use App\Http\Controllers\Api\ImportController;
 
 /*
 |--------------------------------------------------------------------------
@@ -144,6 +145,18 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Custody Types — manage types
         Route::apiResource('custody-types', \App\Http\Controllers\Api\CustodyTypeController::class)->except(['show']);
+
+        // ── Import/Export ─────────────────────────────────────
+        Route::prefix('import')->group(function () {
+            Route::get('entity-types', [ImportController::class, 'entityTypes']);
+            Route::get('fields/{entity}', [ImportController::class, 'fields']);
+            Route::post('upload', [ImportController::class, 'upload']);
+            Route::post('preview', [ImportController::class, 'preview']);
+            Route::post('confirm', [ImportController::class, 'confirm']);
+            Route::get('logs', [ImportController::class, 'logs']);
+            Route::get('status/{id}', [ImportController::class, 'status']);
+            Route::get('template/{entity}', [ImportController::class, 'template']);
+        });
     });
 
     // ═══════════════════════════════════════════════════════════════════
