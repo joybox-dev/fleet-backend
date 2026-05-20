@@ -27,8 +27,8 @@ class ContractController extends Controller
             'contract_number'=> 'required|string|unique:contracts,contract_number',
             'name'           => 'required|string|max:255',
             'payment_type'   => 'required|in:per_order,fixed,hybrid',
-            'rate_per_order' => 'required_if:payment_type,per_order,hybrid|numeric|min:0',
-            'fixed_monthly'  => 'required_if:payment_type,fixed,hybrid|numeric|min:0',
+            'rate_per_order' => 'required_if:payment_type,per_order,hybrid|nullable|numeric|min:0',
+            'fixed_monthly'  => 'required_if:payment_type,fixed,hybrid|nullable|numeric|min:0',
             'start_date'     => 'required|date',
             'end_date'       => 'nullable|date|after:start_date',
             'notes'          => 'nullable|string|max:1000',
@@ -53,7 +53,8 @@ class ContractController extends Controller
 
         $validated = $request->validate([
             'name'           => 'sometimes|string|max:255',
-            'fixed_monthly'  => 'sometimes|numeric|min:0',
+            'rate_per_order' => 'sometimes|nullable|numeric|min:0',
+            'fixed_monthly'  => 'sometimes|nullable|numeric|min:0',
             'end_date'       => 'nullable|date',
             'is_active'      => 'sometimes|boolean',
             'notes'          => 'nullable|string|max:1000',
