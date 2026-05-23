@@ -8,6 +8,7 @@ use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 
 class VehicleController extends Controller
 {
@@ -25,13 +26,23 @@ class VehicleController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
-            'plate_number'                      => 'required|string|unique:vehicles,plate_number',
+            'plate_number'                      => [
+                'required',
+                'string',
+                Rule::unique('vehicles', 'plate_number')->where('company_id', $companyId),
+            ],
             'make'                              => 'nullable|string|max:100',
             'model'                             => 'nullable|string|max:100',
             'year'                              => 'nullable|integer|min:2000|max:2030',
             'color'                             => 'nullable|string|max:50',
-            'vin'                               => 'nullable|string|unique:vehicles,vin',
+            'vin'                               => [
+                'nullable',
+                'string',
+                Rule::unique('vehicles', 'vin')->where('company_id', $companyId),
+            ],
             'oil_change_interval_km'            => 'nullable|integer|min:1000',
             'monthly_fuel_allowance'            => 'nullable|numeric|min:0',
             'insurance_expiry'                  => 'nullable|date',
@@ -40,6 +51,9 @@ class VehicleController extends Controller
             'next_service_due'                  => 'nullable|date',
             'notes'                             => 'nullable|string',
         ]);
+
+        // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
+        $validated = array_filter($validated, fn($v) => $v !== null);
 
         $vehicle = Vehicle::create($validated);
 

@@ -24,6 +24,14 @@ return Application::configure(basePath: dirname(__DIR__))
             'module'      => \App\Http\Middleware\CheckModuleEnabled::class,
             'super_admin' => \App\Http\Middleware\SuperAdminOnly::class,
         ]);
+
+        // Prioritize company middleware so it runs before Route Model Binding (SubstituteBindings)
+        $middleware->priority([
+            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            \Illuminate\Auth\Middleware\Authenticate::class,
+            \App\Http\Middleware\SetCurrentCompany::class,
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Return JSON errors for API routes

@@ -24,8 +24,8 @@ class Violation extends Model
         'is_deducted'      => 'boolean',
     ];
 
-    public function employee(): BelongsTo    { return $this->belongsTo(Employee::class); }
-    public function vehicle(): BelongsTo     { return $this->belongsTo(Vehicle::class); }
+    public function employee(): BelongsTo    { return $this->belongsTo(Employee::class)->withTrashed(); }
+    public function vehicle(): BelongsTo     { return $this->belongsTo(Vehicle::class)->withTrashed(); }
     public function createdBy(): BelongsTo   { return $this->belongsTo(User::class, 'created_by'); }
     public function payrollSlip(): BelongsTo { return $this->belongsTo(PayrollSlip::class); }
 }

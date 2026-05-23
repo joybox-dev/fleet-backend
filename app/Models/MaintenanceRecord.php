@@ -28,8 +28,8 @@ class MaintenanceRecord extends Model
         'photo_paths'      => 'array',
     ];
 
-    public function vehicle(): BelongsTo         { return $this->belongsTo(Vehicle::class); }
+    public function vehicle(): BelongsTo         { return $this->belongsTo(Vehicle::class)->withTrashed(); }
     public function reportedBy(): BelongsTo      { return $this->belongsTo(User::class, 'reported_by'); }
     public function approvedBy(): BelongsTo      { return $this->belongsTo(User::class, 'approved_by'); }
-    public function liableEmployee(): BelongsTo  { return $this->belongsTo(Employee::class, 'liable_employee_id'); }
+    public function liableEmployee(): BelongsTo  { return $this->belongsTo(Employee::class, 'liable_employee_id')->withTrashed(); }
 }

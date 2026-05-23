@@ -43,4 +43,14 @@ class Contract extends Model
     {
         return $this->hasMany(VehicleAssignment::class);
     }
+
+    /**
+     * Retrieve the model for a bound value, including soft-deleted ones.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        return $this->where($field ?? $this->getRouteKeyName(), $value)
+            ->withTrashed()
+            ->first();
+    }
 }

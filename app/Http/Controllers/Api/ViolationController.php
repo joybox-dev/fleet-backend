@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Violation;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 
 class ViolationController extends Controller
 {
@@ -27,12 +28,19 @@ class ViolationController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
             'employee_id'      => 'required|exists:employees,id',
             'vehicle_id'       => 'required|exists:vehicles,id',
             'violation_date'   => 'required|date',
             'violation_type'   => 'required|string|max:255',
-            'reference_number' => 'nullable|string|max:100|unique:violations,reference_number',
+            'reference_number' => [
+                'nullable',
+                'string',
+                'max:100',
+                Rule::unique('violations', 'reference_number')->where('company_id', $companyId),
+            ],
             'amount'           => 'required|numeric|min:0',
             'is_driver_liable' => 'boolean',
             'photo_path'       => 'nullable|string',

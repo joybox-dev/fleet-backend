@@ -36,7 +36,7 @@ class DailyLogController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
+        $validator = \Validator::make($request->all(), [
             'employee_id'    => 'required|exists:employees,id',
             'vehicle_id'     => 'required|exists:vehicles,id',
             'contract_id'    => 'required|exists:contracts,id',
@@ -49,6 +49,18 @@ class DailyLogController extends Controller
             'odometer_end'   => 'nullable|integer|min:0|gte:odometer_start',
             'notes'          => 'nullable|string|max:500',
         ]);
+
+        $validator->after(function ($validator) use ($request) {
+            $total = (int) $request->input('orders_count', 0);
+            $online = (int) $request->input('orders_online', 0);
+            $cash = (int) $request->input('orders_cash', 0);
+
+            if (($online + $cash) !== $total) {
+                $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
+            }
+        });
+
+        $validated = $validator->validate();
 
         // Prevent duplicate log for same employee on same date
         if (DailyLog::where('employee_id', $validated['employee_id'])->where('log_date', $validated['log_date'])->exists()) {
@@ -74,8 +86,6 @@ class DailyLogController extends Controller
             'cash_pending'    => $cashCollected,
         ]));
 
-
-
         return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
     }
 
@@ -93,7 +103,7 @@ class DailyLogController extends Controller
      */
     public function update(Request $request, DailyLog $dailyLog): JsonResponse
     {
-        $validated = $request->validate([
+        $validator = \Validator::make($request->all(), [
             'orders_count'   => 'sometimes|integer|min:0',
             'orders_online'  => 'sometimes|integer|min:0',
             'orders_cash'    => 'sometimes|integer|min:0',
@@ -102,6 +112,27 @@ class DailyLogController extends Controller
             'odometer_end'   => 'nullable|integer|min:0',
             'notes'          => 'nullable|string|max:500',
         ]);
+
+        $validator->after(function ($validator) use ($request, $dailyLog) {
+            // ── Bug #4: odometer_end >= odometer_start ──
+            $start = $request->has('odometer_start') ? $request->input('odometer_start') : $dailyLog->odometer_start;
+            $end = $request->has('odometer_end') ? $request->input('odometer_end') : $dailyLog->odometer_end;
+
+            if ($start !== null && $end !== null && $end < $start) {
+                $validator->errors()->add('odometer_end', 'قراءة عداد النهاية يجب أن تكون أكبر من أو تساوي قراءة البداية.');
+            }
+
+            // ── Bug #5: orders_online + orders_cash == orders_count ──
+            $total = $request->has('orders_count') ? (int) $request->input('orders_count') : (int) $dailyLog->orders_count;
+            $online = $request->has('orders_online') ? (int) $request->input('orders_online') : (int) $dailyLog->orders_online;
+            $cash = $request->has('orders_cash') ? (int) $request->input('orders_cash') : (int) $dailyLog->orders_cash;
+
+            if (($online + $cash) !== $total) {
+                $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
+            }
+        });
+
+        $validated = $validator->validate();
 
         // Recalculate income if orders changed
         if (isset($validated['orders_count'])) {
@@ -114,8 +145,6 @@ class DailyLogController extends Controller
         }
 
         $dailyLog->update($validated);
-
-
 
         return response()->json($dailyLog->fresh());
     }

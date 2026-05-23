@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Contract;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 
 class ContractController extends Controller
 {
@@ -22,9 +23,15 @@ class ContractController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
             'client_id'      => 'required|exists:clients,id',
-            'contract_number'=> 'required|string|unique:contracts,contract_number',
+            'contract_number'=> [
+                'required',
+                'string',
+                Rule::unique('contracts', 'contract_number')->where('company_id', $companyId),
+            ],
             'name'           => 'required|string|max:255',
             'payment_type'   => 'required|in:per_order,fixed,hybrid',
             'rate_per_order' => 'required_if:payment_type,per_order,hybrid|nullable|numeric|min:0',
@@ -33,6 +40,10 @@ class ContractController extends Controller
             'end_date'       => 'nullable|date|after:start_date',
             'notes'          => 'nullable|string|max:1000',
         ]);
+
+        // Ensure financial fields default to 0 when not applicable to the payment_type
+        $validated['rate_per_order'] = $validated['rate_per_order'] ?? 0;
+        $validated['fixed_monthly']  = $validated['fixed_monthly']  ?? 0;
 
         $contract = Contract::create($validated);
 
@@ -51,10 +62,20 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract is locked and cannot be modified.'], 403);
         }
 
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
+            'client_id'      => 'sometimes|exists:clients,id',
+            'contract_number'=> [
+                'sometimes',
+                'string',
+                Rule::unique('contracts', 'contract_number')->ignore($contract->id)->where('company_id', $companyId),
+            ],
             'name'           => 'sometimes|string|max:255',
+            'payment_type'   => 'sometimes|in:per_order,fixed,hybrid',
             'rate_per_order' => 'sometimes|nullable|numeric|min:0',
             'fixed_monthly'  => 'sometimes|nullable|numeric|min:0',
+            'start_date'     => 'sometimes|date',
             'end_date'       => 'nullable|date',
             'is_active'      => 'sometimes|boolean',
             'notes'          => 'nullable|string|max:1000',

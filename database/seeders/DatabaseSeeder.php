@@ -9,7 +9,8 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            MasterScenarioSeeder::class,  // ✅ Full production testing data
+            MersalCompanySeeder::class,   // ✅ Seeding Mersal Company only (Single-Tenant premium data)
+            // MasterScenarioSeeder::class, // Multi-Tenant full production testing data (stopped/commented out)
         ]);
 
         // ── Old Seeders (commented out) ──────────────────────────────

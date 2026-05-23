@@ -17,7 +17,7 @@ class VehicleAssignment extends Model
 
     protected $casts = ['is_active' => 'boolean'];
 
-    public function vehicle(): BelongsTo   { return $this->belongsTo(Vehicle::class); }
-    public function employee(): BelongsTo  { return $this->belongsTo(Employee::class); }
-    public function contract(): BelongsTo  { return $this->belongsTo(Contract::class); }
+    public function vehicle(): BelongsTo   { return $this->belongsTo(Vehicle::class)->withTrashed(); }
+    public function employee(): BelongsTo  { return $this->belongsTo(Employee::class)->withTrashed(); }
+    public function contract(): BelongsTo  { return $this->belongsTo(Contract::class)->withTrashed(); }
 }

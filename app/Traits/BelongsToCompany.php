@@ -26,14 +26,12 @@ trait BelongsToCompany
         static::addGlobalScope('company', function (Builder $query) {
             $companyId = app()->bound('current_company_id')
                 ? app('current_company_id')
-                : null;
+                : 0;
 
-            if ($companyId) {
-                $query->where(
-                    $query->getModel()->getTable() . '.company_id',
-                    $companyId
-                );
-            }
+            $query->where(
+                $query->getModel()->getTable() . '.company_id',
+                $companyId
+            );
         });
 
         // ── Auto-set company_id on creation ──

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Client;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 
 class ClientController extends Controller
 {
@@ -23,13 +24,35 @@ class ClientController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
-            'name'           => 'required|string|max:255|unique:clients,name',
+            'name'           => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('clients', 'name')->where('company_id', $companyId),
+            ],
             'name_ar'        => 'nullable|string|max:255',
             'contact_person' => 'nullable|string|max:255',
-            'phone'          => 'nullable|string|max:30|unique:clients,phone',
-            'email'          => 'nullable|email|max:255|unique:clients,email',
-            'tax_number'     => 'nullable|string|max:50|unique:clients,tax_number',
+            'phone'          => [
+                'nullable',
+                'string',
+                'max:30',
+                Rule::unique('clients', 'phone')->where('company_id', $companyId),
+            ],
+            'email'          => [
+                'nullable',
+                'email',
+                'max:255',
+                Rule::unique('clients', 'email')->where('company_id', $companyId),
+            ],
+            'tax_number'     => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('clients', 'tax_number')->where('company_id', $companyId),
+            ],
         ]);
 
         $client = Client::create($validated);
@@ -46,12 +69,29 @@ class ClientController extends Controller
 
     public function update(Request $request, Client $client): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
-            'name'           => "sometimes|string|max:255|unique:clients,name,{$client->id}",
+            'name'           => [
+                'sometimes',
+                'string',
+                'max:255',
+                Rule::unique('clients', 'name')->ignore($client->id)->where('company_id', $companyId),
+            ],
             'name_ar'        => 'nullable|string|max:255',
             'contact_person' => 'nullable|string|max:255',
-            'phone'          => "nullable|string|max:30|unique:clients,phone,{$client->id}",
-            'email'          => "nullable|email|max:255|unique:clients,email,{$client->id}",
+            'phone'          => [
+                'nullable',
+                'string',
+                'max:30',
+                Rule::unique('clients', 'phone')->ignore($client->id)->where('company_id', $companyId),
+            ],
+            'email'          => [
+                'nullable',
+                'email',
+                'max:255',
+                Rule::unique('clients', 'email')->ignore($client->id)->where('company_id', $companyId),
+            ],
             'is_active'      => 'sometimes|boolean',
         ]);
 

@@ -36,6 +36,13 @@ class Employee extends Model
         'stage_license_obtained'=> 'boolean',
     ];
 
+    protected $appends = ['active_assignments'];
+
+    public function getActiveAssignmentsAttribute()
+    {
+        return $this->vehicleAssignments->where('is_active', true)->values();
+    }
+
     public function vehicleAssignments(): HasMany
     {
         return $this->hasMany(VehicleAssignment::class);
@@ -94,5 +101,15 @@ class Employee extends Model
     public function liableMaintenance(): HasMany
     {
         return $this->hasMany(MaintenanceRecord::class, 'liable_employee_id');
+    }
+
+    /**
+     * Retrieve the model for a bound value, including soft-deleted ones.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        return $this->where($field ?? $this->getRouteKeyName(), $value)
+            ->withTrashed()
+            ->first();
     }
 }

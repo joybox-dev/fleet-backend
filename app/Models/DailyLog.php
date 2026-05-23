@@ -28,8 +28,8 @@ class DailyLog extends Model
         'income_amount'  => 'decimal:3',
     ];
 
-    public function employee(): BelongsTo  { return $this->belongsTo(Employee::class); }
-    public function vehicle(): BelongsTo   { return $this->belongsTo(Vehicle::class); }
-    public function contract(): BelongsTo  { return $this->belongsTo(Contract::class); }
+    public function employee(): BelongsTo  { return $this->belongsTo(Employee::class)->withTrashed(); }
+    public function vehicle(): BelongsTo   { return $this->belongsTo(Vehicle::class)->withTrashed(); }
+    public function contract(): BelongsTo  { return $this->belongsTo(Contract::class)->withTrashed(); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
 }

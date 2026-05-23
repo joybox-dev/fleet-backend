@@ -35,19 +35,19 @@ return new class extends Migration
     public function up(): void
     {
         // Auto-backfill: if any rows have NULL company_id, assign them to the
-        // default company (code='default') or the first company in the table.
+        // default company (code='mersal') or the first company in the table.
         // This makes `migrate:fresh` work without needing a manual seeder step,
         // since some migrations (e.g. create_custody_types) insert seed data
         // before the company_id column exists.
-        $defaultCompanyId = DB::table('companies')->where('code', 'default')->value('id')
+        $defaultCompanyId = DB::table('companies')->where('code', 'mersal')->value('id')
             ?? DB::table('companies')->orderBy('id')->value('id');
 
         if (!$defaultCompanyId) {
             // Create a default company if none exists
             $defaultCompanyId = DB::table('companies')->insertGetId([
-                'name'            => 'الشركة الافتراضية',
-                'name_ar'         => 'الشركة الافتراضية',
-                'code'            => 'default',
+                'name'            => 'Mersal Company',
+                'name_ar'         => 'شركة مرسال للتوصيل',
+                'code'            => 'mersal',
                 'is_active'       => true,
                 'currency'        => 'KWD',
                 'enabled_modules' => json_encode([
