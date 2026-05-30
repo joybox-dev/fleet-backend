@@ -50,6 +50,7 @@ class VehicleController extends Controller
             'food_authority_license_expiry'     => 'nullable|date',
             'next_service_due'                  => 'nullable|date',
             'notes'                             => 'nullable|string',
+            'ownership_type'                    => 'nullable|string|in:rented,installment,asset,owned',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
@@ -74,6 +75,7 @@ class VehicleController extends Controller
     {
         $validated = $request->validate([
             'status'                            => 'sometimes|in:available,working,maintenance,idle',
+            'ownership_type'                    => 'sometimes|string|in:rented,installment,asset,owned',
             'monthly_fuel_allowance'            => 'sometimes|numeric|min:0',
             'insurance_expiry'                  => 'nullable|date',
             'comprehensive_insurance_expiry'    => 'nullable|date',
@@ -134,9 +136,22 @@ class VehicleController extends Controller
             'unassigned_date' => 'required|date',
         ]);
 
-        VehicleAssignment::where('vehicle_id', $vehicle->id)
+        $activeAssignment = VehicleAssignment::where('vehicle_id', $vehicle->id)
             ->where('is_active', true)
-            ->update(['is_active' => false, 'unassigned_date' => $validated['unassigned_date']]);
+            ->first();
+
+        if ($activeAssignment && $validated['unassigned_date'] < $activeAssignment->assigned_date) {
+            return response()->json([
+                'message' => 'تاريخ تسليم السيارة لا يمكن أن يكون قبل تاريخ استلامها (' . $activeAssignment->assigned_date . ')'
+            ], 422);
+        }
+
+        if ($activeAssignment) {
+            $activeAssignment->update([
+                'is_active' => false,
+                'unassigned_date' => $validated['unassigned_date']
+            ]);
+        }
 
         $vehicle->update(['status' => 'available']);
 

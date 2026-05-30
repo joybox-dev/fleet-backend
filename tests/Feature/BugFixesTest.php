@@ -479,5 +479,191 @@ class BugFixesTest extends TestCase
             ]);
         $response2->assertStatus(403);
     }
+
+    /**
+     * Test Bug 1.5: Strict validation preventing cash settlement > pending cash
+     */
+    public function test_cash_settlement_over_settlement_protection(): void
+    {
+        app()->instance('current_company_id', $this->company1->id);
+
+        $employee = Employee::create([
+            'company_id' => $this->company1->id,
+            'name' => 'Driver Settlement Test',
+            'date_of_joining' => '2026-01-01',
+            'pay_type' => 'fixed',
+            'official_salary' => 300,
+            'actual_salary' => 300,
+        ]);
+
+        $vehicle = Vehicle::create([
+            'company_id' => $this->company1->id,
+            'plate_number' => 'V-8888',
+        ]);
+
+        $client = Client::create([
+            'company_id' => $this->company1->id,
+            'name' => 'Client A',
+        ]);
+
+        $contract = Contract::create([
+            'company_id' => $this->company1->id,
+            'client_id' => $client->id,
+            'contract_number' => 'C-003',
+            'name' => 'Contract A',
+            'payment_type' => 'fixed',
+            'rate_per_order' => 1.5,
+            'fixed_monthly' => 500,
+            'start_date' => '2026-01-01',
+        ]);
+
+        // Create log with pending cash = 100
+        $log = DailyLog::create([
+            'company_id' => $this->company1->id,
+            'employee_id' => $employee->id,
+            'vehicle_id' => $vehicle->id,
+            'contract_id' => $contract->id,
+            'log_date' => '2026-05-21',
+            'orders_count' => 10,
+            'orders_online' => 6,
+            'orders_cash' => 4,
+            'cash_collected' => 100, // pending = 100
+            'cash_pending' => 100,
+            'created_by' => $this->user1->id,
+        ]);
+
+        // 1. Post settlement > pending cash (150 > 100) -> should fail 422
+        $response = $this->actingAs($this->user1)
+            ->postJson('/api/cash-settlements', [
+                'employee_id' => $employee->id,
+                'settlement_date' => '2026-05-22',
+                'amount' => 150,
+            ]);
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('amount');
+
+        // 2. Post settlement <= pending cash (60 <= 100) -> should succeed 201
+        $response2 = $this->actingAs($this->user1)
+            ->postJson('/api/cash-settlements', [
+                'employee_id' => $employee->id,
+                'settlement_date' => '2026-05-22',
+                'amount' => 60,
+            ]);
+        $response2->assertStatus(201);
+
+        // Verify FIFO reduced cash_pending on the log to 40
+        $this->assertEquals(40.0, (float)$log->fresh()->cash_pending);
+    }
+
+    /**
+     * Test Bug 1.6: Retroactive payroll recalculation when DailyLog is created/updated/deleted
+     */
+    public function test_retroactive_payroll_recalculation(): void
+    {
+        app()->instance('current_company_id', $this->company1->id);
+
+        $employee = Employee::create([
+            'company_id' => $this->company1->id,
+            'name' => 'Driver Retro Recalc Test',
+            'date_of_joining' => '2026-05-01',
+            'pay_type' => 'hybrid',
+            'official_salary' => 100,
+            'actual_salary' => 150,
+            'rate_per_order' => 0.250,
+        ]);
+
+        $vehicle = Vehicle::create([
+            'company_id' => $this->company1->id,
+            'plate_number' => 'V-7777',
+        ]);
+
+        $client = Client::create([
+            'company_id' => $this->company1->id,
+            'name' => 'Client A',
+        ]);
+
+        $contract = Contract::create([
+            'company_id' => $this->company1->id,
+            'client_id' => $client->id,
+            'contract_number' => 'C-004',
+            'name' => 'Contract A',
+            'payment_type' => 'hybrid',
+            'rate_per_order' => 1.250,
+            'fixed_monthly' => 500,
+            'start_date' => '2026-05-01',
+        ]);
+
+        // Create log 1: May 15
+        $log1 = DailyLog::create([
+            'company_id' => $this->company1->id,
+            'employee_id' => $employee->id,
+            'vehicle_id' => $vehicle->id,
+            'contract_id' => $contract->id,
+            'log_date' => '2026-05-15',
+            'orders_count' => 20,
+            'orders_online' => 12,
+            'orders_cash' => 8,
+            'cash_collected' => 40,
+            'cash_pending' => 40,
+            'created_by' => $this->user1->id,
+        ]);
+
+        // Run payroll for May 2026
+        $response = $this->actingAs($this->user1)
+            ->postJson('/api/payroll/run', [
+                'year' => 2026,
+                'month' => 5,
+            ]);
+        $response->assertStatus(201);
+        $runId = $response->json('run_id');
+
+        // Check slip: orders_bonus should be 5.0 (20 * 0.25)
+        $slip = \App\Models\PayrollSlip::where('payroll_run_id', $runId)
+            ->where('employee_id', $employee->id)
+            ->first();
+        $this->assertNotNull($slip);
+        $this->assertEquals(5.000, (float)$slip->orders_bonus);
+        $this->assertEquals(155.000, (float)$slip->gross_actual);
+
+        // Retroactively create log 2: May 16 (10 orders)
+        $log2 = DailyLog::create([
+            'company_id' => $this->company1->id,
+            'employee_id' => $employee->id,
+            'vehicle_id' => $vehicle->id,
+            'contract_id' => $contract->id,
+            'log_date' => '2026-05-16',
+            'orders_count' => 10,
+            'orders_online' => 6,
+            'orders_cash' => 4,
+            'cash_collected' => 20,
+            'cash_pending' => 20,
+            'created_by' => $this->user1->id,
+        ]);
+
+        // Assert that the draft payroll slip automatically updated!
+        $updatedSlip = $slip->fresh();
+        $this->assertEquals(7.500, (float)$updatedSlip->orders_bonus); // 30 orders * 0.25 = 7.50
+        $this->assertEquals(157.500, (float)$updatedSlip->gross_actual);
+
+        // Retroactively update log 2 (orders count to 20)
+        $log2->update([
+            'orders_count' => 20,
+            'orders_online' => 12,
+            'orders_cash' => 8,
+        ]);
+
+        // Assert updated again
+        $updatedSlip2 = $slip->fresh();
+        $this->assertEquals(10.000, (float)$updatedSlip2->orders_bonus); // 40 orders * 0.25 = 10.00
+        $this->assertEquals(160.000, (float)$updatedSlip2->gross_actual);
+
+        // Retroactively delete log 2
+        $log2->delete();
+
+        // Assert reverted back to 20 orders
+        $updatedSlip3 = $slip->fresh();
+        $this->assertEquals(5.000, (float)$updatedSlip3->orders_bonus);
+        $this->assertEquals(155.000, (float)$updatedSlip3->gross_actual);
+    }
 }
 

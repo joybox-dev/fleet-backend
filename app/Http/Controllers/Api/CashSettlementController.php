@@ -66,6 +66,28 @@ class CashSettlementController extends Controller
             'notes'             => 'nullable|string',
         ]);
 
+        if ($validated['daily_log_id'] ?? null) {
+            $log = DailyLog::find($validated['daily_log_id']);
+            if ($validated['amount'] > $log->cash_pending) {
+                return response()->json([
+                    'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.',
+                    'errors' => [
+                        'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.']
+                    ]
+                ], 422);
+            }
+        } else {
+            $pendingCash = DailyLog::where('employee_id', $validated['employee_id'])->sum('cash_pending');
+            if ($validated['amount'] > $pendingCash) {
+                return response()->json([
+                    'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.',
+                    'errors' => [
+                        'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.']
+                    ]
+                ], 422);
+            }
+        }
+
         $validated['received_by'] = $request->user()->id;
 
         $settlement = CashSettlement::create($validated);
@@ -73,7 +95,7 @@ class CashSettlementController extends Controller
         // Reduce cash_pending on linked logs or spread across oldest unpaid
         $remaining = $validated['amount'];
 
-        if ($validated['daily_log_id']) {
+        if ($validated['daily_log_id'] ?? null) {
             // Settle specific log
             $log = DailyLog::find($validated['daily_log_id']);
             $reduce = min($remaining, $log->cash_pending);

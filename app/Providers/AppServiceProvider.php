@@ -66,6 +66,7 @@ class AppServiceProvider extends ServiceProvider
         // Vehicle::observe(VehicleObserver::class);
         // Violation::observe(ViolationObserver::class);
         // DailyLog::observe(DailyLogObserver::class);
+        DailyLog::observe(DailyLogObserver::class);
         // CashSettlement::observe(CashSettlementObserver::class);
         // SalaryAdvance::observe(SalaryAdvanceObserver::class);
     }

@@ -17,6 +17,8 @@ class Contract extends Model
         'rate_per_order', 'fixed_monthly', 'start_date', 'end_date',
         'is_active', 'is_locked', 'notes',
         'required_drivers', 'daily_target', 'monthly_target',
+        'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
+        'expected_monthly_revenue', 'target_driver_count',
     ];
 
     protected $casts = [
@@ -27,6 +29,11 @@ class Contract extends Model
         'required_drivers' => 'integer',
         'daily_target'     => 'integer',
         'monthly_target'   => 'integer',
+        'target_orders_monthly' => 'integer',
+        'base_commission_rate' => 'decimal:3',
+        'premium_commission_rate' => 'decimal:3',
+        'expected_monthly_revenue' => 'decimal:3',
+        'target_driver_count' => 'integer',
     ];
 
     public function client(): BelongsTo

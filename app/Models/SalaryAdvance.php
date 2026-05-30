@@ -38,6 +38,32 @@ class SalaryAdvance extends Model
         'erp_synced_at'       => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function ($advance) {
+            self::recalculatePayroll($advance->employee_id, $advance->advance_date);
+        });
+        static::deleted(function ($advance) {
+            self::recalculatePayroll($advance->employee_id, $advance->advance_date);
+        });
+    }
+
+    private static function recalculatePayroll($employeeId, $dateStr): void
+    {
+        try {
+            $date = \Carbon\Carbon::parse($dateStr);
+            $run = \App\Models\PayrollRun::where('year', $date->year)
+                ->where('month', $date->month)
+                ->where('status', 'draft')
+                ->first();
+            if ($run) {
+                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+            }
+        } catch (\Throwable $e) {
+            \Log::error("Recalculate draft payroll failed in SalaryAdvance: " . $e->getMessage());
+        }
+    }
+
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class)->withTrashed();

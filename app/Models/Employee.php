@@ -22,6 +22,7 @@ class Employee extends Model
         'stage_work_permit_done', 'stage_work_permit_date',
         'stage_driving_trial_done', 'stage_license_obtained', 'stage_license_date',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
+        'target_orders_monthly', 'premium_commission_rate',
     ];
 
     protected $casts = [
@@ -34,6 +35,8 @@ class Employee extends Model
         'stage_work_permit_done'=> 'boolean',
         'stage_driving_trial_done' => 'boolean',
         'stage_license_obtained'=> 'boolean',
+        'target_orders_monthly' => 'integer',
+        'premium_commission_rate'=> 'decimal:3',
     ];
 
     protected $appends = ['active_assignments'];

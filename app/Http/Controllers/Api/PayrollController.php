@@ -36,8 +36,20 @@ class PayrollController extends Controller
         $year  = $validated['year'];
         $month = $validated['month'];
 
-        // Prevent duplicate runs
-        if (PayrollRun::where('year', $year)->where('month', $month)->exists()) {
+        // Prevent duplicate runs OR auto-recalculate if draft
+        $existingRun = PayrollRun::where('year', $year)->where('month', $month)->first();
+        if ($existingRun) {
+            if ($existingRun->status === 'draft') {
+                self::recalculateRun($existingRun);
+                return response()->json([
+                    'message'        => 'تم تحديث وإعادة احتساب رواتب هذا الشهر بنجاح.',
+                    'run_id'         => $existingRun->id,
+                    'employees'      => Employee::whereIn('status', ['active', 'probation'])->count(),
+                    'total_official' => $existingRun->total_official,
+                    'total_actual'   => $existingRun->total_actual,
+                    'total_cash'     => $existingRun->total_cash_diff,
+                ], 200);
+            }
             return response()->json(['message' => 'تم احتساب واعتماد رواتب هذا الشهر مسبقاً.'], 422);
         }
 
@@ -63,13 +75,7 @@ class PayrollController extends Controller
             // BATCH PRE-FETCH: All data in ~10 queries instead of N×8
             // ══════════════════════════════════════════════════════════════
 
-            // 1. Daily log aggregates per employee
-            $logAggregates = DailyLog::whereIn('employee_id', $employeeIds)
-                ->whereBetween('log_date', [$startDate, $endDate])
-                ->groupBy('employee_id')
-                ->selectRaw('employee_id, SUM(orders_count) as total_orders, SUM(income_amount) as total_income')
-                ->get()
-                ->keyBy('employee_id');
+            // 1. Daily logs processed chronologically on the fly
 
             // 2. Violations (driver-liable, not yet deducted)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -131,6 +137,15 @@ class PayrollController extends Controller
                 ->get()
                 ->groupBy('employee_id');
 
+            // 8. Pre-fetch contracts referenced in daily logs of this month
+            $contractIds = DailyLog::whereIn('employee_id', $employeeIds)
+                ->whereBetween('log_date', [$startDate, $endDate])
+                ->pluck('contract_id')
+                ->unique()
+                ->toArray();
+
+            $contracts = \App\Models\Contract::whereIn('id', $contractIds)->get()->keyBy('id');
+
             // ══════════════════════════════════════════════════════════════
             // LOOP: Now uses in-memory lookups only — ZERO queries inside
             // ══════════════════════════════════════════════════════════════
@@ -138,11 +153,21 @@ class PayrollController extends Controller
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                // Look up pre-fetched data
-                $logAgg = $logAggregates[$empId] ?? null;
-                $totalOrders = (int) ($logAgg?->total_orders ?? 0);
-                $companyRevenue = (float) ($logAgg?->total_income ?? 0);
-                $ordersBonus = round($totalOrders * (float)($employee->rate_per_order ?? 0), 3);
+                self::recalculateEmployeeCommissions($empId, $year, $month);
+
+                $empLogs = DailyLog::where('employee_id', $empId)
+                    ->whereBetween('log_date', [$startDate, $endDate])
+                    ->get();
+
+                $totalOrders = 0;
+                $companyRevenue = 0;
+                $ordersBonus = 0;
+
+                foreach ($empLogs as $log) {
+                    $totalOrders += (int) $log->orders_count;
+                    $companyRevenue += (float) $log->income_amount;
+                    $ordersBonus += (float) $log->driver_commission;
+                }
 
                 $violationsDeduction  = (float) ($violationSums[$empId] ?? 0);
                 $maintenanceDeduction = (float) ($maintenanceSums[$empId] ?? 0);
@@ -245,7 +270,7 @@ class PayrollController extends Controller
                     if ($advance->remaining_balance <= 0) {
                         $advance->status = 'completed';
                     }
-                    $advance->save();
+                    $advance->saveQuietly();
                 }
 
                 $totalOfficial += $netBank;
@@ -404,5 +429,295 @@ class PayrollController extends Controller
                 'fuel_allowance' => $totalFuel,
             ],
         ]);
+    }
+
+    /**
+     * Recalculate draft payroll run.
+     * Auto-recalculates all slips in memory and updates database and run totals cleanly.
+     */
+    public static function recalculateRun(PayrollRun $run): void
+    {
+        $year = $run->year;
+        $month = $run->month;
+        $startDate = "{$year}-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-01";
+        $endDate   = \Carbon\Carbon::parse($startDate)->endOfMonth()->toDateString();
+
+        DB::beginTransaction();
+        try {
+            $slipIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('id')->toArray();
+            
+            // Revert previous advance deductions first to avoid double counting
+            $previousDeductions = AdvanceDeduction::whereIn('payroll_slip_id', $slipIds)->get();
+            foreach ($previousDeductions as $ded) {
+                $advance = $ded->salaryAdvance;
+                if ($advance) {
+                    $advance->remaining_balance += $ded->amount;
+                    $advance->paid_installments = max(0, $advance->paid_installments - 1);
+                    if ($advance->status === 'completed') {
+                        $advance->status = 'active';
+                    }
+                    $advance->saveQuietly();
+                }
+                $ded->delete();
+            }
+
+            // Uncheck violations previously deducted in this run
+            Violation::whereIn('payroll_slip_id', $slipIds)->update([
+                'is_deducted' => false,
+                'payroll_slip_id' => null
+            ]);
+
+            $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
+            if (empty($employeeIds)) {
+                $employeeIds = Employee::whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
+            }
+            
+            $employees = Employee::whereIn('id', $employeeIds)->get();
+            $totalOfficial = 0;
+            $totalActual   = 0;
+
+            // 1. Daily logs processed chronologically on the fly
+
+            // 2. Violations (driver-liable, not yet deducted OR previously marked in this draft run)
+            $violationSums = Violation::whereIn('employee_id', $employeeIds)
+                ->where('is_driver_liable', true)
+                ->where(function($q) use ($slipIds) {
+                    $q->where('is_deducted', false)
+                      ->orWhereIn('payroll_slip_id', $slipIds);
+                })
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(amount) as total')
+                ->pluck('total', 'employee_id');
+
+            // 3. Maintenance deductions
+            $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->groupBy('liable_employee_id')
+                ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
+                ->pluck('total', 'liable_employee_id');
+
+            // 4. Custody deductions
+            $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
+                ->where('status', 'returned')
+                ->whereIn('return_condition', ['damaged', 'lost'])
+                ->where('deduction_amount', '>', 0)
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(deduction_amount) as total')
+                ->pluck('total', 'employee_id');
+
+            // 5. Leave deductions
+            $leaveData = EmployeeLeave::whereIn('employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->where('is_paid', false)
+                ->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate])
+                      ->orWhereBetween('end_date', [$startDate, $endDate])
+                      ->orWhere(function ($q2) use ($startDate, $endDate) {
+                          $q2->where('start_date', '<=', $startDate)
+                             ->where('end_date', '>=', $endDate);
+                      });
+                })
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(total_deduction) as total_deduction, SUM(days_count) as total_days')
+                ->get()
+                ->keyBy('employee_id');
+
+            // 6. Active salary advances
+            $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
+                ->where('status', 'active')
+                ->get()
+                ->groupBy('employee_id');
+
+            // 7. Vehicle assignments for fuel allowance
+            $allAssignments = \DB::table('vehicle_assignments')
+                ->join('vehicles', 'vehicles.id', '=', 'vehicle_assignments.vehicle_id')
+                ->whereIn('vehicle_assignments.employee_id', $employeeIds)
+                ->where('vehicle_assignments.assigned_date', '<=', $endDate)
+                ->where(function ($q) use ($startDate) {
+                    $q->whereNull('vehicle_assignments.unassigned_date')
+                      ->orWhere('vehicle_assignments.unassigned_date', '>=', $startDate);
+                })
+                ->select('vehicle_assignments.employee_id', 'vehicles.monthly_fuel_allowance')
+                ->get()
+                ->groupBy('employee_id');
+
+            // 8. Pre-fetch contracts referenced in daily logs of this month
+            $contractIds = DailyLog::whereIn('employee_id', $employeeIds)
+                ->whereBetween('log_date', [$startDate, $endDate])
+                ->pluck('contract_id')
+                ->unique()
+                ->toArray();
+
+            $contracts = \App\Models\Contract::whereIn('id', $contractIds)->get()->keyBy('id');
+
+            foreach ($employees as $employee) {
+                $empId = $employee->id;
+
+                self::recalculateEmployeeCommissions($empId, $year, $month);
+
+                $empLogs = DailyLog::where('employee_id', $empId)
+                    ->whereBetween('log_date', [$startDate, $endDate])
+                    ->get();
+
+                $totalOrders = 0;
+                $ordersBonus = 0;
+
+                foreach ($empLogs as $log) {
+                    $totalOrders += (int) $log->orders_count;
+                    $ordersBonus += (float) $log->driver_commission;
+                }
+
+                $violationsDeduction  = (float) ($violationSums[$empId] ?? 0);
+                $maintenanceDeduction = (float) ($maintenanceSums[$empId] ?? 0);
+                $custodyDeduction     = (float) ($custodySums[$empId] ?? 0);
+
+                $leaveInfo = $leaveData[$empId] ?? null;
+                $leaveDeduction  = (float) ($leaveInfo?->total_deduction ?? 0);
+                $unpaidLeaveDays = (int)   ($leaveInfo?->total_days ?? 0);
+
+                $advanceDeduction = 0;
+                $activeAdvances = $allAdvances[$empId] ?? collect();
+                foreach ($activeAdvances as $advance) {
+                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
+                    if ($installment <= 0) continue;
+                    $advanceDeduction += $installment;
+                }
+
+                $fuelAllowance = 0;
+                $empAssignments = $allAssignments[$empId] ?? collect();
+                foreach ($empAssignments as $a) {
+                    $fuelAllowance += (float) ($a->monthly_fuel_allowance ?? 0);
+                }
+
+                $baseActual = (float) $employee->actual_salary;
+                if ($employee->pay_type === 'per_order') {
+                    $baseActual  = $ordersBonus;
+                    $ordersBonus = 0;
+                }
+
+                $totalBonuses    = $ordersBonus + $fuelAllowance;
+                $totalGrossActual = $baseActual + $totalBonuses;
+                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction + $advanceDeduction;
+                $netActual = max(0, $totalGrossActual - $totalDeductions);
+                $netBank = min($netActual, (float) $employee->official_salary);
+                $netCash = max(0, $netActual - $netBank);
+
+                $slip = PayrollSlip::updateOrCreate([
+                    'payroll_run_id' => $run->id,
+                    'employee_id'    => $employee->id,
+                ], [
+                    'base_official'         => $employee->official_salary,
+                    'base_actual'           => $baseActual,
+                    'orders_bonus'          => $ordersBonus,
+                    'fuel_allowance'        => $fuelAllowance,
+                    'total_orders'          => $totalOrders,
+                    'violations_deduction'  => $violationsDeduction,
+                    'maintenance_deduction' => $maintenanceDeduction,
+                    'custody_deduction'     => $custodyDeduction,
+                    'advance_deduction'     => $advanceDeduction,
+                    'leave_deduction'       => $leaveDeduction,
+                    'unpaid_leave_days'     => $unpaidLeaveDays,
+                    'gross_official'        => $netBank,
+                    'gross_actual'          => $netActual,
+                    'cash_portion'          => $netCash,
+                ]);
+
+                // Re-mark violations as deducted
+                Violation::where('employee_id', $employee->id)
+                    ->where('is_driver_liable', true)
+                    ->where('is_deducted', false)
+                    ->update([
+                        'is_deducted' => true,
+                        'payroll_slip_id' => $slip->id
+                    ]);
+
+                // Re-create advance deductions
+                foreach ($activeAdvances as $advance) {
+                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
+                    if ($installment <= 0) continue;
+
+                    AdvanceDeduction::create([
+                        'salary_advance_id' => $advance->id,
+                        'payroll_slip_id'   => $slip->id,
+                        'amount'            => $installment,
+                        'deduction_date'    => $endDate,
+                        'company_id'        => $advance->company_id,
+                    ]);
+
+                    $advance->paid_installments += 1;
+                    $advance->remaining_balance  = max(0, (float) $advance->remaining_balance - $installment);
+                    if ($advance->remaining_balance <= 0) {
+                        $advance->status = 'completed';
+                    }
+                    $advance->saveQuietly();
+                }
+
+                $totalOfficial += $netBank;
+                $totalActual   += $netActual;
+            }
+
+            PayrollSlip::where('payroll_run_id', $run->id)->whereNotIn('employee_id', $employeeIds)->delete();
+
+            $run->update([
+                'total_official' => $totalOfficial,
+                'total_actual'   => $totalActual,
+                'total_cash_diff'=> $totalActual - $totalOfficial,
+            ]);
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            \Log::error('Recalculate Run failed: ' . $e->getMessage());
+        }
+    }
+
+    public static function recalculateEmployeeCommissions($employeeId, $year, $month)
+    {
+        $employee = \App\Models\Employee::find($employeeId);
+        if (!$employee) return;
+
+        $startDate = "{$year}-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-01";
+        $endDate   = \Carbon\Carbon::parse($startDate)->endOfMonth()->toDateString();
+
+        $logs = \App\Models\DailyLog::where('employee_id', $employeeId)
+            ->whereBetween('log_date', [$startDate, $endDate])
+            ->orderBy('log_date')
+            ->orderBy('id')
+            ->get();
+
+        $target = (int) ($employee->target_orders_monthly ?? 0);
+        $baseRate = (float) ($employee->rate_per_order ?? 0.000);
+        $premiumRate = (float) ($employee->premium_commission_rate ?? 0.000);
+
+        $runningOrders = 0;
+
+        foreach ($logs as $log) {
+            $cOrders = (int) $log->orders_count;
+            $logCommission = 0;
+
+            if ($target > 0) {
+                $start = $runningOrders + 1;
+                $end = $runningOrders + $cOrders;
+
+                if ($end < $target) {
+                    $logCommission = $cOrders * $baseRate;
+                } elseif ($start >= $target) {
+                    $logCommission = $cOrders * $premiumRate;
+                } else {
+                    $baseOrders = $target - $start;
+                    $premiumOrders = $end - $target + 1;
+                    $logCommission = ($baseOrders * $baseRate) + ($premiumOrders * $premiumRate);
+                }
+            } else {
+                $logCommission = $cOrders * (float) ($employee->rate_per_order ?? 0);
+            }
+
+            // We must update the DB directly without triggering the observer recursively
+            \DB::table('daily_logs')
+                ->where('id', $log->id)
+                ->update(['driver_commission' => round($logCommission, 3)]);
+
+            $runningOrders += $cOrders;
+        }
     }
 }

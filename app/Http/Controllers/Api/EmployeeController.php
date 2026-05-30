@@ -63,6 +63,8 @@ class EmployeeController extends Controller
             'driving_license_expiry'=> 'nullable|date',
             'work_permit_expiry'    => 'nullable|date',
             'notes'                 => 'nullable|string',
+            'target_orders_monthly' => 'nullable|integer|min:0',
+            'premium_commission_rate'=> 'nullable|numeric|min:0',
         ]);
 
         // ── Auto-generate employee number: EMP-0001, EMP-0002, ... ──
@@ -89,7 +91,7 @@ class EmployeeController extends Controller
     {
         return response()->json($employee->load([
             'vehicleAssignments.vehicle:id,plate_number,make,model',
-            'vehicleAssignments.contract:id,name',
+            'vehicleAssignments.contract:id,name,target_orders_monthly,base_commission_rate,premium_commission_rate',
         ]));
     }
 
@@ -130,6 +132,8 @@ class EmployeeController extends Controller
             'residence_expiry'       => 'nullable|date',
             'driving_license_expiry' => 'nullable|date',
             'work_permit_expiry'     => 'nullable|date',
+            'target_orders_monthly'  => 'nullable|integer|min:0',
+            'premium_commission_rate'=> 'nullable|numeric|min:0',
             // Overseas onboarding stages
             'stage_arrived'          => 'sometimes|boolean',
             'stage_medical_done'     => 'sometimes|boolean',
@@ -198,8 +202,8 @@ class EmployeeController extends Controller
 
         // Calculate credits
         $totalOrders    = (int) $creditsQuery->sum('orders_count');
-        $ratePerOrder   = (float) ($creditsQuery->clone()->where('rate_per_order', '>', 0)->value('rate_per_order') ?? $employee->rate_per_order ?? 0.0);
-        $ordersEarning  = (float) round($totalOrders * $ratePerOrder, 3);
+        $ratePerOrder   = (float) ($employee->rate_per_order ?? 0.0);
+        $ordersEarning  = (float) round($creditsQuery->sum('driver_commission'), 3);
         
         $cashReturned   = (float) $cashSettlementQuery->sum('amount');
         if ($cashReturned === 0.0) {

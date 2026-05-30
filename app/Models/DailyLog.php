@@ -18,14 +18,16 @@ class DailyLog extends Model
         'rate_per_order', 'income_amount',
         'odometer_start', 'odometer_end', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
+        'driver_commission',
     ];
 
     protected $casts = [
-        'cash_collected' => 'decimal:3',
-        'cash_settled'   => 'decimal:3',
-        'cash_pending'   => 'decimal:3',
-        'rate_per_order' => 'decimal:3',
-        'income_amount'  => 'decimal:3',
+        'cash_collected'    => 'decimal:3',
+        'cash_settled'      => 'decimal:3',
+        'cash_pending'      => 'decimal:3',
+        'rate_per_order'    => 'decimal:3',
+        'income_amount'     => 'decimal:3',
+        'driver_commission' => 'decimal:3',
     ];
 
     public function employee(): BelongsTo  { return $this->belongsTo(Employee::class)->withTrashed(); }

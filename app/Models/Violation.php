@@ -24,6 +24,32 @@ class Violation extends Model
         'is_deducted'      => 'boolean',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function ($violation) {
+            self::recalculatePayroll($violation->employee_id, $violation->violation_date);
+        });
+        static::deleted(function ($violation) {
+            self::recalculatePayroll($violation->employee_id, $violation->violation_date);
+        });
+    }
+
+    private static function recalculatePayroll($employeeId, $dateStr): void
+    {
+        try {
+            $date = \Carbon\Carbon::parse($dateStr);
+            $run = \App\Models\PayrollRun::where('year', $date->year)
+                ->where('month', $date->month)
+                ->where('status', 'draft')
+                ->first();
+            if ($run) {
+                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+            }
+        } catch (\Throwable $e) {
+            \Log::error("Recalculate draft payroll failed in Violation: " . $e->getMessage());
+        }
+    }
+
     public function employee(): BelongsTo    { return $this->belongsTo(Employee::class)->withTrashed(); }
     public function vehicle(): BelongsTo     { return $this->belongsTo(Vehicle::class)->withTrashed(); }
     public function createdBy(): BelongsTo   { return $this->belongsTo(User::class, 'created_by'); }

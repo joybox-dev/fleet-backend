@@ -239,7 +239,7 @@ class ReportController extends Controller
                 if (!$emp) continue;
                 $ordersHere  = $empLogs->sum('orders_count');
                 $totalOrders = $totalOrdersByEmp[$empId] ?? 0;
-                $cost += $ordersHere * (float) ($emp->rate_per_order ?? 0);
+                $cost += $empLogs->sum('driver_commission');
                 if ((float) $emp->actual_salary > 0 && $totalOrders > 0) {
                     $cost += (float) $emp->actual_salary * ($ordersHere / $totalOrders);
                 }
@@ -363,14 +363,14 @@ class ReportController extends Controller
                 ? max((float) $cLogs->sum('income_amount'), (float) $c->fixed_monthly)
                 : (float) $cLogs->sum('income_amount');
 
-            // Driver cost (proportional allocation)
+            // Driver cost (exact chronological commissions + proportional base salary allocation)
             $driverCost = 0;
             foreach ($cLogs->groupBy('employee_id') as $empId => $empLogs) {
                 $emp = $employees[$empId] ?? null;
                 if (!$emp) continue;
                 $ordersHere  = $empLogs->sum('orders_count');
                 $totalOrders = $totalOrdersByEmp[$empId] ?? 0;
-                $driverCost += $ordersHere * (float) ($emp->rate_per_order ?? 0);
+                $driverCost += $empLogs->sum('driver_commission');
                 if ((float) $emp->actual_salary > 0 && $totalOrders > 0) {
                     $driverCost += (float) $emp->actual_salary * ($ordersHere / $totalOrders);
                 }

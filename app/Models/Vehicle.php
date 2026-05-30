@@ -14,6 +14,7 @@ class Vehicle extends Model
 
     protected $fillable = [
         'plate_number', 'make', 'model', 'year', 'color', 'vin', 'status',
+        'ownership_type',
         'odometer_km', 'last_oil_change_km', 'oil_change_interval_km',
         'monthly_fuel_allowance',
         'insurance_expiry', 'comprehensive_insurance_expiry',

@@ -39,6 +39,8 @@ class ContractController extends Controller
             'start_date'     => 'required|date',
             'end_date'       => 'nullable|date|after:start_date',
             'notes'          => 'nullable|string|max:1000',
+            'expected_monthly_revenue' => 'nullable|numeric|min:0',
+            'target_driver_count'      => 'nullable|integer|min:0',
         ]);
 
         // Ensure financial fields default to 0 when not applicable to the payment_type
@@ -79,6 +81,8 @@ class ContractController extends Controller
             'end_date'       => 'nullable|date',
             'is_active'      => 'sometimes|boolean',
             'notes'          => 'nullable|string|max:1000',
+            'expected_monthly_revenue' => 'nullable|numeric|min:0',
+            'target_driver_count'      => 'nullable|integer|min:0',
         ]);
 
         $contract->update($validated);

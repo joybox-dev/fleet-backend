@@ -28,6 +28,36 @@ class MaintenanceRecord extends Model
         'photo_paths'      => 'array',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function ($record) {
+            if ($record->liable_employee_id) {
+                self::recalculatePayroll($record->liable_employee_id, $record->maintenance_date);
+            }
+        });
+        static::deleted(function ($record) {
+            if ($record->liable_employee_id) {
+                self::recalculatePayroll($record->liable_employee_id, $record->maintenance_date);
+            }
+        });
+    }
+
+    private static function recalculatePayroll($employeeId, $dateStr): void
+    {
+        try {
+            $date = \Carbon\Carbon::parse($dateStr);
+            $run = \App\Models\PayrollRun::where('year', $date->year)
+                ->where('month', $date->month)
+                ->where('status', 'draft')
+                ->first();
+            if ($run) {
+                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+            }
+        } catch (\Throwable $e) {
+            \Log::error("Recalculate draft payroll failed in MaintenanceRecord: " . $e->getMessage());
+        }
+    }
+
     public function vehicle(): BelongsTo         { return $this->belongsTo(Vehicle::class)->withTrashed(); }
     public function reportedBy(): BelongsTo      { return $this->belongsTo(User::class, 'reported_by'); }
     public function approvedBy(): BelongsTo      { return $this->belongsTo(User::class, 'approved_by'); }

@@ -74,6 +74,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::patch('vehicles/{vehicle}/odometer', [VehicleController::class, 'updateOdometer']);
 
         // Violations — record traffic fines
+        Route::get('violations/resolve-driver', [ViolationController::class, 'resolveDriver']);
         Route::apiResource('violations', ViolationController::class);
 
         // Maintenance — report + view

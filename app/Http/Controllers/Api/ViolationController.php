@@ -26,14 +26,47 @@ class ViolationController extends Controller
         return response()->json($violations);
     }
 
+    public function resolveDriver(Request $request): JsonResponse
+    {
+        $request->validate([
+            'vehicle_id' => 'required|exists:vehicles,id',
+            'violation_date' => 'required',
+        ]);
+
+        $vehicleId = $request->vehicle_id;
+        $violationDate = $request->violation_date;
+        $dateOnly = date('Y-m-d', strtotime($violationDate));
+
+        $assignment = \App\Models\VehicleAssignment::with('employee:id,name')
+            ->where('vehicle_id', $vehicleId)
+            ->where('assigned_date', '<=', $dateOnly)
+            ->where(function($query) use ($dateOnly) {
+                $query->where('unassigned_date', '>=', $dateOnly)
+                      ->orWhereNull('unassigned_date');
+            })
+            ->first();
+
+        if (!$assignment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active driver found for this vehicle on the specified date/time.'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'employee' => $assignment->employee,
+            'assignment' => $assignment
+        ]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $companyId = app('current_company_id');
 
-        $validated = $request->validate([
-            'employee_id'      => 'required|exists:employees,id',
+        $request->validate([
             'vehicle_id'       => 'required|exists:vehicles,id',
-            'violation_date'   => 'required|date',
+            'violation_date'   => 'required',
             'violation_type'   => 'required|string|max:255',
             'reference_number' => [
                 'nullable',
@@ -47,9 +80,41 @@ class ViolationController extends Controller
             'notes'            => 'nullable|string',
         ]);
 
-        $validated['created_by'] = $request->user()->id;
+        $vehicleId = $request->vehicle_id;
+        $violationDate = $request->violation_date;
+        $dateOnly = date('Y-m-d', strtotime($violationDate));
 
-        $violation = Violation::create($validated);
+        // Resolve driver automatically
+        $assignment = \App\Models\VehicleAssignment::where('vehicle_id', $vehicleId)
+            ->where('assigned_date', '<=', $dateOnly)
+            ->where(function($query) use ($dateOnly) {
+                $query->where('unassigned_date', '>=', $dateOnly)
+                      ->orWhereNull('unassigned_date');
+            })
+            ->first();
+
+        if (!$assignment) {
+            return response()->json([
+                'message' => 'No active driver was assigned to this vehicle at the specified date/time.'
+            ], 422);
+        }
+
+        $employeeId = $assignment->employee_id;
+
+        $violationData = [
+            'employee_id'      => $employeeId,
+            'vehicle_id'       => $vehicleId,
+            'violation_date'   => $violationDate,
+            'violation_type'   => $request->violation_type,
+            'reference_number' => $request->reference_number,
+            'amount'           => $request->amount,
+            'is_driver_liable' => $request->boolean('is_driver_liable', true),
+            'photo_path'       => $request->photo_path,
+            'notes'            => $request->notes,
+            'created_by'       => $request->user()->id,
+        ];
+
+        $violation = Violation::create($violationData);
 
         // ── WhatsApp auto-notify driver ──
         $employee = $violation->employee;
@@ -68,8 +133,6 @@ class ViolationController extends Controller
                 ]);
             }
         }
-
-
 
         return response()->json($violation->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
     }

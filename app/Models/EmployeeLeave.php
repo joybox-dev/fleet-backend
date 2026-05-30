@@ -30,6 +30,32 @@ class EmployeeLeave extends Model
         'approved_at'        => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function ($leave) {
+            self::recalculatePayroll($leave->employee_id, $leave->start_date);
+        });
+        static::deleted(function ($leave) {
+            self::recalculatePayroll($leave->employee_id, $leave->start_date);
+        });
+    }
+
+    private static function recalculatePayroll($employeeId, $dateStr): void
+    {
+        try {
+            $date = \Carbon\Carbon::parse($dateStr);
+            $run = \App\Models\PayrollRun::where('year', $date->year)
+                ->where('month', $date->month)
+                ->where('status', 'draft')
+                ->first();
+            if ($run) {
+                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+            }
+        } catch (\Throwable $e) {
+            \Log::error("Recalculate draft payroll failed in EmployeeLeave: " . $e->getMessage());
+        }
+    }
+
     /* ── Relationships ── */
 
     public function employee(): BelongsTo
