@@ -224,3 +224,22 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('dashboard', [SuperAdminCompanyController::class, 'dashboard']);
     });
 });
+
+// Temporary migration helper to run database migrations from browser
+Route::get('migrate-database', function() {
+    try {
+        \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Migrations executed successfully!',
+            'output' => \Illuminate\Support\Facades\Artisan::output()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ], 500);
+    }
+});
+
