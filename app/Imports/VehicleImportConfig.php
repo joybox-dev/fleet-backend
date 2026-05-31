@@ -19,7 +19,13 @@ class VehicleImportConfig
             ['key' => 'status',                'label' => 'الحالة',            'required' => false, 'type' => 'enum:working,available,maintenance,idle'],
             ['key' => 'odometer_km',           'label' => 'عداد الكيلومتر',    'required' => false, 'type' => 'integer'],
             ['key' => 'monthly_fuel_allowance','label' => 'بدل الوقود الشهري', 'required' => false, 'type' => 'numeric'],
-            ['key' => 'insurance_expiry',      'label' => 'انتهاء التأمين',    'required' => false, 'type' => 'date'],
+            ['key' => 'insurance_expiry',      'label' => 'انتهاء التأمين الإلزامي', 'required' => false, 'type' => 'date'],
+            ['key' => 'comprehensive_insurance_expiry', 'label' => 'انتهاء التأمين الشامل', 'required' => false, 'type' => 'date'],
+            ['key' => 'food_authority_license_expiry', 'label' => 'انتهاء رخصة هيئة الغذاء', 'required' => false, 'type' => 'date'],
+            ['key' => 'next_service_due',      'label' => 'تاريخ الخدمة القادمة',  'required' => false, 'type' => 'date'],
+            ['key' => 'ownership_type',        'label' => 'نوع الملكية',       'required' => false, 'type' => 'enum:owned,rented,installment,asset'],
+            ['key' => 'last_oil_change_km',    'label' => 'عداد آخر غيار زيت',   'required' => false, 'type' => 'integer'],
+            ['key' => 'oil_change_interval_km', 'label' => 'مسافة غيار الزيت كم', 'required' => false, 'type' => 'integer'],
         ];
     }
 
@@ -36,6 +42,12 @@ class VehicleImportConfig
             'odometer_km'           => 'nullable|integer|min:0',
             'monthly_fuel_allowance'=> 'nullable|numeric|min:0',
             'insurance_expiry'      => 'nullable|date',
+            'comprehensive_insurance_expiry' => 'nullable|date',
+            'food_authority_license_expiry' => 'nullable|date',
+            'next_service_due'      => 'nullable|date',
+            'ownership_type'        => 'nullable|in:owned,rented,installment,asset',
+            'last_oil_change_km'    => 'nullable|integer|min:0',
+            'oil_change_interval_km' => 'nullable|integer|min:0',
         ];
     }
 
@@ -45,6 +57,9 @@ class VehicleImportConfig
             'status'      => 'available',
             'odometer_km' => 0,
             'monthly_fuel_allowance' => 0,
+            'ownership_type' => 'owned',
+            'last_oil_change_km' => null,
+            'oil_change_interval_km' => null,
         ];
     }
 

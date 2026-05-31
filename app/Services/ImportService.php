@@ -275,12 +275,13 @@ class ImportService
         // Write headers
         $col = 1;
         foreach ($fields as $field) {
-            $cell = $sheet->getCellByColumnAndRow($col, 1);
+            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+            $cell = $sheet->getCell($colLetter . '1');
             $cell->setValue($field['label']);
             $cell->getStyle()->getFont()->setBold(true);
 
             // Auto-width
-            $sheet->getColumnDimensionByColumn($col)->setAutoSize(true);
+            $sheet->getColumnDimension($colLetter)->setAutoSize(true);
 
             // Add note for required fields
             if ($field['required']) {
@@ -293,6 +294,7 @@ class ImportService
         // Write sample row
         $col = 1;
         foreach ($fields as $field) {
+            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
             $sample = match ($field['type']) {
                 'numeric'  => '0.000',
                 'integer'  => '0',
@@ -302,7 +304,7 @@ class ImportService
                     ? explode(',', str_replace('enum:', '', $field['type']))[0]
                     : '',
             };
-            $sheet->getCellByColumnAndRow($col, 2)->setValue($sample);
+            $sheet->getCell($colLetter . '2')->setValue($sample);
             $col++;
         }
 
