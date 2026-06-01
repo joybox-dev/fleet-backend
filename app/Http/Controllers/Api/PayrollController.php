@@ -75,7 +75,13 @@ class PayrollController extends Controller
             // BATCH PRE-FETCH: All data in ~10 queries instead of N×8
             // ══════════════════════════════════════════════════════════════
 
-            // 1. Daily logs processed chronologically on the fly
+            // 1. Daily logs processed chronologically on the fly (Pre-fetched in a single query)
+            $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
+                ->whereBetween('log_date', [$startDate, $endDate])
+                ->orderBy('log_date')
+                ->orderBy('id')
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
+                ->groupBy('employee_id');
 
             // 2. Violations (driver-liable, not yet deducted)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -153,7 +159,7 @@ class PayrollController extends Controller
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month);
+                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $allDailyLogs[$empId] ?? collect());
 
                 $totalOrders = 0;
                 $companyRevenue = 0;
@@ -243,10 +249,12 @@ class PayrollController extends Controller
                 ]);
 
                 // Mark violations as deducted
-                Violation::where('employee_id', $employee->id)
-                    ->where('is_driver_liable', true)
-                    ->where('is_deducted', false)
-                    ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
+                if ($violationsDeduction > 0) {
+                    Violation::where('employee_id', $employee->id)
+                        ->where('is_driver_liable', true)
+                        ->where('is_deducted', false)
+                        ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
+                }
 
                 // ── Create AdvanceDeduction records & update advances ──
                 foreach ($activeAdvances as $advance) {
@@ -312,6 +320,14 @@ class PayrollController extends Controller
         $run = PayrollRun::where('year', $year)->where('month', $month)
             ->with(['slips.employee:id,name,official_salary,actual_salary', 'createdBy:id,name', 'approvedBy:id,name'])
             ->firstOrFail();
+
+        // Strip the heavy and unused 'active_assignments' append from the employees in the slips list
+        // This prevents N+1 queries completely and reduces the JSON payload size significantly.
+        $run->slips->each(function ($slip) {
+            if ($slip->employee) {
+                $slip->employee->makeHidden('active_assignments');
+            }
+        });
 
         return response()->json($run);
     }
@@ -472,7 +488,13 @@ class PayrollController extends Controller
             $totalOfficial = 0;
             $totalActual   = 0;
 
-            // 1. Daily logs processed chronologically on the fly
+            // 1. Daily logs processed chronologically on the fly (Pre-fetched in a single query)
+            $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
+                ->whereBetween('log_date', [$startDate, $endDate])
+                ->orderBy('log_date')
+                ->orderBy('id')
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
+                ->groupBy('employee_id');
 
             // 2. Violations (driver-liable, not yet deducted OR previously marked in this draft run)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -549,7 +571,7 @@ class PayrollController extends Controller
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month);
+                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $allDailyLogs[$empId] ?? collect());
 
                 $totalOrders = 0;
                 $ordersBonus = 0;
@@ -615,13 +637,15 @@ class PayrollController extends Controller
                 ]);
 
                 // Re-mark violations as deducted
-                Violation::where('employee_id', $employee->id)
-                    ->where('is_driver_liable', true)
-                    ->where('is_deducted', false)
-                    ->update([
-                        'is_deducted' => true,
-                        'payroll_slip_id' => $slip->id
-                    ]);
+                if ($violationsDeduction > 0) {
+                    Violation::where('employee_id', $employee->id)
+                        ->where('is_driver_liable', true)
+                        ->where('is_deducted', false)
+                        ->update([
+                            'is_deducted' => true,
+                            'payroll_slip_id' => $slip->id
+                        ]);
+                }
 
                 // Re-create advance deductions
                 foreach ($activeAdvances as $advance) {
@@ -663,7 +687,7 @@ class PayrollController extends Controller
         }
     }
 
-    public static function recalculateEmployeeCommissions($employeeId, $year, $month)
+    public static function recalculateEmployeeCommissions($employeeId, $year, $month, $preFetchedLogs = null)
     {
         if ($employeeId instanceof Employee) {
             $employee = $employeeId;
@@ -677,7 +701,7 @@ class PayrollController extends Controller
         $startDate = "{$year}-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-01";
         $endDate   = \Carbon\Carbon::parse($startDate)->endOfMonth()->toDateString();
 
-        $logs = \App\Models\DailyLog::where('employee_id', $employeeId)
+        $logs = $preFetchedLogs ?? \App\Models\DailyLog::where('employee_id', $employeeId)
             ->whereBetween('log_date', [$startDate, $endDate])
             ->orderBy('log_date')
             ->orderBy('id')
