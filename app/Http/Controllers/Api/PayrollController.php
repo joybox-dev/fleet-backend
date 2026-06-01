@@ -321,11 +321,12 @@ class PayrollController extends Controller
             ->with(['slips.employee:id,name,official_salary,actual_salary', 'createdBy:id,name', 'approvedBy:id,name'])
             ->firstOrFail();
 
-        // Strip the heavy and unused 'active_assignments' append from the employees in the slips list
+        // Strip the heavy and unused 'active_assignments' append and relations from the employees in the slips list
         // This prevents N+1 queries completely and reduces the JSON payload size significantly.
         $run->slips->each(function ($slip) {
             if ($slip->employee) {
-                $slip->employee->makeHidden('active_assignments');
+                $slip->employee->setAppends([]);
+                $slip->employee->unsetRelation('vehicleAssignments');
             }
         });
 
