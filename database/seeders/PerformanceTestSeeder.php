@@ -145,7 +145,7 @@ class PerformanceTestSeeder extends Seeder
                     'gender' => 'male',
                     'date_of_birth' => '1996-05-15',
                     'date_of_joining' => '2026-05-01',
-                    'employee_type' => 'driver',
+                    'employee_type' => 'overseas',
                     'status' => 'active',
                     'pay_type' => 'hybrid',
                     'official_salary' => 100.000,
