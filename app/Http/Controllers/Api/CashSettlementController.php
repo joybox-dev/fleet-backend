@@ -25,28 +25,42 @@ class CashSettlementController extends Controller
 
     /**
      * GET /api/cash-settlements/pending
-     * All drivers with outstanding cash — main dashboard concern from meeting.
+     * All drivers with outstanding cash — supports real-time database-level search.
      */
-    public function pending(): JsonResponse
+    public function pending(Request $request): JsonResponse
     {
-        $pending = DailyLog::where('cash_pending', '>', 0)
-            ->with('employee:id,name,phone')
-            ->with('vehicle:id,plate_number')
+        $search = $request->query('search');
+
+        $pendingQuery = DailyLog::where('cash_pending', '>', 0)
+            ->with(['employee:id,name,phone', 'vehicle:id,plate_number'])
             ->selectRaw('employee_id, vehicle_id, SUM(cash_pending) as total_pending, COUNT(*) as days_outstanding')
             ->groupBy('employee_id', 'vehicle_id')
-            ->orderByDesc('total_pending')
-            ->get()
-            ->map(fn($row) => [
-                'employee_id'      => $row->employee_id,
-                'employee_name'    => $row->employee?->name,
-                'employee_phone'   => $row->employee?->phone,
-                'vehicle_plate'    => $row->vehicle?->plate_number,
-                'total_pending'    => (float) $row->total_pending,
-                'days_outstanding' => (int) $row->days_outstanding,
-            ]);
+            ->orderByDesc('total_pending');
+
+        if ($search) {
+            $pendingQuery->where(function($q) use ($search) {
+                $q->whereHas('employee', function($eq) use ($search) {
+                    $eq->where('name', 'like', '%' . $search . '%')
+                       ->orWhere('phone', 'like', '%' . $search . '%');
+                })->orWhereHas('vehicle', function($vq) use ($search) {
+                    $vq->where('plate_number', 'like', '%' . $search . '%');
+                });
+            });
+        }
+
+        $pending = $pendingQuery->get()->map(fn($row) => [
+            'employee_id'      => $row->employee_id,
+            'employee_name'    => $row->employee?->name,
+            'employee_phone'   => $row->employee?->phone,
+            'vehicle_plate'    => $row->vehicle?->plate_number,
+            'total_pending'    => (float) $row->total_pending,
+            'days_outstanding' => (int) $row->days_outstanding,
+        ]);
+
+        $totalCompanyPending = DailyLog::where('cash_pending', '>', 0)->sum('cash_pending');
 
         return response()->json([
-            'total_pending_kwd' => $pending->sum('total_pending'),
+            'total_pending_kwd' => (float) $totalCompanyPending,
             'drivers'           => $pending,
         ]);
     }
