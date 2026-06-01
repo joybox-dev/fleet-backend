@@ -9,11 +9,11 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            // MersalCompanySeeder::class,   // ✅ Seeding Mersal Company (Basic clean settings & admin account)
+            MersalCompanySeeder::class,   // ✅ Seeding Mersal Company (Basic clean settings & admin account)
             
             // ── 🚀 GIANT PERFORMANCE & SCENARIO TEST ─────────────────
             // Uncomment the line below to seed 1,000 Employees, 1,000 Vehicles, 10 Contracts & 2,000 logs:
-            PerformanceTestSeeder::class,
+            // PerformanceTestSeeder::class,
             
             // MasterScenarioSeeder::class, // Multi-Tenant full production testing data (stopped/commented out)
         ]);
