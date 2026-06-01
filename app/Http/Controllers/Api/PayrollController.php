@@ -315,20 +315,39 @@ class PayrollController extends Controller
      * GET /api/payroll/{year}/{month}
      * Get payroll run with all slips.
      */
-    public function show(int $year, int $month): JsonResponse
+    public function show(Request $request, int $year, int $month): JsonResponse
     {
         $run = PayrollRun::where('year', $year)->where('month', $month)
-            ->with(['slips.employee:id,name,official_salary,actual_salary', 'createdBy:id,name', 'approvedBy:id,name'])
+            ->with(['createdBy:id,name', 'approvedBy:id,name'])
             ->firstOrFail();
 
-        // Strip the heavy and unused 'active_assignments' append and relations from the employees in the slips list
-        // This prevents N+1 queries completely and reduces the JSON payload size significantly.
-        $run->slips->each(function ($slip) {
-            if ($slip->employee) {
-                $slip->employee->setAppends([]);
-                $slip->employee->unsetRelation('vehicleAssignments');
-            }
-        });
+        if ($request->has('page') || $request->has('paginate')) {
+            $perPage = min(max($request->integer('per_page', 50), 5), 100);
+
+            $slips = \App\Models\PayrollSlip::where('payroll_run_id', $run->id)
+                ->with(['employee:id,name,official_salary,actual_salary'])
+                ->paginate($perPage);
+
+            $slips->getCollection()->each(function ($slip) {
+                if ($slip->employee) {
+                    $slip->employee->setAppends([]);
+                    $slip->employee->unsetRelation('vehicleAssignments');
+                }
+            });
+
+            $run->setRelation('slips', $slips);
+        } else {
+            $run->load(['slips.employee:id,name,official_salary,actual_salary']);
+
+            // Strip the heavy and unused 'active_assignments' append and relations from the employees in the slips list
+            // This prevents N+1 queries completely and reduces the JSON payload size significantly.
+            $run->slips->each(function ($slip) {
+                if ($slip->employee) {
+                    $slip->employee->setAppends([]);
+                    $slip->employee->unsetRelation('vehicleAssignments');
+                }
+            });
+        }
 
         return response()->json($run);
     }
