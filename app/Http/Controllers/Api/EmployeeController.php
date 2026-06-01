@@ -17,12 +17,13 @@ class EmployeeController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $perPage = min(max($request->integer('per_page', 50), 5), 100);
         $employees = Employee::with(['activeAssignment.vehicle:id,plate_number'])
             ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn($q) => $q->where('pay_type', $request->pay_type))
             ->orderBy('name')
-            ->paginate(50);
+            ->paginate($perPage);
 
         return response()->json($employees);
     }

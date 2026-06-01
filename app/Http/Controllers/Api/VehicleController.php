@@ -14,12 +14,13 @@ class VehicleController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $perPage = min(max($request->integer('per_page', 50), 5), 100);
         $vehicles = Vehicle::query()
             ->with(['activeAssignment.employee:id,name', 'activeAssignment.contract:id,name'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->search, fn($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
             ->orderBy('plate_number')
-            ->paginate(50);
+            ->paginate($perPage);
 
         return response()->json($vehicles);
     }

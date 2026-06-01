@@ -9,7 +9,12 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            MersalCompanySeeder::class,   // ✅ Seeding Mersal Company only (Single-Tenant premium data)
+            // MersalCompanySeeder::class,   // ✅ Seeding Mersal Company (Basic clean settings & admin account)
+            
+            // ── 🚀 GIANT PERFORMANCE & SCENARIO TEST ─────────────────
+            // Uncomment the line below to seed 1,000 Employees, 1,000 Vehicles, 10 Contracts & 2,000 logs:
+            PerformanceTestSeeder::class,
+            
             // MasterScenarioSeeder::class, // Multi-Tenant full production testing data (stopped/commented out)
         ]);
 
@@ -21,6 +26,7 @@ class DatabaseSeeder extends Seeder
         //     Phase3Seeder::class,             // Violations, Maintenance, Cash Settlements
         //     Phase4Seeder::class,             // Custody Items, Payroll Run + Slips
         //     PayrollVerificationSeeder::class, // Payroll verification data
+        //     // CleanDemoSeeder::class,        // Clean demo seeder
         // ]);
     }
 }

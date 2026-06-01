@@ -17,14 +17,24 @@ class DailyLogController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $perPage = min(max($request->integer('per_page', 50), 5), 100);
         $logs = DailyLog::with(['employee:id,name', 'vehicle:id,plate_number', 'contract:id,name,payment_type'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
             ->when($request->contract_id, fn($q) => $q->where('contract_id', $request->contract_id))
             ->when($request->date_from, fn($q) => $q->whereDate('log_date', '>=', $request->date_from))
             ->when($request->date_to, fn($q) => $q->whereDate('log_date', '<=', $request->date_to))
+            ->when($request->search, function ($q) use ($request) {
+                $search = $request->search;
+                $q->where(function ($query) use ($search) {
+                    $query->whereHas('employee', fn($el) => $el->where('name', 'like', "%{$search}%"))
+                          ->orWhereHas('vehicle', fn($vl) => $vl->where('plate_number', 'like', "%{$search}%"))
+                          ->orWhereHas('contract', fn($cl) => $cl->where('name', 'like', "%{$search}%"));
+                });
+            })
             ->orderByDesc('log_date')
-            ->paginate(50);
+            ->orderByDesc('id')
+            ->paginate($perPage);
 
         return response()->json($logs);
     }
