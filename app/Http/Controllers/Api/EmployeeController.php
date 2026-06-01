@@ -25,6 +25,12 @@ class EmployeeController extends Controller
             ->orderBy('name')
             ->paginate($perPage);
 
+        // Strip the heavy and unused 'active_assignments' append from the employees in the list
+        // This prevents N+1 queries completely and reduces the JSON payload size significantly!
+        $employees->getCollection()->each(function ($employee) {
+            $employee->makeHidden('active_assignments');
+        });
+
         return response()->json($employees);
     }
 
