@@ -30,14 +30,14 @@ class OperationsController extends Controller
 
         // Batch: active assignments grouped by contract
         $assignmentCounts = VehicleAssignment::whereIn('contract_id', $contractIds)
-            ->whereNull('unassigned_at')
+            ->whereNull('unassigned_date')
             ->selectRaw('contract_id, COUNT(*) as cnt')
             ->groupBy('contract_id')
             ->pluck('cnt', 'contract_id');
 
         // Batch: employee IDs per contract (for leave lookup)
         $employeesByContract = VehicleAssignment::whereIn('contract_id', $contractIds)
-            ->whereNull('unassigned_at')
+            ->whereNull('unassigned_date')
             ->select('contract_id', 'employee_id')
             ->get()
             ->groupBy('contract_id');
