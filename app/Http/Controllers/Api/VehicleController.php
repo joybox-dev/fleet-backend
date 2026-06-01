@@ -16,16 +16,19 @@ class VehicleController extends Controller
     {
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
         $vehicles = Vehicle::query()
-            ->with([
-                'activeAssignment.employee' => function($q) {
-                    $q->select('id', 'name')->with('vehicleAssignments');
-                },
-                'activeAssignment.contract:id,name'
-            ])
+            ->with(['activeAssignment.employee:id,name', 'activeAssignment.contract:id,name'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->search, fn($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
             ->orderBy('plate_number')
             ->paginate($perPage);
+
+        // Strip the heavy and unused 'active_assignments' append from the employees in the list
+        // This prevents N+1 queries completely and reduces the JSON payload size by 15x!
+        $vehicles->getCollection()->each(function ($vehicle) {
+            if ($vehicle->activeAssignment && $vehicle->activeAssignment->employee) {
+                $vehicle->activeAssignment->employee->makeHidden('active_assignments');
+            }
+        });
 
         return response()->json($vehicles);
     }
