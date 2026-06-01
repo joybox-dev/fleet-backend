@@ -153,11 +153,7 @@ class PayrollController extends Controller
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                self::recalculateEmployeeCommissions($empId, $year, $month);
-
-                $empLogs = DailyLog::where('employee_id', $empId)
-                    ->whereBetween('log_date', [$startDate, $endDate])
-                    ->get();
+                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month);
 
                 $totalOrders = 0;
                 $companyRevenue = 0;
@@ -553,11 +549,7 @@ class PayrollController extends Controller
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                self::recalculateEmployeeCommissions($empId, $year, $month);
-
-                $empLogs = DailyLog::where('employee_id', $empId)
-                    ->whereBetween('log_date', [$startDate, $endDate])
-                    ->get();
+                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month);
 
                 $totalOrders = 0;
                 $ordersBonus = 0;
@@ -673,8 +665,14 @@ class PayrollController extends Controller
 
     public static function recalculateEmployeeCommissions($employeeId, $year, $month)
     {
-        $employee = \App\Models\Employee::find($employeeId);
-        if (!$employee) return;
+        if ($employeeId instanceof Employee) {
+            $employee = $employeeId;
+            $employeeId = $employee->id;
+        } else {
+            $employee = \App\Models\Employee::find($employeeId);
+        }
+
+        if (!$employee) return collect();
 
         $startDate = "{$year}-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-01";
         $endDate   = \Carbon\Carbon::parse($startDate)->endOfMonth()->toDateString();
@@ -683,7 +681,7 @@ class PayrollController extends Controller
             ->whereBetween('log_date', [$startDate, $endDate])
             ->orderBy('log_date')
             ->orderBy('id')
-            ->get();
+            ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date']);
 
         $target = (int) ($employee->target_orders_monthly ?? 0);
         $baseRate = (float) ($employee->rate_per_order ?? 0.000);
@@ -709,15 +707,23 @@ class PayrollController extends Controller
                     $logCommission = ($baseOrders * $baseRate) + ($premiumOrders * $premiumRate);
                 }
             } else {
-                $logCommission = $cOrders * (float) ($employee->rate_per_order ?? 0);
+                $logCommission = $cOrders * $baseRate;
             }
 
-            // We must update the DB directly without triggering the observer recursively
-            \DB::table('daily_logs')
-                ->where('id', $log->id)
-                ->update(['driver_commission' => round($logCommission, 3)]);
+            $newCommission = round($logCommission, 3);
+            if ((float) $log->driver_commission !== (float) $newCommission) {
+                // Update the attribute on the model directly so the returned collection is correct in memory!
+                $log->driver_commission = $newCommission;
+
+                // We must update the DB directly without triggering the observer recursively
+                \DB::table('daily_logs')
+                    ->where('id', $log->id)
+                    ->update(['driver_commission' => $newCommission]);
+            }
 
             $runningOrders += $cOrders;
         }
+
+        return $logs;
     }
 }
