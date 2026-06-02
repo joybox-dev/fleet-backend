@@ -286,9 +286,9 @@ class SuperAdminCompanyController extends Controller
             'name_ar'         => $c->name_ar,
             'code'            => $c->code,
             'is_active'       => $c->is_active,
-            'employees_count' => Employee::withoutGlobalScopes()->where('company_id', $c->id)->count(),
-            'vehicles_count'  => Vehicle::withoutGlobalScopes()->where('company_id', $c->id)->count(),
-            'pending_cash'    => DailyLog::withoutGlobalScopes()->where('company_id', $c->id)->sum('cash_pending'),
+            'employees_count' => Employee::withoutGlobalScope('company')->where('company_id', $c->id)->count(),
+            'vehicles_count'  => Vehicle::withoutGlobalScope('company')->where('company_id', $c->id)->count(),
+            'pending_cash'    => DailyLog::withoutGlobalScope('company')->where('company_id', $c->id)->sum('cash_pending'),
             'modules_count'   => count($c->enabled_modules ?? []),
         ]);
 
