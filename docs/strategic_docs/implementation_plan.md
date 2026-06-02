@@ -1,89 +1,101 @@
-# خطة نقل التارغت لمستوى الموظف واحتساب العمولات التراكمية التاريخية
+# خطة عمل: نظام الاستيراد المشترك والمزامن للموظفين والمركبات (Combined Import Engine)
 
-تحديث البنية التحتية للنظام لنقل فكرة **التارغت والعمولات الأساسية والمميزة** من مستوى **العقد** لتصبح في **ملف الموظف (السائق) مباشرة**، مع معالجة الاحتساب التشغيلي ليكون تراكمياً ومرتباً زمنياً (Chronological) على مدار الشهر وتوزيع تكاليفه ومصاريفه على العقود بدقة متناهية بالمليم.
+تأتي هذه الخطة استجابةً لطلب إضافة ميزة استيراد موحد يعالج ملف إكسل واحد يحتوي على بيانات السائق وبيانات السيارة الخاصة به معاً، بحيث يتم إنشاء ملف الموظف وملف المركبة في نفس اللحظة وتعيين المركبة للموظف تلقائياً (Assign) لتوفير الوقت والجهد التشغيلي عند التأسيس.
 
 ---
 
 ## 🙋‍♂️ مراجعة العميل المطلوبة (User Review Required)
 
 > [!IMPORTANT]
-> **مقاربة الاحتساب التراكمي المحاسبي الدقيق:**
-> للتأكد من أن السائق (مثلاً أحمد) يتم احتساب عمولته بناءً على تسلسل تاريخي دقيق، قمنا ببناء آلية استعلام تسلسلي للمبيعات اليومية (Daily Logs) مرتبة باليوم والمستند، وتخزين مصاريف العمولة في كل لوق باسم `driver_commission`. هذا سيجعل تقارير أرباح العقود دقيقة تماماً ومطابقة لسيناريو العقد X والعقد Y بالقرش الواحد.
+> **1. معالجة تداخل أسماء الحقول (Field Key Collisions):**
+> نظراً لأن الموظف والمركبة يمتلكان حقولاً بنفس الاسم بقاعدة البيانات (مثل `status` و `notes`)، سنقوم بإنشاء صنف تهيئة استيراد مشترك ومقترن (`CombinedImportConfig`) يقوم بدمج الحقول مع تمييزها ببادئة واضحة:
+> * حقول الموظف تبدأ بـ `employee_` (مثال: `employee_name`, `employee_number`).
+> * حقول المركبة تبدأ بـ `vehicle_` (مثال: `vehicle_plate_number`, `vehicle_status`).
+>
+> **2. إسناد عقد التشغيل الإلزامي للتعيين (Contract Assignment):**
+> تطلب قاعدة البيانات في جدول `vehicle_assignments` وجود معرف عقد تشغيل فعال (`contract_id`) بشكل إجباري لكل عملية تعيين.
+> **الحل المقترح:** سنقوم بإضافة قائمة منسدلة أنيقة في واجهة الاستيراد عند اختيار "الاستيراد المشترك" لتمكين المستخدم من **اختيار العقد الافتراضي** الذي سيتم إسناد كافة التعيينات المستوردة إليه تلقائياً، دون تعقيد ملف الإكسل بكتابة معرفات العقود.
 
 ---
 
 ## 🔎 الأسئلة المفتوحة (Open Questions)
 
-* لا توجد أسئلة حالياً، فالسيناريو الحسابي الذي قمت بشرحه واضح جداً ومكتمل الأركان رياضياً ومحاسبياً.
+> [!NOTE]
+> * **هل يجب السماح باختيار عقد تشغيل مختلف لكل صف في ملف الإكسل؟**
+>   * *التوصية:* نوصي بالاعتماد على **العقد الافتراضي الموحد للملف بالكامل** والذي يتم اختياره من الواجهة كخطوة أولى، لأن الاستيراد الجماعي عادةً ما يكون لدفعة سائقين تابعين لعقد تشغيل واحد (مثل عقد طلبات أو عقد جاهز). إذا لزم الأمر، يمكننا إضافة حقل اختياري لربط العقد بالاسم في الإكسل، ولكن اختيار عقد افتراضي من الواجهة هو الأسرع والأكثر أماناً لمنع أخطاء الحفظ.
 
 ---
 
 ## 🛠️ التغييرات المقترحة (Proposed Changes)
 
-### 1️⃣ قاعدة البيانات والهجرات (Database & Migrations)
+---
 
-#### [NEW] [2026_05_30_160000_add_target_fields_to_employees_and_daily_logs.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/database/migrations/2026_05_30_160000_add_target_fields_to_employees_and_daily_logs.php)
-* إضافة حقول التارغت إلى جدول الموظفين `employees`:
-  * `target_orders_monthly` (integer, nullable) - التارغت المستهدف.
-  * `base_commission_rate` (decimal: 8,3, nullable) - العمولة الأساسية.
-  * `premium_commission_rate` (decimal: 8,3, nullable) - العمولة المميزة.
-* إضافة حقل حساب التكاليف المباشرة لجدول `daily_logs`:
-  * `driver_commission` (decimal: 8,3) - قيمة بونص السائق المحسوبة لهذا اليوم تحديداً وتعتبر تكلفة مباشرة على العقد.
+### 🟢 الجزء الأول: الباكيند (Laravel Backend)
+
+#### [NEW] [CombinedImportConfig.php](file:///e:/Projects%20Analysis%20&%20Infos/fleet/cars_fleet_backend/app/Imports/CombinedImportConfig.php)
+* **إنشاء هيكل ربط موحد للموظف والمركبة معاً:**
+  * دمج مصفوفات الحقول وقواعد التحقق (Validation Rules) والقيم الافتراضية (Defaults) من `EmployeeImportConfig` و `VehicleImportConfig`.
+  * تطبيق البادئات `employee_` و `vehicle_` لمنع التداخل.
+  * إضافة حقل `contract_id` لتمثيل العقد المربوط بالتعيين.
+  * هيكل الحقول المدمجة المقترحة:
+    ```php
+    public static function fields(): array {
+        return [
+            // حقول الموظف
+            ['key' => 'employee_name', 'label' => 'اسم الموظف (إنجليزي)', 'required' => true, 'type' => 'string'],
+            ['key' => 'employee_name_ar', 'label' => 'اسم الموظف (عربي)', 'required' => false, 'type' => 'string'],
+            ['key' => 'employee_number', 'label' => 'رقم الموظف (EMP-XXX)', 'required' => true, 'type' => 'string'],
+            ['key' => 'employee_pay_type', 'label' => 'نظام الدفع للموظف', 'required' => true, 'type' => 'enum:fixed,per_order,hybrid'],
+            ['key' => 'employee_official_salary', 'label' => 'الراتب الرسمي للموظف', 'required' => true, 'type' => 'numeric'],
+            // حقول المركبة
+            ['key' => 'vehicle_plate_number', 'label' => 'رقم لوحة المركبة', 'required' => true, 'type' => 'string'],
+            ['key' => 'vehicle_make', 'label' => 'الشركة المصنعة للمركبة', 'required' => false, 'type' => 'string'],
+            ['key' => 'vehicle_model', 'label' => 'موديل المركبة', 'required' => false, 'type' => 'string'],
+            ['key' => 'vehicle_year', 'label' => 'سنة صنع المركبة', 'required' => false, 'type' => 'integer'],
+            ['key' => 'vehicle_status', 'label' => 'حالة المركبة', 'required' => false, 'type' => 'enum:working,available,maintenance,idle'],
+        ];
+    }
+    ```
+
+#### [MODIFY] [ImportService.php](file:///e:/Projects%20Analysis%20&%20Infos/fleet/cars_fleet_backend/app/Services/ImportService.php)
+* **تحديث محرك الاستيراد لدعم الكيان المشترك:**
+  * تسجيل الكيان الجديد باسم `combined` في دالة `getConfig()` ودالة `entityTypes()`.
+  * **تعديل دالة `executeImport` لمعالجة التثبيت المشترك والتعيين:**
+    ```php
+    if ($importLog->entity_type === 'combined') {
+        // 1. استخلاص بيانات الموظف وإنشاؤه (إذا لم يكن مكرراً)
+        // 2. استخلاص بيانات المركبة وإنشاؤها (إذا لم تكن مكررة)
+        // 3. إنشاء سجل التعيين النشط (VehicleAssignment) وربط الموظف بالمركبة والعقد المحدد
+    }
+    ```
+
+#### [MODIFY] [ImportController.php](file:///e:/Projects%20Analysis%20&%20Infos/fleet/cars_fleet_backend/app/Http/Controllers/Api/ImportController.php)
+* **دعم التحقق والتمرير للكيان المشترك:**
+  * تحديث قواعد التحقق (Validation) في دوال `upload` و `preview` و `confirm` لتسمح بقيمة `combined` كـ `entity_type`.
+  * استقبال معامل `contract_id` الإضافي من الطلب وتمريره إلى وظيفة الطابور الخلفية `ProcessImportJob`.
+
+#### [MODIFY] [ProcessImportJob.php](file:///e:/Projects%20Analysis%20&%20Infos/fleet/cars_fleet_backend/app/Jobs/ProcessImportJob.php)
+* **استقبل وتمرير هوية العقد للوظيفة التشغيلية:**
+  * إضافة معامل `$contractId` لـ `__construct` وحفظه في خصائص الوظيفة.
+  * تمرير معرف العقد كمعامل إضافي عند استدعاء `ImportService->executeImport()`.
 
 ---
 
-### 2️⃣ موديولات النظام الخلفية (Backend Models & Controllers)
+### 🔵 الجزء الثاني: الفرونت إند (React UI)
 
-#### [MODIFY] [Employee.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Models/Employee.php)
-* إضافة الحقول الجديدة إلى `$fillable` لتمكين الإدخال الآمن.
-* إضافة قوالب الصب `$casts` ليكون التارغت عدداً صحيحاً والعمولات أرقاماً عشرية بدقة 3 خانات.
-
-#### [MODIFY] [DailyLog.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Models/DailyLog.php)
-* إضافة `driver_commission` إلى `$fillable` والـ `$casts`.
-
-#### [MODIFY] [EmployeeController.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Http/Controllers/Api/EmployeeController.php)
-* تحديث شروط التحقق (Validation) في دالتي الحفظ (`store`) والتحديث (`update`) لاستيعاب وإلزام حقول التارغت والعمولات عند اختيار نوع الدفع بالطلب أو المختلط.
-
-#### [MODIFY] [ContractController.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Http/Controllers/Api/ContractController.php)
-* إبقاء حقول العقود فقط على:
-  * `expected_monthly_revenue` (الإيراد الشهري المتوقع).
-  * `target_driver_count` (عدد السائقين المستهدف).
-  * إزالة أو تعطيل التحقق من الحقول القديمة التي انتقلت للموظف.
-
-#### [MODIFY] [DailyLogController.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Http/Controllers/Api/DailyLogController.php)
-* عند حفظ أو تحديث أو حذف أي لوق يومي، نقوم باستدعاء دالة تحديث عمولات اليوم النشط وإعادة احتساب عمولات الشهر للسائق المعني بشكل تسلسلي زمني فوري.
-
-#### [MODIFY] [PayrollController.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Http/Controllers/Api/PayrollController.php)
-* إعادة بناء خوارزمية الاحتساب لتكون مرتبة باليوم وتراكمية:
-  * جلب السجلات اليومية للشهر مرتبة زمنياً: `orderBy('log_date')->orderBy('id')`.
-  * حلقة تكرار لحساب تراكم الطلبات `running_orders` وتطبيق سعر العمولة المميزة فور تخطي التارغت المسجل ببروفايل السائق.
-  * تخزين الناتج الفردي في حقل `driver_commission` للوق، وجمع الإجمالي كـ `orders_bonus` في الراتب.
-
-#### [MODIFY] [ReportController.php](file:///c:/Users/eamen/Herd/fleet/fleet-backend/app/Http/Controllers/Api/ReportController.php)
-* تحديث تقرير أرباح العقود (Contract Profitability) وتقرير أرباح المركبات ليقوما بجمع تكاليف السائقين المباشرة من حقل `driver_commission` المسجل باللوقات بدلاً من الطريقة التقريبية السابقة. هذا يحقق سيناريو العقد X والعقد Y بدقة 100%.
-
----
-
-### 3️⃣ الواجهة الأمامية (Frontend Components)
-
-#### [MODIFY] [EmployeeWizard.jsx](file:///c:/Users/eamen/Herd/fleet/fleet-frontend/src/pages/employees/EmployeeWizard.jsx)
-* إدراج مدخلات التارغت والعمولة الأساسية والمميزة في الخطوة 2 (التوظيف والراتب) عند اختيار نوع دفع `per_order` أو `hybrid`.
-
-#### [MODIFY] [EmployeeEditor.jsx](file:///c:/Users/eamen/Herd/fleet/fleet-frontend/src/pages/employees/EmployeeEditor.jsx)
-* إدراج مدخلات التارغت والعمولات عند تعديل بيانات السائق في الخطوة 2.
-
-#### [MODIFY] [EmployeeProfile.jsx](file:///c:/Users/eamen/Herd/fleet/fleet-frontend/src/pages/employees/EmployeeProfile.jsx)
-* تحديث بطاقة التارغت الزجاجية لتجلب البيانات مباشرة من ملف الموظف نفسه وليس من العقد.
-
-#### [MODIFY] [ContractList.jsx](file:///c:/Users/eamen/Herd/fleet/fleet-frontend/src/pages/contracts/ContractList.jsx)
-* إزالة مدخلات عمولات التارغت من نموذج إضافة وتعديل العقود، والإبقاء فقط على حقل الإيراد المتوقع وحقل عدد السائقين المستهدف.
+#### [MODIFY] [ImportPage.jsx](file:///e:/Projects%20Analysis%20&%20Infos/fleet/cars_fleet_frontend/src/pages/import/ImportPage.jsx)
+* **تتطوير شاشة الاستيراد لتشمل الاستيراد المدمج:**
+  * جلب قائمة العقود النشطة المتاحة للشركة وتخزينها في حالة `contracts`.
+  * في خطوة اختيار نوع البيانات (Step 0):
+    * عرض زر الكيان المشترك **"الموظفين والمركبات معاً 👥+🚗"**.
+    * في حال اختيار الكيان المشترك، يتم عرض قائمة منسدلة إجبارية لاختيار **العقد التشغيلي المستهدف**.
+  * تمرير `contract_id` المختار في طلبات الرفع والمعاينة والتأكيد الموجهة للسيرفر.
 
 ---
 
 ## 📈 خطة التحقق والضمان (Verification Plan)
 
-### الاختبارات البرمجية المؤتمتة (Automated Feature Tests)
-* إعادة صياغة اختبار E2E العملاق `MasterScenarioE2ETest.php` ليكون متوافقاً مع الحقول الجديدة والسيناريو الذي ذكرته:
-  * إسناد التارغت 10 لأحمد في بروفايله مع بونص 0.200 أساسي و0.300 مميز.
-  * محاكاة 5 طلبات على العقد X، ثم 5 على العقد Y، ثم 5 على العقد X.
-  * مطابقة تكاليف العقد X وعقد Y وتأكيد بقاء الاختبار باللون الأخضر.
+### الاختبارات العملية واليدوية (Manual & Integration Testing)
+1. **تحميل القالب المشترك:** التحقق من أن تحميل قالب الكيان المشترك يولّد ملف إكسل يحتوي على كافة أعمدة السائق والسيارة بلون مميز للحقول الإلزامية.
+2. **ربط الأعمدة وتصحيح الأخطاء:** رفع ملف يحتوي على سائقين وسيارات وتأكيد قدرة واجهة ربط الأعمدة على التمييز بين الحقول وقبول الربط.
+3. **التثبيت التلقائي والمزامن:** تأكيد أن إنهاء الاستيراد يقوم بنجاح بإنشاء الموظف في جدول `employees` والمركبة في جدول `vehicles` وسجل التعيين النشط في جدول `vehicle_assignments` المربوط بالعقد المختار بلمسة واحدة.
