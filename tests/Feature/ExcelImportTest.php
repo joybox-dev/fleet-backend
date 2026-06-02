@@ -292,4 +292,60 @@ class ExcelImportTest extends TestCase
 
         unlink($tempPath);
     }
+
+    public function test_import_restores_soft_deleted_records()
+    {
+        $this->actingAs($this->user);
+
+        // 1. Create a soft-deleted employee
+        $employee = Employee::create([
+            'name' => 'Soft Deleted Ahmad',
+            'employee_number' => 'EMP-TRASHED',
+            'date_of_joining' => '2026-05-01',
+            'pay_type' => 'fixed',
+            'official_salary' => 200,
+            'actual_salary' => 200,
+            'company_id' => $this->company->id,
+        ]);
+        $employee->delete();
+        $this->assertTrue($employee->trashed());
+
+        // 2. Import the same employee number via ImportService
+        $importService = new \App\Services\ImportService();
+        $importLog = ImportLog::create([
+            'user_id' => $this->user->id,
+            'entity_type' => 'employees',
+            'original_filename' => 'test.xlsx',
+            'file_path' => 'test.xlsx',
+            'file_hash' => 'hash_test_restore',
+            'column_mapping' => [],
+            'status' => 'pending',
+            'company_id' => $this->company->id,
+        ]);
+
+        $previewData = [
+            [
+                'row_number' => 2,
+                'is_valid' => true,
+                'data' => [
+                    'name' => 'Ahmad Restored and Updated',
+                    'employee_number' => 'EMP-TRASHED',
+                    'date_of_joining' => '2026-05-01',
+                    'pay_type' => 'fixed',
+                    'official_salary' => 350, // updated salary
+                    'actual_salary' => 350,
+                    'company_id' => $this->company->id,
+                ]
+            ]
+        ];
+
+        $importService->executeImport($importLog, $previewData);
+
+        // 3. Verify it is restored and updated in the database
+        $freshEmployee = Employee::find($employee->id);
+        $this->assertNotNull($freshEmployee);
+        $this->assertFalse($freshEmployee->trashed());
+        $this->assertEquals('Ahmad Restored and Updated', $freshEmployee->name);
+        $this->assertEquals(350, $freshEmployee->official_salary);
+    }
 }

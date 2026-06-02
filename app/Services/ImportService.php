@@ -221,7 +221,7 @@ class ImportService
                 // Remove null values
                 $data = array_filter($data, fn($v) => $v !== null && $v !== '');
 
-                // Check for existing record by unique keys
+                // Check for existing record by unique keys (including soft-deleted ones)
                 $uniqueData = [];
                 foreach ($uniqueKeys as $uk) {
                     if (isset($data[$uk])) {
@@ -230,10 +230,21 @@ class ImportService
                 }
 
                 if (!empty($uniqueData)) {
-                    $existing = $modelClass::where($uniqueData)->first();
+                    $query = $modelClass::query();
+                    if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass))) {
+                        $query->withTrashed();
+                    }
+                    $existing = $query->where($uniqueData)->first();
                     if ($existing) {
-                        // Record already exists — skip (don't overwrite)
-                        $skippedDuplicate++;
+                        if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass)) && $existing->trashed()) {
+                            // Restore soft-deleted record and update it with the new Excel data
+                            $existing->restore();
+                            $existing->update($data);
+                            $imported++;
+                        } else {
+                            // Active record already exists — skip (don't overwrite)
+                            $skippedDuplicate++;
+                        }
                         continue;
                     }
                 }
