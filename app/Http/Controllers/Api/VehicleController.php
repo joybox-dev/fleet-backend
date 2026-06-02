@@ -189,4 +189,21 @@ class VehicleController extends Controller
             'oil_change_at_km'     => $vehicle->last_oil_change_km + $vehicle->oil_change_interval_km,
         ]);
     }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'integer|exists:vehicles,id',
+        ]);
+
+        $count = Vehicle::whereIn('id', $validated['ids'])
+            ->where('company_id', app('current_company_id'))
+            ->delete();
+
+        return response()->json([
+            'message' => "تم حذف $count من المركبات بنجاح.",
+            'deleted_count' => $count
+        ]);
+    }
 }

@@ -253,4 +253,21 @@ class EmployeeController extends Controller
             ],
         ]);
     }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'integer|exists:employees,id',
+        ]);
+
+        $count = Employee::whereIn('id', $validated['ids'])
+            ->where('company_id', app('current_company_id'))
+            ->delete();
+
+        return response()->json([
+            'message' => "تم حذف $count من الموظفين بنجاح.",
+            'deleted_count' => $count
+        ]);
+    }
 }

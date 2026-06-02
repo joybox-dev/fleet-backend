@@ -111,6 +111,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('contracts/{contract}/lock', [ContractController::class, 'lock']);
 
         // Employees — full CRUD + balance
+        Route::post('employees/bulk-delete', [EmployeeController::class, 'bulkDestroy']);
         Route::apiResource('employees', EmployeeController::class);
         Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
 
@@ -130,6 +131,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::apiResource('evaluations', EvaluationController::class);
 
         // Vehicles — create/update/delete (operators can only view)
+        Route::post('vehicles/bulk-delete', [VehicleController::class, 'bulkDestroy']);
         Route::post('vehicles', [VehicleController::class, 'store']);
         Route::put('vehicles/{vehicle}', [VehicleController::class, 'update']);
         Route::delete('vehicles/{vehicle}', [VehicleController::class, 'destroy']);
