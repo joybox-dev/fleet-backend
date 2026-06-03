@@ -234,8 +234,21 @@ class ImportService
                     if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass))) {
                         $query->withTrashed();
                     }
+                    if (in_array(\App\Traits\BelongsToCompany::class, class_uses_recursive($modelClass))) {
+                        $query->withoutGlobalScope('company');
+                    }
                     $existing = $query->where($uniqueData)->first();
                     if ($existing) {
+                        $currentCompanyId = app()->bound('current_company_id') ? app('current_company_id') : null;
+                        if ($currentCompanyId && $existing->company_id != $currentCompanyId) {
+                            $failed++;
+                            $errors[] = [
+                                'row'    => $row['row_number'],
+                                'errors' => ['exception' => ["هذا السجل مسجل بالفعل لشركة أخرى ولا يمكن تكراره"]],
+                            ];
+                            continue;
+                        }
+
                         if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass)) && $existing->trashed()) {
                             // Restore soft-deleted record and update it with the new Excel data
                             $existing->restore();

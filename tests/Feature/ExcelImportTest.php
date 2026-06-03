@@ -348,4 +348,68 @@ class ExcelImportTest extends TestCase
         $this->assertEquals('Ahmad Restored and Updated', $freshEmployee->name);
         $this->assertEquals(350, $freshEmployee->official_salary);
     }
+
+    public function test_import_rejects_duplicates_from_other_companies()
+    {
+        $this->actingAs($this->user);
+
+        // 1. Create a company B
+        $otherCompany = Company::create([
+            'name' => 'Other Company',
+            'code' => 'OTHER',
+            'enabled_modules' => Company::DEFAULT_MODULES,
+            'is_active' => true,
+        ]);
+
+        // 2. Create a vehicle in company B (bypass mass-assignment for company_id)
+        $vehicle = new Vehicle([
+            'plate_number' => 'DUPLICATE-PLATE',
+            'make' => 'Nissan',
+            'model' => 'Sunny',
+            'year' => 2025,
+        ]);
+        $vehicle->company_id = $otherCompany->id;
+        $vehicle->save();
+
+        // 3. Try to import the same plate number for our company
+        $importService = new \App\Services\ImportService();
+        $importLog = ImportLog::create([
+            'user_id' => $this->user->id,
+            'entity_type' => 'vehicles',
+            'original_filename' => 'test.xlsx',
+            'file_path' => 'test.xlsx',
+            'file_hash' => 'hash_test_other_company',
+            'column_mapping' => [],
+            'status' => 'pending',
+            'company_id' => $this->company->id,
+        ]);
+
+        $previewData = [
+            [
+                'row_number' => 2,
+                'is_valid' => true,
+                'data' => [
+                    'plate_number' => 'DUPLICATE-PLATE',
+                    'make' => 'Toyota',
+                    'model' => 'Camry',
+                    'year' => 2026,
+                    'company_id' => $this->company->id,
+                ]
+            ]
+        ];
+
+        // This should not throw SQL unique exception but rather fail the row with our custom error
+        $importService->executeImport($importLog, $previewData);
+
+        // Verify the import log has errors and rows_failed = 1
+        $importLog = $importLog->fresh();
+        $this->assertEquals(1, $importLog->rows_failed);
+        $this->assertEquals(0, $importLog->rows_imported);
+        
+        $this->assertNotEmpty($importLog->errors);
+        $this->assertEquals("هذا السجل مسجل بالفعل لشركة أخرى ولا يمكن تكراره", $importLog->errors[0]['errors']['exception'][0]);
+
+        // Verify no vehicle was created in our company
+        $this->assertEquals(0, Vehicle::where('company_id', $this->company->id)->count());
+    }
 }
