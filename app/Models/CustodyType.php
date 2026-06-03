@@ -16,4 +16,15 @@ class CustodyType extends Model
     {
         return $this->hasMany(CustodyItem::class);
     }
+
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->custodyItems()->whereNull('returned_date')->exists()) {
+            $blocks[] = 'لا يمكن حذف نوع العهدة لوجود عهد نشطة من هذا النوع مسلّمة للموظفين حالياً ولم تُسترجع بعد.';
+        }
+
+        return $blocks;
+    }
 }

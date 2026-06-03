@@ -56,6 +56,25 @@ class Vehicle extends Model
         return $this->hasMany(VehicleExpense::class);
     }
 
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->vehicleAssignments()->where('is_active', true)->exists()) {
+            $blocks[] = 'السيارة معينة لسائق نشط حالياً.';
+        }
+
+        if ($this->maintenanceRecords()->whereIn('status', ['pending', 'approved'])->exists()) {
+            $blocks[] = 'السيارة لديها أعمال صيانة معلقة أو معتمدة قيد التنفيذ.';
+        }
+
+        if ($this->violations()->where('is_deducted', false)->exists()) {
+            $blocks[] = 'السيارة عليها مخالفات مرورية غير مسواة أو غير مستقطعة.';
+        }
+
+        return $blocks;
+    }
+
     /**
      * Retrieve the model for a bound value, including soft-deleted ones.
      */

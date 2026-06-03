@@ -77,6 +77,11 @@ class VehicleController extends Controller
         return response()->json($vehicle->load([
             'activeAssignment.employee:id,name',
             'activeAssignment.contract:id,name',
+            'vehicleAssignments.employee:id,name,employee_number',
+            'vehicleAssignments.contract:id,name',
+            'maintenanceRecords.reportedBy:id,name',
+            'violations.employee:id,name,employee_number',
+            'expenses',
         ]));
     }
 
@@ -98,8 +103,25 @@ class VehicleController extends Controller
         return response()->json($vehicle->fresh());
     }
 
+    public function deletionCheck(Vehicle $vehicle): JsonResponse
+    {
+        $blocks = $vehicle->getDeletionBlocks();
+        return response()->json([
+            'is_deletable' => empty($blocks),
+            'blocks' => $blocks,
+        ]);
+    }
+
     public function destroy(Vehicle $vehicle): JsonResponse
     {
+        $blocks = $vehicle->getDeletionBlocks();
+        if (!empty($blocks)) {
+            return response()->json([
+                'message' => 'لا يمكن حذف المركبة لوجود ارتباطات نشطة.',
+                'errors' => $blocks,
+            ], 422);
+        }
+
         $vehicle->delete();
         return response()->json(['message' => 'Vehicle deleted.']);
     }
@@ -112,7 +134,7 @@ class VehicleController extends Controller
     {
         $validated = $request->validate([
             'employee_id'   => 'required|exists:employees,id',
-            'contract_id'   => 'required|exists:contracts,id',
+            'contract_id'   => 'nullable|exists:contracts,id',
             'assigned_date' => 'required|date',
             'notes'         => 'nullable|string',
         ]);
@@ -125,7 +147,7 @@ class VehicleController extends Controller
         $assignment = VehicleAssignment::create([
             'vehicle_id'    => $vehicle->id,
             'employee_id'   => $validated['employee_id'],
-            'contract_id'   => $validated['contract_id'],
+            'contract_id'   => $validated['contract_id'] ?? null,
             'assigned_date' => $validated['assigned_date'],
             'is_active'     => true,
             'notes'         => $validated['notes'] ?? null,
@@ -197,9 +219,37 @@ class VehicleController extends Controller
             'ids.*' => 'integer|exists:vehicles,id',
         ]);
 
-        $count = Vehicle::whereIn('id', $validated['ids'])
-            ->where('company_id', app('current_company_id'))
-            ->delete();
+        $companyId = app('current_company_id');
+        $vehicles = Vehicle::whereIn('id', $validated['ids'])
+            ->where('company_id', $companyId)
+            ->get();
+
+        $allBlocks = [];
+        foreach ($vehicles as $vehicle) {
+            $blocks = $vehicle->getDeletionBlocks();
+            if (!empty($blocks)) {
+                $allBlocks[$vehicle->plate_number] = $blocks;
+            }
+        }
+
+        if (!empty($allBlocks)) {
+            $flatErrors = [];
+            foreach ($allBlocks as $plate => $reasons) {
+                foreach ($reasons as $reason) {
+                    $flatErrors[] = "{$plate}: {$reason}";
+                }
+            }
+            return response()->json([
+                'message' => 'لا يمكن حذف بعض المركبات المحددة لوجود ارتباطات نشطة.',
+                'errors' => $flatErrors,
+            ], 422);
+        }
+
+        $count = 0;
+        foreach ($vehicles as $vehicle) {
+            $vehicle->delete();
+            $count++;
+        }
 
         return response()->json([
             'message' => "تم حذف $count من المركبات بنجاح.",

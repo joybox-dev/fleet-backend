@@ -107,6 +107,41 @@ class Employee extends Model
         return $this->hasMany(MaintenanceRecord::class, 'liable_employee_id');
     }
 
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->vehicleAssignments()->where('is_active', true)->exists()) {
+            $blocks[] = 'الموظف لديه سيارة معينة نشطة حالياً.';
+        }
+
+        if ($this->custodyItems()->whereNull('returned_date')->exists()) {
+            $blocks[] = 'الموظف لديه عُهد غير مسترجعة في ذمته.';
+        }
+
+        if ($this->salaryAdvances()->where('remaining_balance', '>', 0)->exists()) {
+            $blocks[] = 'الموظف لديه سلف مالية نشطة متبقي عليها أرصدة لم تسدد.';
+        }
+
+        if ($this->guarantees()->whereNull('returned_date')->where('status', 'received')->exists()) {
+            $blocks[] = 'الموظف لديه مستندات ضمان محتجزة لم تُسترجع.';
+        }
+
+        if ($this->dailyLogs()->where('cash_pending', '>', 0)->exists()) {
+            $blocks[] = 'الموظف لديه كاش معلق في ذمته لم يتم تسويته بعد.';
+        }
+
+        if ($this->violations()->where('is_driver_liable', true)->where('is_deducted', false)->exists()) {
+            $blocks[] = 'الموظف لديه مخالفات مرورية مستحقة لم يتم استقطاعها أو تسويتها.';
+        }
+
+        if ($this->liableMaintenance()->where('is_driver_liable', true)->where('driver_deduction', '>', 0)->where('status', 'approved')->exists()) {
+            $blocks[] = 'الموظف لديه مسؤولية مالية عن صيانة سيارات لم تسدد.';
+        }
+
+        return $blocks;
+    }
+
     /**
      * Retrieve the model for a bound value, including soft-deleted ones.
      */

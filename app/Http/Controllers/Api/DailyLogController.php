@@ -57,6 +57,7 @@ class DailyLogController extends Controller
             'cash_collected' => 'nullable|numeric|min:0',
             'odometer_start' => 'nullable|integer|min:0',
             'odometer_end'   => 'nullable|integer|min:0|gte:odometer_start',
+            'odometer_photo_path' => 'nullable|string',
             'notes'          => 'nullable|string|max:500',
         ]);
 
@@ -67,6 +68,10 @@ class DailyLogController extends Controller
 
             if (($online + $cash) !== $total) {
                 $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
+            }
+
+            if ($request->filled('odometer_end') && !$request->filled('odometer_photo_path')) {
+                $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
             }
         });
 
@@ -120,6 +125,7 @@ class DailyLogController extends Controller
             'cash_collected' => 'sometimes|numeric|min:0',
             'odometer_start' => 'nullable|integer|min:0',
             'odometer_end'   => 'nullable|integer|min:0',
+            'odometer_photo_path' => 'nullable|string',
             'notes'          => 'nullable|string|max:500',
         ]);
 
@@ -139,6 +145,14 @@ class DailyLogController extends Controller
 
             if (($online + $cash) !== $total) {
                 $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
+            }
+
+            // Odometer photo validation
+            $hasEnd = $request->has('odometer_end') ? $request->filled('odometer_end') : !empty($dailyLog->odometer_end);
+            $hasPhoto = $request->has('odometer_photo_path') ? $request->filled('odometer_photo_path') : !empty($dailyLog->odometer_photo_path);
+
+            if ($hasEnd && !$hasPhoto) {
+                $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
             }
         });
 

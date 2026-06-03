@@ -160,7 +160,7 @@ class MasterScenarioE2ETest extends TestCase
             'actual_salary'   => 150.000,
             'official_salary' => 100.000,
             'rate_per_order'  => 0.250,
-            'target_orders_monthly'   => 41,
+            'target_orders_monthly'   => 40,
             'premium_commission_rate' => 0.500,
             'phone'           => '96560000123',
             'status'          => 'active',

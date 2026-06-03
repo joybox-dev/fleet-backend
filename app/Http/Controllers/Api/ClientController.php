@@ -100,8 +100,25 @@ class ClientController extends Controller
         return response()->json($client->fresh());
     }
 
+    public function deletionCheck(Client $client): JsonResponse
+    {
+        $blocks = $client->getDeletionBlocks();
+        return response()->json([
+            'is_deletable' => empty($blocks),
+            'blocks' => $blocks,
+        ]);
+    }
+
     public function destroy(Client $client): JsonResponse
     {
+        $blocks = $client->getDeletionBlocks();
+        if (!empty($blocks)) {
+            return response()->json([
+                'message' => 'لا يمكن حذف العميل لوجود ارتباطات نشطة.',
+                'errors' => $blocks,
+            ], 422);
+        }
+
         $client->delete();
         return response()->json(['message' => 'Client deleted.']);
     }

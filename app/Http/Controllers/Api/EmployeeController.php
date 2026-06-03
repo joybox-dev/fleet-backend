@@ -164,8 +164,25 @@ class EmployeeController extends Controller
         return response()->json($employee->fresh());
     }
 
+    public function deletionCheck(Employee $employee): JsonResponse
+    {
+        $blocks = $employee->getDeletionBlocks();
+        return response()->json([
+            'is_deletable' => empty($blocks),
+            'blocks' => $blocks,
+        ]);
+    }
+
     public function destroy(Employee $employee): JsonResponse
     {
+        $blocks = $employee->getDeletionBlocks();
+        if (!empty($blocks)) {
+            return response()->json([
+                'message' => 'لا يمكن حذف الموظف لوجود ارتباطات نشطة.',
+                'errors' => $blocks,
+            ], 422);
+        }
+
         $employee->delete();
         return response()->json(['message' => 'Employee deleted.']);
     }
@@ -261,9 +278,38 @@ class EmployeeController extends Controller
             'ids.*' => 'integer|exists:employees,id',
         ]);
 
-        $count = Employee::whereIn('id', $validated['ids'])
-            ->where('company_id', app('current_company_id'))
-            ->delete();
+        $companyId = app('current_company_id');
+        $employees = Employee::whereIn('id', $validated['ids'])
+            ->where('company_id', $companyId)
+            ->get();
+
+        $allBlocks = [];
+        foreach ($employees as $employee) {
+            $blocks = $employee->getDeletionBlocks();
+            if (!empty($blocks)) {
+                $allBlocks[$employee->name] = $blocks;
+            }
+        }
+
+        if (!empty($allBlocks)) {
+            // Flatten or format error message
+            $flatErrors = [];
+            foreach ($allBlocks as $name => $reasons) {
+                foreach ($reasons as $reason) {
+                    $flatErrors[] = "{$name}: {$reason}";
+                }
+            }
+            return response()->json([
+                'message' => 'لا يمكن حذف بعض الموظفين المحددين لوجود ارتباطات نشطة.',
+                'errors' => $flatErrors,
+            ], 422);
+        }
+
+        $count = 0;
+        foreach ($employees as $employee) {
+            $employee->delete();
+            $count++;
+        }
 
         return response()->json([
             'message' => "تم حذف $count من الموظفين بنجاح.",

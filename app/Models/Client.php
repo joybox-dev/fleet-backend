@@ -22,4 +22,15 @@ class Client extends Model
     {
         return $this->hasMany(Contract::class);
     }
+
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->contracts()->where('is_active', true)->exists()) {
+            $blocks[] = 'لا يمكن حذف العميل لوجود عقود نشطة مرتبطة به.';
+        }
+
+        return $blocks;
+    }
 }

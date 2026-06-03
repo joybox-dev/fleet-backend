@@ -26,4 +26,15 @@ class LeaveType extends Model
     {
         return $this->hasMany(EmployeeLeave::class);
     }
+
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->leaves()->exists()) {
+            $blocks[] = 'لا يمكن حذف نوع الإجازة لوجود طلبات إجازة مسجلة به تحت الموظفين.';
+        }
+
+        return $blocks;
+    }
 }

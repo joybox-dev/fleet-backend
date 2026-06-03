@@ -41,6 +41,7 @@ class ContractController extends Controller
             'notes'          => 'nullable|string|max:1000',
             'expected_monthly_revenue' => 'nullable|numeric|min:0',
             'target_driver_count'      => 'nullable|integer|min:0',
+            'expected_total_profit'    => 'nullable|numeric|min:0',
         ]);
 
         // Ensure financial fields default to 0 when not applicable to the payment_type
@@ -83,6 +84,7 @@ class ContractController extends Controller
             'notes'          => 'nullable|string|max:1000',
             'expected_monthly_revenue' => 'nullable|numeric|min:0',
             'target_driver_count'      => 'nullable|integer|min:0',
+            'expected_total_profit'    => 'nullable|numeric|min:0',
         ]);
 
         $contract->update($validated);
@@ -90,11 +92,25 @@ class ContractController extends Controller
         return response()->json($contract->fresh());
     }
 
+    public function deletionCheck(Contract $contract): JsonResponse
+    {
+        $blocks = $contract->getDeletionBlocks();
+        return response()->json([
+            'is_deletable' => empty($blocks),
+            'blocks' => $blocks,
+        ]);
+    }
+
     public function destroy(Contract $contract): JsonResponse
     {
-        if ($contract->is_locked) {
-            return response()->json(['message' => 'Cannot delete a locked contract.'], 403);
+        $blocks = $contract->getDeletionBlocks();
+        if (!empty($blocks)) {
+            return response()->json([
+                'message' => 'لا يمكن حذف العقد لوجود ارتباطات نشطة أو قيود مالية.',
+                'errors' => $blocks,
+            ], 422);
         }
+
         $contract->delete();
         return response()->json(['message' => 'Contract deleted.']);
     }

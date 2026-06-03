@@ -19,6 +19,7 @@ class Contract extends Model
         'required_drivers', 'daily_target', 'monthly_target',
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
         'expected_monthly_revenue', 'target_driver_count',
+        'expected_total_profit', 'expected_monthly_profit',
     ];
 
     protected $casts = [
@@ -34,7 +35,27 @@ class Contract extends Model
         'premium_commission_rate' => 'decimal:3',
         'expected_monthly_revenue' => 'decimal:3',
         'target_driver_count' => 'integer',
+        'expected_total_profit' => 'decimal:3',
+        'expected_monthly_profit' => 'decimal:3',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function ($contract) {
+            if ($contract->expected_total_profit) {
+                $startDate = \Carbon\Carbon::parse($contract->start_date);
+                $endDate = $contract->end_date ? \Carbon\Carbon::parse($contract->end_date) : null;
+                if ($endDate) {
+                    $months = max(1, $startDate->diffInMonths($endDate->copy()->addDay()));
+                    $contract->expected_monthly_profit = $contract->expected_total_profit / $months;
+                } else {
+                    $contract->expected_monthly_profit = $contract->expected_total_profit;
+                }
+            } else {
+                $contract->expected_monthly_profit = null;
+            }
+        });
+    }
 
     public function client(): BelongsTo
     {
@@ -49,6 +70,25 @@ class Contract extends Model
     public function vehicleAssignments(): HasMany
     {
         return $this->hasMany(VehicleAssignment::class);
+    }
+
+    public function getDeletionBlocks(): array
+    {
+        $blocks = [];
+
+        if ($this->is_locked) {
+            $blocks[] = 'لا يمكن حذف العقد لأنه مغلق ومحمي محاسبياً ضد التعديل.';
+        }
+
+        if ($this->vehicleAssignments()->where('is_active', true)->exists()) {
+            $blocks[] = 'لا يمكن حذف العقد لوجود سيارات نشطة معينة عليه حالياً.';
+        }
+
+        if ($this->dailyLogs()->exists()) {
+            $blocks[] = 'لا يمكن حذف العقد لوجود سجلات تشغيل يومية مسجلة عليه.';
+        }
+
+        return $blocks;
     }
 
     /**

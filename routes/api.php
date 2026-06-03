@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\OperationsController;
 use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
 use App\Http\Controllers\Api\ImportController;
+use App\Http\Controllers\Api\VehicleHandoverController;
 
 /*
 |--------------------------------------------------------------------------
@@ -57,6 +58,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     // ── Dashboard (all roles) ────────────────────────────────────────
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
     Route::get('dashboard/expiry-alerts', [DashboardController::class, 'expiryAlerts']);
+    Route::get('dashboard/contracts-profitability', [DashboardController::class, 'contractsProfitability']);
 
     // ═══════════════════════════════════════════════════════════════════
     // OPERATOR + ADMIN: Daily operations
@@ -96,12 +98,22 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Operations Dashboard
         Route::get('operations/dashboard', [OperationsController::class, 'dashboard']);
+
+        // Vehicle Handovers
+        Route::apiResource('vehicle-handovers', VehicleHandoverController::class);
     });
 
     // ═══════════════════════════════════════════════════════════════════
     // ADMIN ONLY: Management & configuration
     // ═══════════════════════════════════════════════════════════════════
     Route::middleware('role:admin')->group(function () {
+
+        // Deletion Integrity Checks
+        Route::get('employees/{employee}/deletion-check', [EmployeeController::class, 'deletionCheck']);
+        Route::get('vehicles/{vehicle}/deletion-check', [VehicleController::class, 'deletionCheck']);
+        Route::get('clients/{client}/deletion-check', [ClientController::class, 'deletionCheck']);
+        Route::get('contracts/{contract}/deletion-check', [ContractController::class, 'deletionCheck']);
+        Route::get('custody-types/{custody_type}/deletion-check', [\App\Http\Controllers\Api\CustodyTypeController::class, 'deletionCheck']);
 
         // Clients — full CRUD
         Route::apiResource('clients', ClientController::class);

@@ -19,6 +19,7 @@ class DailyLogObserver
     public function created(DailyLog $log): void
     {
         ErpSync::dispatch(SyncDailyLogJob::class, $log->id);
+        $this->updateVehicleOdometer($log);
         $this->recalculatePayrollFor($log);
     }
 
@@ -35,6 +36,20 @@ class DailyLogObserver
         if ($log->wasChanged($syncFields)) {
             ErpSync::dispatch(SyncDailyLogJob::class, $log->id);
             $this->recalculatePayrollFor($log);
+        }
+
+        if ($log->wasChanged(['odometer_end', 'vehicle_id'])) {
+            $this->updateVehicleOdometer($log);
+        }
+    }
+
+    private function updateVehicleOdometer(DailyLog $log): void
+    {
+        if ($log->odometer_end && $log->vehicle) {
+            $vehicle = $log->vehicle;
+            if ($log->odometer_end > $vehicle->odometer_km) {
+                $vehicle->update(['odometer_km' => $log->odometer_end]);
+            }
         }
     }
 

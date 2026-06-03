@@ -83,26 +83,29 @@ class PayrollController extends Controller
                 ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
                 ->groupBy('employee_id');
 
-            // 2. Violations (driver-liable, not yet deducted)
+            // 2. Violations (driver-liable, not yet deducted, occurring on or before end date)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where('is_deducted', false)
+                ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
                 ->selectRaw('employee_id, SUM(amount) as total')
                 ->pluck('total', 'employee_id');
 
-            // 3. Maintenance deductions
+            // 3. Maintenance deductions (occurring on or before end date)
             $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
+                ->whereDate('maintenance_date', '<=', $endDate)
                 ->groupBy('liable_employee_id')
                 ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
                 ->pluck('total', 'liable_employee_id');
 
-            // 4. Custody deductions
+            // 4. Custody deductions (returned on or before end date)
             $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
                 ->where('deduction_amount', '>', 0)
+                ->whereDate('returned_date', '<=', $endDate)
                 ->groupBy('employee_id')
                 ->selectRaw('employee_id, SUM(deduction_amount) as total')
                 ->pluck('total', 'employee_id');
@@ -124,9 +127,10 @@ class PayrollController extends Controller
                 ->get()
                 ->keyBy('employee_id');
 
-            // 6. Active salary advances (need individual records for installment tracking)
+            // 6. Active salary advances (occurring on or before end date)
             $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
+                ->whereDate('advance_date', '<=', $endDate)
                 ->get()
                 ->groupBy('employee_id');
 
@@ -253,6 +257,7 @@ class PayrollController extends Controller
                     Violation::where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
+                        ->whereDate('violation_date', '<=', $endDate)
                         ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
                 }
 
@@ -516,29 +521,32 @@ class PayrollController extends Controller
                 ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
                 ->groupBy('employee_id');
 
-            // 2. Violations (driver-liable, not yet deducted OR previously marked in this draft run)
+            // 2. Violations (driver-liable, not yet deducted OR previously marked in this draft run, occurring on or before end date)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where(function($q) use ($slipIds) {
                     $q->where('is_deducted', false)
                       ->orWhereIn('payroll_slip_id', $slipIds);
                 })
+                ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
                 ->selectRaw('employee_id, SUM(amount) as total')
                 ->pluck('total', 'employee_id');
 
-            // 3. Maintenance deductions
+            // 3. Maintenance deductions (occurring on or before end date)
             $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
+                ->whereDate('maintenance_date', '<=', $endDate)
                 ->groupBy('liable_employee_id')
                 ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
                 ->pluck('total', 'liable_employee_id');
 
-            // 4. Custody deductions
+            // 4. Custody deductions (returned on or before end date)
             $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
                 ->where('deduction_amount', '>', 0)
+                ->whereDate('returned_date', '<=', $endDate)
                 ->groupBy('employee_id')
                 ->selectRaw('employee_id, SUM(deduction_amount) as total')
                 ->pluck('total', 'employee_id');
@@ -560,9 +568,10 @@ class PayrollController extends Controller
                 ->get()
                 ->keyBy('employee_id');
 
-            // 6. Active salary advances
+            // 6. Active salary advances (occurring on or before end date)
             $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
+                ->whereDate('advance_date', '<=', $endDate)
                 ->get()
                 ->groupBy('employee_id');
 
@@ -661,6 +670,7 @@ class PayrollController extends Controller
                     Violation::where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
+                        ->whereDate('violation_date', '<=', $endDate)
                         ->update([
                             'is_deducted' => true,
                             'payroll_slip_id' => $slip->id
@@ -728,7 +738,7 @@ class PayrollController extends Controller
             ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date']);
 
         $target = (int) ($employee->target_orders_monthly ?? 0);
-        $baseRate = (float) ($employee->rate_per_order ?? 0.000);
+        $baseRate = (float) (($target > 0 && $employee->base_commission_rate !== null) ? $employee->base_commission_rate : ($employee->rate_per_order ?? 0.000));
         $premiumRate = (float) ($employee->premium_commission_rate ?? 0.000);
 
         $runningOrders = 0;
@@ -741,13 +751,13 @@ class PayrollController extends Controller
                 $start = $runningOrders + 1;
                 $end = $runningOrders + $cOrders;
 
-                if ($end < $target) {
+                if ($end <= $target) {
                     $logCommission = $cOrders * $baseRate;
-                } elseif ($start >= $target) {
+                } elseif ($start > $target) {
                     $logCommission = $cOrders * $premiumRate;
                 } else {
-                    $baseOrders = $target - $start;
-                    $premiumOrders = $end - $target + 1;
+                    $baseOrders = $target - $start + 1;
+                    $premiumOrders = $end - $target;
                     $logCommission = ($baseOrders * $baseRate) + ($premiumOrders * $premiumRate);
                 }
             } else {

@@ -34,27 +34,64 @@ class DashboardController extends Controller
 
         $vehicles = Vehicle::select('id', 'plate_number', 'make', 'model',
                 'insurance_expiry', 'comprehensive_insurance_expiry',
-                'food_authority_license_expiry', 'next_service_due')
+                'food_authority_license_expiry', 'next_service_due',
+                'odometer_km', 'last_oil_change_km', 'oil_change_interval_km')
             ->where(function ($q) use ($alertDate) {
                 $q->where('insurance_expiry', '<=', $alertDate)
+                  ->orWhereNull('insurance_expiry')
                   ->orWhere('comprehensive_insurance_expiry', '<=', $alertDate)
+                  ->orWhereNull('comprehensive_insurance_expiry')
                   ->orWhere('food_authority_license_expiry', '<=', $alertDate)
-                  ->orWhere('next_service_due', '<=', $alertDate);
+                  ->orWhereNull('food_authority_license_expiry')
+                  ->orWhere('next_service_due', '<=', $alertDate)
+                  ->orWhereNull('next_service_due')
+                  ->orWhereRaw('odometer_km - COALESCE(last_oil_change_km, 0) >= COALESCE(oil_change_interval_km, 4000)');
             })
             ->get();
 
         $vehicleAlerts = [];
         foreach ($vehicles as $v) {
             foreach ($vehicleDocFields as $field => $label) {
-                if (!$v->$field) continue;
-                $alert = $this->buildAlert($label, $v->$field, $todayStr);
-                if ($alert) {
-                    $alert['entity_type'] = 'vehicle';
-                    $alert['entity_id']   = $v->id;
-                    $alert['entity_name'] = $v->plate_number;
-                    $alert['entity_label'] = trim("{$v->make} {$v->model}");
-                    $vehicleAlerts[] = $alert;
+                if (!$v->$field) {
+                    $vehicleAlerts[] = [
+                        'doc_label'      => "وثيقة مفقودة: {$label}",
+                        'expiry_date'    => "غير مدخلة",
+                        'days_remaining' => -999, // Sorts missing docs at the top
+                        'severity'       => 'expired',
+                        'entity_type'    => 'vehicle',
+                        'entity_id'      => $v->id,
+                        'entity_name'    => $v->plate_number,
+                        'entity_label'   => trim("{$v->make} {$v->model}"),
+                    ];
+                } else {
+                    $alert = $this->buildAlert($label, $v->$field, $todayStr);
+                    if ($alert) {
+                        $alert['entity_type'] = 'vehicle';
+                        $alert['entity_id']   = $v->id;
+                        $alert['entity_name'] = $v->plate_number;
+                        $alert['entity_label'] = trim("{$v->make} {$v->model}");
+                        $vehicleAlerts[] = $alert;
+                    }
                 }
+            }
+
+            // Check oil change warning
+            $interval = $v->oil_change_interval_km ?? 4000;
+            $odometer = $v->odometer_km ?? 0;
+            $lastOil = $v->last_oil_change_km ?? 0;
+            $diff = $odometer - $lastOil;
+            if ($diff >= $interval) {
+                $over = $diff - $interval;
+                $vehicleAlerts[] = [
+                    'doc_label'      => 'تحذير غيار الزيت (مستحق)',
+                    'expiry_date'    => "متجاوز بـ " . number_format($over) . " كم",
+                    'days_remaining' => -1,
+                    'severity'       => 'expired',
+                    'entity_type'    => 'vehicle',
+                    'entity_id'      => $v->id,
+                    'entity_name'    => $v->plate_number,
+                    'entity_label'   => trim("{$v->make} {$v->model}"),
+                ];
             }
         }
 
@@ -72,23 +109,39 @@ class DashboardController extends Controller
             ->whereIn('status', ['active', 'probation'])
             ->where(function ($q) use ($alertDate) {
                 $q->where('health_card_expiry', '<=', $alertDate)
+                  ->orWhereNull('health_card_expiry')
                   ->orWhere('residence_expiry', '<=', $alertDate)
+                  ->orWhereNull('residence_expiry')
                   ->orWhere('driving_license_expiry', '<=', $alertDate)
-                  ->orWhere('work_permit_expiry', '<=', $alertDate);
+                  ->orWhereNull('driving_license_expiry')
+                  ->orWhere('work_permit_expiry', '<=', $alertDate)
+                  ->orWhereNull('work_permit_expiry');
             })
             ->get();
 
         $employeeAlerts = [];
         foreach ($employees as $e) {
             foreach ($employeeDocFields as $field => $label) {
-                if (!$e->$field) continue;
-                $alert = $this->buildAlert($label, $e->$field, $todayStr);
-                if ($alert) {
-                    $alert['entity_type'] = 'employee';
-                    $alert['entity_id']   = $e->id;
-                    $alert['entity_name'] = $e->name_ar ?: $e->name;
-                    $alert['entity_label'] = $e->name;
-                    $employeeAlerts[] = $alert;
+                if (!$e->$field) {
+                    $employeeAlerts[] = [
+                        'doc_label'      => "وثيقة مفقودة: {$label}",
+                        'expiry_date'    => "غير مدخلة",
+                        'days_remaining' => -999, // Sorts missing docs at the top
+                        'severity'       => 'expired',
+                        'entity_type'    => 'employee',
+                        'entity_id'      => $e->id,
+                        'entity_name'    => $e->name_ar ?: $e->name,
+                        'entity_label'   => $e->name,
+                    ];
+                } else {
+                    $alert = $this->buildAlert($label, $e->$field, $todayStr);
+                    if ($alert) {
+                        $alert['entity_type'] = 'employee';
+                        $alert['entity_id']   = $e->id;
+                        $alert['entity_name'] = $e->name_ar ?: $e->name;
+                        $alert['entity_label'] = $e->name;
+                        $employeeAlerts[] = $alert;
+                    }
                 }
             }
         }
@@ -220,15 +273,20 @@ class DashboardController extends Controller
         $vehicleAlertsCount = Vehicle::where(function ($q) use ($alertDate) {
             $q->where('insurance_expiry', '<=', $alertDate)
               ->orWhere('comprehensive_insurance_expiry', '<=', $alertDate)
-              ->orWhere('food_authority_license_expiry', '<=', $alertDate);
+              ->orWhere('food_authority_license_expiry', '<=', $alertDate)
+              ->orWhereRaw('odometer_km - COALESCE(last_oil_change_km, 0) >= COALESCE(oil_change_interval_km, 4000)');
         })->count();
 
-        $employeeAlertsCount = Employee::where('status', 'active')
+        $employeeAlertsCount = Employee::whereIn('status', ['active', 'probation'])
             ->where(function ($q) use ($alertDate) {
                 $q->where('health_card_expiry', '<=', $alertDate)
+                  ->orWhereNull('health_card_expiry')
                   ->orWhere('residence_expiry', '<=', $alertDate)
+                  ->orWhereNull('residence_expiry')
                   ->orWhere('driving_license_expiry', '<=', $alertDate)
-                  ->orWhere('work_permit_expiry', '<=', $alertDate);
+                  ->orWhereNull('driving_license_expiry')
+                  ->orWhere('work_permit_expiry', '<=', $alertDate)
+                  ->orWhereNull('work_permit_expiry');
             })->count();
 
         return response()->json([
@@ -249,6 +307,215 @@ class DashboardController extends Controller
                 'vehicle_docs'  => $vehicleAlertsCount,
                 'employee_docs' => $employeeAlertsCount,
             ],
+        ]);
+    }
+
+    /**
+     * GET /api/dashboard/contracts-profitability
+     * Calculate and return Expected vs Actual contract profitability with timeframe filters.
+     */
+    public function contractsProfitability(\Illuminate\Http\Request $request): JsonResponse
+    {
+        $period = $request->input('period', 'monthly');
+        $year   = $request->integer('year', (int) date('Y'));
+        $month  = $request->integer('month', (int) date('n'));
+        $quarter = $request->integer('quarter', (int) ceil(date('n') / 3));
+        $half    = $request->integer('half', (int) ceil(date('n') / 6));
+
+        // Determine date range & months count
+        if ($period === 'quarterly') {
+            $startDate = Carbon::create($year, ($quarter - 1) * 3 + 1, 1)->startOfMonth();
+            $endDate   = $startDate->copy()->addMonths(2)->endOfMonth();
+            $monthsCount = 3;
+        } elseif ($period === 'semi-annually') {
+            $startDate = Carbon::create($year, ($half - 1) * 6 + 1, 1)->startOfMonth();
+            $endDate   = $startDate->copy()->addMonths(5)->endOfMonth();
+            $monthsCount = 6;
+        } elseif ($period === 'annually') {
+            $startDate = Carbon::create($year, 1, 1)->startOfYear();
+            $endDate   = $startDate->copy()->endOfYear();
+            $monthsCount = 12;
+        } else {
+            // monthly
+            $startDate = Carbon::create($year, $month, 1)->startOfMonth();
+            $endDate   = $startDate->copy()->endOfMonth();
+            $monthsCount = 1;
+        }
+
+        $startDateStr = $startDate->toDateString();
+        $endDateStr   = $endDate->toDateString();
+
+        // 1. Fetch all contracts for the current company
+        $contracts = Contract::with('client:id,name')->get();
+
+        // 2. Fetch driver log sums in the period
+        // Loop month-by-month to perform base salary allocation precisely
+        $months = [];
+        $temp = $startDate->copy();
+        while ($temp->lte($endDate)) {
+            $months[] = [
+                'start' => $temp->copy()->startOfMonth()->toDateString(),
+                'end' => $temp->copy()->endOfMonth()->toDateString(),
+            ];
+            $temp->addMonth();
+        }
+
+        $salaryAllocationsByMonth = [];
+        foreach ($months as $m) {
+            $monthStart = $m['start'];
+            $monthEnd   = $m['end'];
+
+            // Log counts per employee in this month
+            $employeeTotalDays = DailyLog::whereBetween('log_date', [$monthStart, $monthEnd])
+                ->selectRaw('employee_id, COUNT(*) as total_days')
+                ->groupBy('employee_id')
+                ->pluck('total_days', 'employee_id')
+                ->toArray();
+
+            // Logs count per employee per contract in this month
+            $employeeContractDays = DailyLog::whereBetween('log_date', [$monthStart, $monthEnd])
+                ->selectRaw('employee_id, contract_id, COUNT(*) as days')
+                ->groupBy('employee_id', 'contract_id')
+                ->get()
+                ->groupBy('employee_id');
+
+            // Employee salaries
+            $employees = Employee::whereIn('id', array_keys($employeeTotalDays))
+                ->pluck('actual_salary', 'id')
+                ->toArray();
+
+            $salaryAllocationsByMonth[] = [
+                'total_days' => $employeeTotalDays,
+                'contract_days' => $employeeContractDays,
+                'salaries' => $employees,
+            ];
+        }
+
+        // 3. Load all vehicle expenses in the range
+        // Assign expenses based on daily logs or vehicle assignments covering the date
+        $vehicleExpenses = \App\Models\VehicleExpense::whereBetween('expense_date', [$startDateStr, $endDateStr])
+            ->get();
+
+        $vehicleExpenseAllocations = [];
+        foreach ($vehicleExpenses as $exp) {
+            $expenseDate = $exp->expense_date->toDateString();
+            $vehicleId   = $exp->vehicle_id;
+            $amount      = (float)$exp->amount;
+
+            $log = DailyLog::where('vehicle_id', $vehicleId)
+                ->whereDate('log_date', $expenseDate)
+                ->first();
+
+            $contractId = null;
+            if ($log) {
+                $contractId = $log->contract_id;
+            } else {
+                $assignment = \App\Models\VehicleAssignment::where('vehicle_id', $vehicleId)
+                    ->whereDate('assigned_date', '<=', $expenseDate)
+                    ->where(function($q) use ($expenseDate) {
+                        $q->whereNull('unassigned_date')
+                          ->orWhereDate('unassigned_date', '>=', $expenseDate);
+                    })
+                    ->first();
+                if ($assignment) {
+                    $contractId = $assignment->contract_id;
+                }
+            }
+
+            if ($contractId) {
+                $vehicleExpenseAllocations[$contractId] = ($vehicleExpenseAllocations[$contractId] ?? 0) + $amount;
+            }
+        }
+
+        // 4. Calculate profitability per contract
+        $data = [];
+        foreach ($contracts as $contract) {
+            $expectedProfit = ((float)$contract->expected_monthly_profit) * $monthsCount;
+
+            $logsRevenue = (float) DailyLog::where('contract_id', $contract->id)
+                ->whereBetween('log_date', [$startDateStr, $endDateStr])
+                ->sum('income_amount');
+
+            $fixedRevenue = 0;
+            if ($contract->payment_type === 'fixed' || $contract->payment_type === 'hybrid') {
+                foreach ($months as $m) {
+                    $mStart = Carbon::parse($m['start']);
+                    $mEnd   = Carbon::parse($m['end']);
+                    $contractStart = Carbon::parse($contract->start_date);
+                    $contractEnd = $contract->end_date ? Carbon::parse($contract->end_date) : null;
+
+                    if ($contractStart->lte($mEnd) && (!$contractEnd || $contractEnd->gte($mStart))) {
+                        $fixedRevenue += (float)$contract->fixed_monthly;
+                    }
+                }
+            }
+            $actualRevenue = $logsRevenue + $fixedRevenue;
+
+            $driverCommissions = (float) DailyLog::where('contract_id', $contract->id)
+                ->whereBetween('log_date', [$startDateStr, $endDateStr])
+                ->sum('driver_commission');
+
+            $allocatedSalaries = 0;
+            foreach ($salaryAllocationsByMonth as $alloc) {
+                foreach ($alloc['total_days'] as $empId => $totalDays) {
+                    if ($totalDays <= 0) continue;
+                    $empContractLogs = $alloc['contract_days']->get($empId);
+                    if (!$empContractLogs) continue;
+
+                    $cLog = $empContractLogs->firstWhere('contract_id', $contract->id);
+                    if ($cLog) {
+                        $daysOnContract = $cLog->days;
+                        $salary = (float)($alloc['salaries'][$empId] ?? 0);
+                        $allocatedSalaries += $salary * ($daysOnContract / $totalDays);
+                    }
+                }
+            }
+
+            $vehicleCosts = (float)($vehicleExpenseAllocations[$contract->id] ?? 0);
+
+            $actualExpenses = $driverCommissions + $allocatedSalaries + $vehicleCosts;
+            $actualProfit   = $actualRevenue - $actualExpenses;
+            $variance       = $actualProfit - $expectedProfit;
+
+            $data[] = [
+                'id' => $contract->id,
+                'name' => $contract->name,
+                'contract_number' => $contract->contract_number,
+                'client_name' => $contract->client?->name ?? '—',
+                'payment_type' => $contract->payment_type,
+                'expected_monthly_profit' => (float)$contract->expected_monthly_profit,
+                'expected_profit' => $expectedProfit,
+                'actual_revenue' => $actualRevenue,
+                'actual_expenses' => $actualExpenses,
+                'actual_profit' => $actualProfit,
+                'variance' => $variance,
+                'driver_commissions' => $driverCommissions,
+                'allocated_salaries' => $allocatedSalaries,
+                'vehicle_costs' => $vehicleCosts,
+            ];
+        }
+
+        // Filter out contracts that don't have expected profit and haven't active transactions in timeframe to keep it clean (optional)
+        // But for transparency we show all contracts.
+
+        $sortedByProfit = $data;
+        usort($sortedByProfit, fn($a, $b) => $b['actual_profit'] <=> $a['actual_profit']);
+
+        $bestContracts = array_slice($sortedByProfit, 0, 5);
+        $worstContracts = array_slice(array_reverse($sortedByProfit), 0, 5);
+
+        return response()->json([
+            'period' => $period,
+            'year' => $year,
+            'month' => $month,
+            'quarter' => $quarter,
+            'half' => $half,
+            'start_date' => $startDateStr,
+            'end_date' => $endDateStr,
+            'months_count' => $monthsCount,
+            'contracts' => $data,
+            'best_contracts' => $bestContracts,
+            'worst_contracts' => $worstContracts,
         ]);
     }
 }

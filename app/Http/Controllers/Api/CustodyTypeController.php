@@ -38,10 +38,23 @@ class CustodyTypeController extends Controller
         return response()->json($custodyType);
     }
 
+    public function deletionCheck(CustodyType $custodyType): JsonResponse
+    {
+        $blocks = $custodyType->getDeletionBlocks();
+        return response()->json([
+            'is_deletable' => empty($blocks),
+            'blocks' => $blocks,
+        ]);
+    }
+
     public function destroy(CustodyType $custodyType): JsonResponse
     {
-        if ($custodyType->custodyItems()->exists()) {
-            return response()->json(['message' => 'لا يمكن حذف نوع عُهدة مرتبط بعناصر موجودة.'], 422);
+        $blocks = $custodyType->getDeletionBlocks();
+        if (!empty($blocks)) {
+            return response()->json([
+                'message' => 'لا يمكن حذف نوع العهدة لوجود ارتباطات نشطة.',
+                'errors' => $blocks,
+            ], 422);
         }
 
         $custodyType->delete();
