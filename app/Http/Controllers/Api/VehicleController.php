@@ -59,7 +59,9 @@ class VehicleController extends Controller
             'food_authority_license_expiry'     => 'nullable|date',
             'next_service_due'                  => 'nullable|date',
             'notes'                             => 'nullable|string',
-            'ownership_type'                    => 'nullable|string|in:rented,installment,asset,owned',
+            'ownership_type'                    => 'nullable|string|in:rented,installment,owned',
+            'rental_price'                      => 'nullable|numeric|min:0',
+            'installment_price'                 => 'nullable|numeric|min:0',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
@@ -89,7 +91,9 @@ class VehicleController extends Controller
     {
         $validated = $request->validate([
             'status'                            => 'sometimes|in:available,working,maintenance,idle',
-            'ownership_type'                    => 'sometimes|string|in:rented,installment,asset,owned',
+            'ownership_type'                    => 'sometimes|string|in:rented,installment,owned',
+            'rental_price'                      => 'nullable|numeric|min:0',
+            'installment_price'                 => 'nullable|numeric|min:0',
             'monthly_fuel_allowance'            => 'sometimes|numeric|min:0',
             'insurance_expiry'                  => 'nullable|date',
             'comprehensive_insurance_expiry'    => 'nullable|date',

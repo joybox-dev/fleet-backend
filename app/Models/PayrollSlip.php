@@ -17,6 +17,7 @@ class PayrollSlip extends Model
         'violations_deduction', 'maintenance_deduction', 'custody_deduction', 'advance_deduction', 'leave_deduction', 'unpaid_leave_days', 'other_deductions',
         'gross_official', 'gross_actual', 'cash_portion',
         'erp_id', 'erp_synced_at', 'erp_sync_status', 'notes',
+        'final_monthly_status', 'status_override_reason', 'total_contract_bonuses', 'total_capacity_incentive', 'total_experience_incentive', 'exchange_rate'
     ];
 
     protected $casts = [

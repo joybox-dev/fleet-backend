@@ -17,6 +17,7 @@ use App\Models\AdvanceDeduction;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use App\Services\Contracts\SmartValueFallbackService;
 
 class PayrollController extends Controller
 {
@@ -71,28 +72,23 @@ class PayrollController extends Controller
             $totalOfficial = 0;
             $totalActual   = 0;
 
-            // ══════════════════════════════════════════════════════════════
-            // BATCH PRE-FETCH: All data in ~10 queries instead of N×8
-            // ══════════════════════════════════════════════════════════════
-
-            // 1. Daily logs processed chronologically on the fly (Pre-fetched in a single query)
+            // 1. Daily logs pre-fetched
             $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time'])
                 ->groupBy('employee_id');
 
-            // 2. Violations (driver-liable, not yet deducted, occurring on or before end date)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where('is_deducted', false)
                 ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
-                ->selectRaw('employee_id, SUM(amount) as total')
+                ->selectRaw('employee_id, SUM(CASE WHEN driver_deduction > 0 THEN driver_deduction ELSE amount END) as total')
                 ->pluck('total', 'employee_id');
 
-            // 3. Maintenance deductions (occurring on or before end date)
+            // 3. Maintenance deductions
             $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->whereDate('maintenance_date', '<=', $endDate)
@@ -100,7 +96,7 @@ class PayrollController extends Controller
                 ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
                 ->pluck('total', 'liable_employee_id');
 
-            // 4. Custody deductions (returned on or before end date)
+            // 4. Custody deductions
             $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
@@ -110,7 +106,7 @@ class PayrollController extends Controller
                 ->selectRaw('employee_id, SUM(deduction_amount) as total')
                 ->pluck('total', 'employee_id');
 
-            // 5. Leave deductions (approved, unpaid, overlapping this period)
+            // 5. Leave deductions
             $leaveData = EmployeeLeave::whereIn('employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->where('is_paid', false)
@@ -127,7 +123,7 @@ class PayrollController extends Controller
                 ->get()
                 ->keyBy('employee_id');
 
-            // 6. Active salary advances (occurring on or before end date)
+            // 6. Active salary advances
             $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
                 ->whereDate('advance_date', '<=', $endDate)
@@ -147,113 +143,56 @@ class PayrollController extends Controller
                 ->get()
                 ->groupBy('employee_id');
 
-            // 8. Pre-fetch contracts referenced in daily logs of this month
-            $contractIds = DailyLog::whereIn('employee_id', $employeeIds)
-                ->whereBetween('log_date', [$startDate, $endDate])
-                ->pluck('contract_id')
-                ->unique()
-                ->toArray();
-
-            $contracts = \App\Models\Contract::whereIn('id', $contractIds)->get()->keyBy('id');
-
-            // ══════════════════════════════════════════════════════════════
-            // LOOP: Now uses in-memory lookups only — ZERO queries inside
-            // ══════════════════════════════════════════════════════════════
-
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $allDailyLogs[$empId] ?? collect());
+                $data = self::calculateDriverSlipData(
+                    $employee,
+                    $year,
+                    $month,
+                    $startDate,
+                    $endDate,
+                    $allDailyLogs,
+                    $violationSums,
+                    $maintenanceSums,
+                    $custodySums,
+                    $leaveData,
+                    $allAdvances,
+                    $allAssignments
+                );
 
-                $totalOrders = 0;
-                $companyRevenue = 0;
-                $ordersBonus = 0;
-
-                foreach ($empLogs as $log) {
-                    $totalOrders += (int) $log->orders_count;
-                    $companyRevenue += (float) $log->income_amount;
-                    $ordersBonus += (float) $log->driver_commission;
-                }
-
-                $violationsDeduction  = (float) ($violationSums[$empId] ?? 0);
-                $maintenanceDeduction = (float) ($maintenanceSums[$empId] ?? 0);
-                $custodyDeduction     = (float) ($custodySums[$empId] ?? 0);
-
-                $leaveInfo = $leaveData[$empId] ?? null;
-                $leaveDeduction  = (float) ($leaveInfo?->total_deduction ?? 0);
-                $unpaidLeaveDays = (int)   ($leaveInfo?->total_days ?? 0);
-
-                // Salary advance installments
-                $advanceDeduction = 0;
-                $activeAdvances = $allAdvances[$empId] ?? collect();
-                foreach ($activeAdvances as $advance) {
-                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
-                    if ($installment <= 0) continue;
-                    $advanceDeduction += $installment;
-                }
-
-                // Fuel allowance from vehicle assignments
-                $fuelAllowance = 0;
-                $empAssignments = $allAssignments[$empId] ?? collect();
-                foreach ($empAssignments as $a) {
-                    $fuelAllowance += (float) ($a->monthly_fuel_allowance ?? 0);
-                }
-
-                // ═══════════════════════════════════════════════════════════
-                // DUAL-PAYROLL CALCULATION — 5-STEP PROTECTED FORMULA
-                // Bank salary (official_salary) is STRICTLY PROTECTED.
-                // Deductions are absorbed by the cash portion first.
-                // ═══════════════════════════════════════════════════════════
-
-                $baseActual = (float) $employee->actual_salary;
-
-                if ($employee->pay_type === 'per_order') {
-                    // Per-order: income IS orders × their personal rate
-                    // actual_salary is 0, so their base is their order earnings
-                    $baseActual  = $ordersBonus; // e.g. 350 × 0.500 = 175
-                    $ordersBonus = 0;            // Already folded into baseActual
-                }
-
-                // ── Step 1: Total Gross Actual (internal full pay before deductions) ──
-                $totalBonuses    = $ordersBonus + $fuelAllowance;
-                $totalGrossActual = $baseActual + $totalBonuses;
-
-                // ── Step 2: Total Deductions (violations + maintenance + custody + leave + advances) ──
-                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction + $advanceDeduction;
-
-                // ── Step 3: Net Actual (what the employee truly deserves) ──
-                $netActual = max(0, $totalGrossActual - $totalDeductions);
-
-                // ── Step 4: Net Bank — PROTECT official salary! ──
-                // Give full official salary UNLESS deductions are so extreme
-                // that net_actual itself is less than the official salary.
-                $netBank = min($netActual, (float) $employee->official_salary);
-
-                // ── Step 5: Net Cash (remainder = cash envelope) ──
-                // Cash absorbs the deductions. This is the internal portion.
-                $netCash = max(0, $netActual - $netBank);
+                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_capacity_incentive'] + $data['total_experience_incentive'] + $data['total_contract_bonuses'];
+                $totalGrossActual = $data['base_actual'] + $totalBonuses;
+                $totalDeductions  = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + $data['leave_deduction'] + $data['advance_deduction'];
+                $netActual        = max(0, $totalGrossActual - $totalDeductions);
+                $netBank          = min($netActual, (float) $employee->official_salary);
+                $netCash          = max(0, $netActual - $netBank);
 
                 $slip = PayrollSlip::create([
-                    'payroll_run_id'        => $run->id,
-                    'employee_id'           => $employee->id,
-                    'base_official'         => $employee->official_salary,
-                    'base_actual'           => $baseActual,
-                    'orders_bonus'          => $ordersBonus,
-                    'fuel_allowance'        => $fuelAllowance,
-                    'total_orders'          => $totalOrders,
-                    'violations_deduction'  => $violationsDeduction,
-                    'maintenance_deduction' => $maintenanceDeduction,
-                    'custody_deduction'     => $custodyDeduction,
-                    'advance_deduction'     => $advanceDeduction,
-                    'leave_deduction'       => $leaveDeduction,
-                    'unpaid_leave_days'     => $unpaidLeaveDays,
-                    'gross_official'        => $netBank,     // Bank receives this
-                    'gross_actual'          => $netActual,   // True net pay
-                    'cash_portion'          => $netCash,     // Cash envelope
+                    'payroll_run_id'             => $run->id,
+                    'employee_id'                => $employee->id,
+                    'base_official'              => $employee->official_salary,
+                    'base_actual'                => $data['base_actual'],
+                    'orders_bonus'               => $data['orders_bonus'],
+                    'fuel_allowance'             => $data['fuel_allowance'],
+                    'total_orders'               => $data['total_orders'],
+                    'violations_deduction'       => $data['violations_deduction'],
+                    'maintenance_deduction'      => $data['maintenance_deduction'],
+                    'custody_deduction'          => $data['custody_deduction'],
+                    'advance_deduction'          => $data['advance_deduction'],
+                    'leave_deduction'            => $data['leave_deduction'],
+                    'unpaid_leave_days'          => $data['unpaid_leave_days'],
+                    'gross_official'             => $netBank,
+                    'gross_actual'               => $netActual,
+                    'cash_portion'               => $netCash,
+                    'final_monthly_status'       => $data['final_monthly_status'],
+                    'total_capacity_incentive'   => $data['total_capacity_incentive'],
+                    'total_experience_incentive' => $data['total_experience_incentive'],
+                    'total_contract_bonuses'     => $data['total_contract_bonuses'],
                 ]);
 
                 // Mark violations as deducted
-                if ($violationsDeduction > 0) {
+                if ($data['violations_deduction'] > 0) {
                     Violation::where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
@@ -261,7 +200,8 @@ class PayrollController extends Controller
                         ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
                 }
 
-                // ── Create AdvanceDeduction records & update advances ──
+                // Create AdvanceDeduction records & update advances
+                $activeAdvances = $allAdvances->get($employee->id, collect());
                 foreach ($activeAdvances as $advance) {
                     $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
                     if ($installment <= 0) continue;
@@ -318,7 +258,6 @@ class PayrollController extends Controller
 
     /**
      * GET /api/payroll/{year}/{month}
-     * Get payroll run with all slips.
      */
     public function show(Request $request, int $year, int $month): JsonResponse
     {
@@ -344,8 +283,6 @@ class PayrollController extends Controller
         } else {
             $run->load(['slips.employee:id,name,official_salary,actual_salary']);
 
-            // Strip the heavy and unused 'active_assignments' append and relations from the employees in the slips list
-            // This prevents N+1 queries completely and reduces the JSON payload size significantly.
             $run->slips->each(function ($slip) {
                 if ($slip->employee) {
                     $slip->employee->setAppends([]);
@@ -359,7 +296,6 @@ class PayrollController extends Controller
 
     /**
      * GET /api/payroll/{year}/{month}/{employee}
-     * Individual employee payroll slip — shows both official and internal.
      */
     public function slip(int $year, int $month, Employee $employee): JsonResponse
     {
@@ -371,13 +307,13 @@ class PayrollController extends Controller
         return response()->json([
             'employee'       => $employee->only(['id', 'name', 'official_salary', 'actual_salary', 'pay_type']),
             'period'         => "{$year}-" . str_pad((string)$month, 2, '0', STR_PAD_LEFT),
-            'official_sheet' => [   // Bank / Ministry sheet
+            'official_sheet' => [
                 'base'       => $slip->base_official,
                 'fuel'       => $slip->fuel_allowance,
                 'deductions' => $slip->violations_deduction + $slip->maintenance_deduction + $slip->custody_deduction + $slip->advance_deduction + $slip->leave_deduction,
                 'net'        => $slip->gross_official,
             ],
-            'internal_sheet' => [   // Full internal breakdown
+            'internal_sheet' => [
                 'base'                  => $slip->base_actual,
                 'orders_bonus'          => $slip->orders_bonus,
                 'total_orders'          => $slip->total_orders,
@@ -391,16 +327,16 @@ class PayrollController extends Controller
                 'gross'                 => $slip->gross_actual,
                 'bank_portion'          => $slip->gross_official,
                 'cash_portion'          => $slip->cash_portion,
+                'final_monthly_status'  => $slip->final_monthly_status ?? 'valid',
+                'total_capacity_incentive'   => $slip->total_capacity_incentive ?? 0,
+                'total_experience_incentive' => $slip->total_experience_incentive ?? 0,
+                'total_contract_bonuses'     => $slip->total_contract_bonuses ?? 0,
             ],
         ]);
     }
 
     /**
      * POST /api/payroll/{year}/{month}/approve
-     *
-     * Approves the payroll batch and dispatches ERPNext Journal Entries:
-     * 1. Deductions recovery (violations + maintenance + custody)
-     * 2. Fuel expense (consolidated fuel allowance)
      */
     public function approve(Request $request, int $year, int $month): JsonResponse
     {
@@ -416,7 +352,6 @@ class PayrollController extends Controller
             'approved_at' => now(),
         ]);
 
-        // ── Aggregate from all slips in this batch ──
         $slips = PayrollSlip::where('payroll_run_id', $run->id)->get();
 
         $totalViolations  = round($slips->sum('violations_deduction'), 3);
@@ -428,7 +363,6 @@ class PayrollController extends Controller
 
         $paddedMonth = str_pad((string) $month, 2, '0', STR_PAD_LEFT);
 
-        // ── 1. Dispatch deductions recovery Journal Entry ──
         if ($totalDeductions > 0) {
             ErpSync::dispatch(
                 \App\Services\ErpNext\Jobs\SyncPayrollDeductionsJob::class,
@@ -441,7 +375,6 @@ class PayrollController extends Controller
             );
         }
 
-        // ── 2. Dispatch fuel expense Journal Entry ──
         if ($totalFuel > 0) {
             ErpSync::dispatch(
                 \App\Services\ErpNext\Jobs\SyncFuelExpenseJob::class,
@@ -470,7 +403,6 @@ class PayrollController extends Controller
 
     /**
      * Recalculate draft payroll run.
-     * Auto-recalculates all slips in memory and updates database and run totals cleanly.
      */
     public static function recalculateRun(PayrollRun $run): void
     {
@@ -513,15 +445,14 @@ class PayrollController extends Controller
             $totalOfficial = 0;
             $totalActual   = 0;
 
-            // 1. Daily logs processed chronologically on the fly (Pre-fetched in a single query)
+            // 1. Daily logs
             $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time'])
                 ->groupBy('employee_id');
 
-            // 2. Violations (driver-liable, not yet deducted OR previously marked in this draft run, occurring on or before end date)
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where(function($q) use ($slipIds) {
@@ -530,10 +461,10 @@ class PayrollController extends Controller
                 })
                 ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
-                ->selectRaw('employee_id, SUM(amount) as total')
+                ->selectRaw('employee_id, SUM(CASE WHEN driver_deduction > 0 THEN driver_deduction ELSE amount END) as total')
                 ->pluck('total', 'employee_id');
 
-            // 3. Maintenance deductions (occurring on or before end date)
+            // 3. Maintenance deductions
             $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->whereDate('maintenance_date', '<=', $endDate)
@@ -541,7 +472,7 @@ class PayrollController extends Controller
                 ->selectRaw('liable_employee_id, SUM(driver_deduction) as total')
                 ->pluck('total', 'liable_employee_id');
 
-            // 4. Custody deductions (returned on or before end date)
+            // 4. Custody deductions
             $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
@@ -568,7 +499,7 @@ class PayrollController extends Controller
                 ->get()
                 ->keyBy('employee_id');
 
-            // 6. Active salary advances (occurring on or before end date)
+            // 6. Active salary advances
             $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
                 ->whereDate('advance_date', '<=', $endDate)
@@ -588,85 +519,60 @@ class PayrollController extends Controller
                 ->get()
                 ->groupBy('employee_id');
 
-            // 8. Pre-fetch contracts referenced in daily logs of this month
-            $contractIds = DailyLog::whereIn('employee_id', $employeeIds)
-                ->whereBetween('log_date', [$startDate, $endDate])
-                ->pluck('contract_id')
-                ->unique()
-                ->toArray();
-
-            $contracts = \App\Models\Contract::whereIn('id', $contractIds)->get()->keyBy('id');
-
             foreach ($employees as $employee) {
                 $empId = $employee->id;
 
-                $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $allDailyLogs[$empId] ?? collect());
+                $existingSlip = PayrollSlip::where('payroll_run_id', $run->id)->where('employee_id', $empId)->first();
 
-                $totalOrders = 0;
-                $ordersBonus = 0;
+                $data = self::calculateDriverSlipData(
+                    $employee,
+                    $year,
+                    $month,
+                    $startDate,
+                    $endDate,
+                    $allDailyLogs,
+                    $violationSums,
+                    $maintenanceSums,
+                    $custodySums,
+                    $leaveData,
+                    $allAdvances,
+                    $allAssignments,
+                    $existingSlip
+                );
 
-                foreach ($empLogs as $log) {
-                    $totalOrders += (int) $log->orders_count;
-                    $ordersBonus += (float) $log->driver_commission;
-                }
-
-                $violationsDeduction  = (float) ($violationSums[$empId] ?? 0);
-                $maintenanceDeduction = (float) ($maintenanceSums[$empId] ?? 0);
-                $custodyDeduction     = (float) ($custodySums[$empId] ?? 0);
-
-                $leaveInfo = $leaveData[$empId] ?? null;
-                $leaveDeduction  = (float) ($leaveInfo?->total_deduction ?? 0);
-                $unpaidLeaveDays = (int)   ($leaveInfo?->total_days ?? 0);
-
-                $advanceDeduction = 0;
-                $activeAdvances = $allAdvances[$empId] ?? collect();
-                foreach ($activeAdvances as $advance) {
-                    $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
-                    if ($installment <= 0) continue;
-                    $advanceDeduction += $installment;
-                }
-
-                $fuelAllowance = 0;
-                $empAssignments = $allAssignments[$empId] ?? collect();
-                foreach ($empAssignments as $a) {
-                    $fuelAllowance += (float) ($a->monthly_fuel_allowance ?? 0);
-                }
-
-                $baseActual = (float) $employee->actual_salary;
-                if ($employee->pay_type === 'per_order') {
-                    $baseActual  = $ordersBonus;
-                    $ordersBonus = 0;
-                }
-
-                $totalBonuses    = $ordersBonus + $fuelAllowance;
-                $totalGrossActual = $baseActual + $totalBonuses;
-                $totalDeductions = $violationsDeduction + $maintenanceDeduction + $custodyDeduction + $leaveDeduction + $advanceDeduction;
-                $netActual = max(0, $totalGrossActual - $totalDeductions);
-                $netBank = min($netActual, (float) $employee->official_salary);
-                $netCash = max(0, $netActual - $netBank);
+                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_capacity_incentive'] + $data['total_experience_incentive'] + $data['total_contract_bonuses'];
+                $totalGrossActual = $data['base_actual'] + $totalBonuses;
+                $totalDeductions  = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + $data['leave_deduction'] + $data['advance_deduction'];
+                $netActual        = max(0, $totalGrossActual - $totalDeductions);
+                $netBank          = min($netActual, (float) $employee->official_salary);
+                $netCash          = max(0, $netActual - $netBank);
 
                 $slip = PayrollSlip::updateOrCreate([
                     'payroll_run_id' => $run->id,
                     'employee_id'    => $employee->id,
                 ], [
-                    'base_official'         => $employee->official_salary,
-                    'base_actual'           => $baseActual,
-                    'orders_bonus'          => $ordersBonus,
-                    'fuel_allowance'        => $fuelAllowance,
-                    'total_orders'          => $totalOrders,
-                    'violations_deduction'  => $violationsDeduction,
-                    'maintenance_deduction' => $maintenanceDeduction,
-                    'custody_deduction'     => $custodyDeduction,
-                    'advance_deduction'     => $advanceDeduction,
-                    'leave_deduction'       => $leaveDeduction,
-                    'unpaid_leave_days'     => $unpaidLeaveDays,
-                    'gross_official'        => $netBank,
-                    'gross_actual'          => $netActual,
-                    'cash_portion'          => $netCash,
+                    'base_official'              => $employee->official_salary,
+                    'base_actual'                => $data['base_actual'],
+                    'orders_bonus'               => $data['orders_bonus'],
+                    'fuel_allowance'             => $data['fuel_allowance'],
+                    'total_orders'               => $data['total_orders'],
+                    'violations_deduction'       => $data['violations_deduction'],
+                    'maintenance_deduction'      => $data['maintenance_deduction'],
+                    'custody_deduction'          => $data['custody_deduction'],
+                    'advance_deduction'          => $data['advance_deduction'],
+                    'leave_deduction'            => $data['leave_deduction'],
+                    'unpaid_leave_days'          => $data['unpaid_leave_days'],
+                    'gross_official'             => $netBank,
+                    'gross_actual'               => $netActual,
+                    'cash_portion'               => $netCash,
+                    'final_monthly_status'       => $data['final_monthly_status'],
+                    'total_capacity_incentive'   => $data['total_capacity_incentive'],
+                    'total_experience_incentive' => $data['total_experience_incentive'],
+                    'total_contract_bonuses'     => $data['total_contract_bonuses'],
                 ]);
 
                 // Re-mark violations as deducted
-                if ($violationsDeduction > 0) {
+                if ($data['violations_deduction'] > 0) {
                     Violation::where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
@@ -678,6 +584,7 @@ class PayrollController extends Controller
                 }
 
                 // Re-create advance deductions
+                $activeAdvances = $allAdvances->get($employee->id, collect());
                 foreach ($activeAdvances as $advance) {
                     $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
                     if ($installment <= 0) continue;
@@ -735,7 +642,7 @@ class PayrollController extends Controller
             ->whereBetween('log_date', [$startDate, $endDate])
             ->orderBy('log_date')
             ->orderBy('id')
-            ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date']);
+            ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id']);
 
         $target = (int) ($employee->target_orders_monthly ?? 0);
         $baseRate = (float) (($target > 0 && $employee->base_commission_rate !== null) ? $employee->base_commission_rate : ($employee->rate_per_order ?? 0.000));
@@ -747,29 +654,76 @@ class PayrollController extends Controller
             $cOrders = (int) $log->orders_count;
             $logCommission = 0;
 
-            if ($target > 0) {
-                $start = $runningOrders + 1;
-                $end = $runningOrders + $cOrders;
-
-                if ($end <= $target) {
-                    $logCommission = $cOrders * $baseRate;
-                } elseif ($start > $target) {
-                    $logCommission = $cOrders * $premiumRate;
-                } else {
-                    $baseOrders = $target - $start + 1;
-                    $premiumOrders = $end - $target;
-                    $logCommission = ($baseOrders * $baseRate) + ($premiumOrders * $premiumRate);
+            // Check if log has contract or driver has active assignment on log_date
+            $contractId = $log->contract_id;
+            if (!$contractId) {
+                $assignment = \App\Models\ContractAssignment::where('employee_id', $employeeId)
+                    ->whereDate('start_date', '<=', $log->log_date)
+                    ->where(function ($q) use ($log) {
+                        $q->whereNull('end_date')
+                          ->orWhereDate('end_date', '>=', $log->log_date);
+                    })
+                    ->first();
+                if ($assignment) {
+                    $contractId = $assignment->contract_id;
                 }
+            }
+
+            $rate = null;
+            if ($contractId) {
+                // Check if there is an active ContractAssignment
+                $assignment = \App\Models\ContractAssignment::where('employee_id', $employeeId)
+                    ->where('contract_id', $contractId)
+                    ->whereDate('start_date', '<=', $log->log_date)
+                    ->where(function ($q) use ($log) {
+                        $q->whereNull('end_date')
+                          ->orWhereDate('end_date', '>=', $log->log_date);
+                    })
+                    ->first();
+                if ($assignment) {
+                    $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $log->log_date, 'order_commission');
+                }
+            }
+
+            if ($rate !== null) {
+                // Convert currency if contract currency is different from KWD
+                $contract = \App\Models\Contract::find($contractId);
+                if ($contract && $contract->currency && $contract->currency !== 'KWD') {
+                    $rateModel = \App\Models\CurrencyExchangeRate::where('company_id', $employee->company_id)
+                        ->where('from_currency', $contract->currency)
+                        ->where('to_currency', 'KWD')
+                        ->where('year', $year)
+                        ->where('month', $month)
+                        ->first();
+                    if ($rateModel) {
+                        $rate = (float)$rate * (float)$rateModel->exchange_rate;
+                    }
+                }
+                
+                $logCommission = $cOrders * (float)$rate;
             } else {
-                $logCommission = $cOrders * $baseRate;
+                if ($target > 0) {
+                    $start = $runningOrders + 1;
+                    $end = $runningOrders + $cOrders;
+
+                    if ($end <= $target) {
+                        $logCommission = $cOrders * $baseRate;
+                    } elseif ($start > $target) {
+                        $logCommission = $cOrders * $premiumRate;
+                    } else {
+                        $baseOrders = $target - $start + 1;
+                        $premiumOrders = $end - $target;
+                        $logCommission = ($baseOrders * $baseRate) + ($premiumOrders * $premiumRate);
+                    }
+                } else {
+                    $logCommission = $cOrders * $baseRate;
+                }
             }
 
             $newCommission = round($logCommission, 3);
             if ((float) $log->driver_commission !== (float) $newCommission) {
-                // Update the attribute on the model directly so the returned collection is correct in memory!
                 $log->driver_commission = $newCommission;
 
-                // We must update the DB directly without triggering the observer recursively
                 \DB::table('daily_logs')
                     ->where('id', $log->id)
                     ->update(['driver_commission' => $newCommission]);
@@ -779,5 +733,266 @@ class PayrollController extends Controller
         }
 
         return $logs;
+    }
+
+    public static function getVehicleType($vehicle)
+    {
+        if (!$vehicle) return 'car';
+        $text = strtolower($vehicle->make . ' ' . $vehicle->model);
+        if (str_contains($text, 'bike') || str_contains($text, 'motorcycle') || str_contains($text, 'scooter') || str_contains($text, 'دراجة')) {
+            return 'bike';
+        }
+        return 'car';
+    }
+
+    public static function calculateDriverSlipData(
+        Employee $employee,
+        int $year,
+        int $month,
+        string $startDate,
+        string $endDate,
+        $allDailyLogs,
+        $violationSums,
+        $maintenanceSums,
+        $custodySums,
+        $leaveData,
+        $allAdvances,
+        $allAssignments,
+        $existingSlip = null
+    ): array {
+        $employeeId = $employee->id;
+        $empLogs = $allDailyLogs->get($employeeId, collect());
+
+        // 1. Recalculate daily log commissions
+        $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $empLogs);
+
+        $totalOrders = 0;
+        $ordersBonus = 0;
+        foreach ($empLogs as $log) {
+            $totalOrders += (int) $log->orders_count;
+            $ordersBonus += (float) $log->driver_commission;
+        }
+
+        // 2. Determine active contract assignment for currency and contract rates
+        $assignment = \App\Models\ContractAssignment::where('employee_id', $employeeId)
+            ->where('start_date', '<=', $endDate)
+            ->where(function ($q) use ($startDate) {
+                $q->whereNull('end_date')
+                  ->orWhere('end_date', '>=', $startDate);
+            })
+            ->first();
+
+        $contractId = null;
+        $paymentType = $employee->pay_type;
+        $exchangeRate = 1.0;
+        $contract = null;
+
+        if ($assignment) {
+            $contractId = $assignment->contract_id;
+            $contract = $assignment->contract;
+            if ($contract) {
+                $paymentType = $contract->payment_type;
+                if ($contract->currency && $contract->currency !== 'KWD') {
+                    $rateModel = \App\Models\CurrencyExchangeRate::where('company_id', $employee->company_id)
+                        ->where('from_currency', $contract->currency)
+                        ->where('to_currency', 'KWD')
+                        ->where('year', $year)
+                        ->where('month', $month)
+                        ->first();
+                    if ($rateModel) {
+                        $exchangeRate = (float)$rateModel->exchange_rate;
+                    }
+                }
+            }
+        }
+
+        // 3. Calculate Base Actual and Adjust Orders Bonus
+        $baseActual = (float)$employee->actual_salary;
+        $absenceDeduction = 0.0;
+
+        if ($contractId && $contract) {
+            if ($paymentType === 'fixed' || $paymentType === 'hybrid') {
+                $fixedSalary = SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'fixed_salary');
+                if ($fixedSalary === null) {
+                    $fixedSalary = (float)$employee->actual_salary;
+                } else {
+                    $fixedSalary = (float)$fixedSalary * $exchangeRate;
+                }
+
+                $divisor = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'absence_divisor') ?? 26);
+                $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'valid_days') ?? 26);
+                
+                // Calculate worked days (count of logs with shift_valid = 1)
+                $workedDays = $empLogs->where('shift_valid', 1)->count();
+                $absentDays = max(0, $requiredValidDays - $workedDays);
+                $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
+                $absenceDeduction = $absentDays * $dailyRate;
+                
+                $baseActual = max(0.0, $fixedSalary - $absenceDeduction);
+                if ($paymentType === 'fixed') {
+                    $ordersBonus = 0.0; // Fixed contract has no orders bonus
+                }
+            } elseif ($paymentType === 'per_order') {
+                $baseActual = $ordersBonus;
+                $ordersBonus = 0.0;
+            } elseif ($paymentType === 'hourly') {
+                $hourlyRate = SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'hourly_rate');
+                if ($hourlyRate === null) {
+                    $hourlyRate = 0.0;
+                } else {
+                    $hourlyRate = (float)$hourlyRate * $exchangeRate;
+                }
+                $totalHours = (float)$empLogs->sum('online_hours');
+                $baseActual = $totalHours * $hourlyRate;
+                $ordersBonus = 0.0;
+            }
+        } else {
+            // Legacy / No contract
+            if ($employee->pay_type === 'per_order') {
+                $baseActual = $ordersBonus;
+                $ordersBonus = 0.0;
+            }
+        }
+
+        // 4. Calculate Auto-Validity (Final Monthly Status)
+        $status = 'Valid';
+        if ($contractId && $contract) {
+            $monthlyTarget = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'monthly_target') ?? 0);
+            $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'valid_days') ?? 0);
+            $workedValidDays = $empLogs->where('shift_valid', 1)->count();
+
+            $meetsOrdersTarget = ($totalOrders >= $monthlyTarget);
+            $meetsValidDays = ($workedValidDays >= $requiredValidDays);
+
+            // Check mandatory periods
+            $meetsMandatoryPeriods = true;
+            $monthlyParam = \App\Models\ContractMonthlyParameter::where('contract_id', $contractId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->first();
+
+            if ($monthlyParam) {
+                $mandatoryPeriods = \App\Models\ContractMandatoryDay::where('contract_monthly_parameter_id', $monthlyParam->id)->get();
+                foreach ($mandatoryPeriods as $period) {
+                    $periodLogsCount = $empLogs->whereBetween('log_date', [$period->start_date, $period->end_date])
+                        ->where('shift_valid', 1)
+                        ->count();
+                    if ($periodLogsCount < $period->min_required_days) {
+                        $meetsMandatoryPeriods = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!$meetsOrdersTarget || !$meetsValidDays || !$meetsMandatoryPeriods) {
+                $status = 'Invalid';
+            }
+        }
+
+        if ($existingSlip && $existingSlip->final_monthly_status === 'protected') {
+            $status = 'Protected';
+        }
+
+        // 5. Calculate Capacity and Experience Incentives
+        $totalCapacityIncentive = 0.0;
+        $totalExperienceIncentive = 0.0;
+
+        if ($contractId && $contract && $status !== 'Invalid') {
+            $monthlyParam = \App\Models\ContractMonthlyParameter::where('contract_id', $contractId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->first();
+
+            if ($monthlyParam) {
+                // Capacity Incentive
+                if ($monthlyParam->capacity_incentive_rules) {
+                    $rules = is_string($monthlyParam->capacity_incentive_rules) 
+                        ? json_decode($monthlyParam->capacity_incentive_rules, true) 
+                        : $monthlyParam->capacity_incentive_rules;
+                    if (is_array($rules)) {
+                        foreach ($rules as $tier) {
+                            $min = $tier['min_orders'] ?? 0;
+                            $max = $tier['max_orders'] ?? INF;
+                            $bonus = (float)($tier['bonus'] ?? 0);
+                            if ($totalOrders >= $min && $totalOrders <= $max) {
+                                $totalCapacityIncentive = $bonus * $exchangeRate;
+                            }
+                        }
+                    }
+                }
+
+                // Experience Incentive
+                if ($monthlyParam->experience_incentive_rules) {
+                    $rules = is_string($monthlyParam->experience_incentive_rules)
+                        ? json_decode($monthlyParam->experience_incentive_rules, true)
+                        : $monthlyParam->experience_incentive_rules;
+                    $monthsTenure = \Carbon\Carbon::parse($employee->date_of_joining)->diffInMonths(\Carbon\Carbon::parse($startDate));
+                    if (is_array($rules)) {
+                        foreach ($rules as $tier) {
+                            $minMonths = $tier['min_months'] ?? 0;
+                            $bonus = (float)($tier['bonus'] ?? 0);
+                            $bonusPerOrder = (float)($tier['bonus_per_order'] ?? 0);
+                            if ($monthsTenure >= $minMonths) {
+                                $totalExperienceIncentive = ($bonus + ($bonusPerOrder * $totalOrders)) * $exchangeRate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Calculate Contract Bonuses
+        $totalContractBonuses = 0.0;
+        if ($contractId) {
+            $bonuses = \DB::table('contract_bonuses')
+                ->where('contract_id', $contractId)
+                ->get();
+            foreach ($bonuses as $b) {
+                if ($b->is_valid_drivers_only && $status === 'Invalid') {
+                    continue;
+                }
+                $totalContractBonuses += (float)$b->amount * $exchangeRate;
+            }
+        }
+
+        // 7. Deductions and Allowances
+        $violationsDeduction = (float) ($violationSums[$employeeId] ?? 0);
+        $maintenanceDeduction = (float) ($maintenanceSums[$employeeId] ?? 0);
+        $custodyDeduction = (float) ($custodySums[$employeeId] ?? 0);
+
+        $leaveInfo = $leaveData[$employeeId] ?? null;
+        $leaveDeduction = (float) ($leaveInfo?->total_deduction ?? 0);
+        $unpaidLeaveDays = (int) ($leaveInfo?->total_days ?? 0);
+
+        $advanceDeduction = 0.0;
+        $activeAdvances = $allAdvances->get($employeeId, collect());
+        foreach ($activeAdvances as $advance) {
+            $installment = min((float) $advance->monthly_installment, (float) $advance->remaining_balance);
+            if ($installment <= 0) continue;
+            $advanceDeduction += $installment;
+        }
+
+        $fuelAllowance = 0.0;
+        $empAssignments = $allAssignments[$employeeId] ?? collect();
+        foreach ($empAssignments as $a) {
+            $fuelAllowance += (float) ($a->monthly_fuel_allowance ?? 0);
+        }
+
+        return [
+            'base_actual'                => $baseActual,
+            'orders_bonus'               => $ordersBonus,
+            'fuel_allowance'             => $fuelAllowance,
+            'total_orders'               => $totalOrders,
+            'violations_deduction'       => $violationsDeduction,
+            'maintenance_deduction'      => $maintenanceDeduction,
+            'custody_deduction'          => $custodyDeduction,
+            'advance_deduction'          => $advanceDeduction,
+            'leave_deduction'            => $leaveDeduction,
+            'unpaid_leave_days'          => $unpaidLeaveDays,
+            'final_monthly_status'       => $status,
+            'total_capacity_incentive'   => $totalCapacityIncentive,
+            'total_experience_incentive' => $totalExperienceIncentive,
+            'total_contract_bonuses'     => $totalContractBonuses,
+        ];
     }
 }

@@ -26,6 +26,11 @@ use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
 use App\Http\Controllers\Api\ImportController;
 use App\Http\Controllers\Api\VehicleHandoverController;
+use App\Http\Controllers\Api\ContractAssignmentController;
+use App\Http\Controllers\Api\SupervisorAllocationController;
+use App\Http\Controllers\Api\KetaImportController;
+use App\Http\Controllers\Api\ContractDashboardController;
+use App\Http\Controllers\Api\CurrencyExchangeRateController;
 
 /*
 |--------------------------------------------------------------------------
@@ -121,6 +126,27 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Contracts — full CRUD + lock
         Route::apiResource('contracts', ContractController::class);
         Route::post('contracts/{contract}/lock', [ContractController::class, 'lock']);
+        Route::post('contracts/{contract}/monthly-parameters', [ContractController::class, 'storeMonthlyParameter']);
+        Route::post('contracts/{contract}/bonuses', [ContractController::class, 'storeBonus']);
+        Route::delete('contracts/{contract}/bonuses/{bonus}', [ContractController::class, 'destroyBonus']);
+        Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
+
+        // Contract Assignments & Overrides
+        Route::apiResource('contract-assignments', ContractAssignmentController::class);
+        Route::post('contract-assignments/{assignment}/overrides', [ContractAssignmentController::class, 'storeOverride']);
+        Route::put('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'updateOverride']);
+        Route::delete('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'destroyOverride']);
+
+        // Supervisor cost allocations
+        Route::get('supervisor-allocations', [SupervisorAllocationController::class, 'index']);
+        Route::post('supervisor-allocations', [SupervisorAllocationController::class, 'store']);
+
+        // Currency Exchange Rates
+        Route::apiResource('currency-exchange-rates', CurrencyExchangeRateController::class)->only(['index', 'store', 'destroy']);
+
+        // Keeta Importer
+        Route::post('keta/preview', [KetaImportController::class, 'preview']);
+        Route::post('keta/confirm', [KetaImportController::class, 'confirm']);
 
         // Employees — full CRUD + balance
         Route::post('employees/bulk-delete', [EmployeeController::class, 'bulkDestroy']);

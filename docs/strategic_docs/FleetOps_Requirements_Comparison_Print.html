@@ -1,0 +1,231 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FleetOps | مقارنة المتطلبات القديمة والجديدة جاهزة للطباعة</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Cairo', 'Tajawal', sans-serif;
+            background-color: #ffffff;
+            color: #111827;
+            direction: rtl;
+            line-height: 1.7;
+            margin: 0;
+            padding: 40px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .content-container h1 {
+            font-size: 26px;
+            text-align: center;
+            border-bottom: 3px double #111827;
+            padding-bottom: 12px;
+            margin-bottom: 30px;
+            font-weight: 900;
+        }
+        .content-container h2 {
+            font-size: 18px;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 6px;
+            margin-top: 35px;
+            margin-bottom: 15px;
+            font-weight: 800;
+            color: #1f2937;
+        }
+        .content-container h3 {
+            font-size: 15px;
+            margin-top: 25px;
+            margin-bottom: 10px;
+            font-weight: 700;
+            color: #374151;
+        }
+        .content-container p {
+            font-size: 14px;
+            margin-bottom: 15px;
+            color: #4b5563;
+        }
+        .content-container ul, .content-container ol {
+            font-size: 14px;
+            margin-bottom: 15px;
+            padding-right: 20px;
+            color: #4b5563;
+        }
+        .content-container li {
+            margin-bottom: 6px;
+        }
+        .content-container table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            background-color: #ffffff;
+        }
+        .content-container th, .content-container td {
+            border: 1px solid #d1d5db;
+            padding: 8px 10px;
+            text-align: right;
+            vertical-align: middle;
+        }
+        .content-container th {
+            background-color: #f3f4f6;
+            font-weight: 800;
+            color: #111827;
+        }
+        .content-container td {
+            color: #374151;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 4px;
+            border: 1px solid #d1d5db;
+            white-space: nowrap;
+        }
+        .status-badge-success {
+            background-color: #f0fdf4 !important;
+            color: #166534 !important;
+            border-color: #bbf7d0 !important;
+        }
+        .status-badge-warning {
+            background-color: #fffbeb !important;
+            color: #92400e !important;
+            border-color: #fef3c7 !important;
+        }
+        .status-badge-danger {
+            background-color: #fef2f2 !important;
+            color: #991b1b !important;
+            border-color: #fee2e2 !important;
+        }
+        .print-btn-container {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 20px;
+        }
+        .print-btn {
+            background-color: #10b981;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Cairo', sans-serif;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background 0.2s;
+        }
+        .print-btn:hover {
+            background-color: #059669;
+        }
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                padding: 0;
+            }
+            .content-container table {
+                page-break-inside: auto;
+            }
+            .content-container tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+            .content-container thead {
+                display: table-header-group;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="print-btn-container no-print">
+            <button onclick="window.print()" class="print-btn">📄 طباعة المستند (Print)</button>
+        </div>
+        <div class="content-container" id="output">
+        </div>
+    </div>
+    
+    <script type="text/markdown" id="markdown-source"># مقارنة المتطلبات الأصلية بالمتطلبات الجديدة المقترحة
+
+---
+
+### ⚠️ طبيعة الاختلاف: توسعة وتعديل في متطلبات النظام
+تمثل الطلبات الجديدة في مقترح العقود إضافات وتعديلات عميقة في علاقات قاعدة البيانات وطريقة تتبع الأصول واحتساب مسيرات الرواتب مقارنة بالمتطلبات الأولى التي تم تنفيذها.
+
+
+
+
+### 📊 جدول مقارنة متطلبات نطاق العمل (Requirements Comparison Matrix)
+
+| الجانب الوظيفي والمالي | المواصفات الأصلية المتفق عليها في النظام (PRD / SRS) | المقترح الجديد للعميل | حجم الاختلاف والجهد الإضافي المطلوب |
+| :--- | :--- | :--- | :--- |
+| **بنية علاقة السيارة والعقد** | العقد مقترن بالسيارة المعينة للسائق؛ ولا يمكن للسائق العمل إلا تحت عقد نشط واحد في نفس الوقت. | فك الارتباط المعماري تماماً. السائق يعين لسيارة (للصيانة والمخالفات) ولعقد أو أكثر (للمستحقات). تُتتبع العلاقة عبر سجلات العمل اليومية. | 🔴 **تغيير بنيوي في النظام** (تعديل الجداول والعلاقات البرمجية) |
+| **تجاوزات السائقين الفردية** | شروط العقد وعمولاته افتراضية ومطبقة بالتساوي على كافة السائقين دون استثناءات مخصصة. | إمكانية إدخال تجاوزات فردية لكل سائق (Driver Overrides) مع تواريخ سريان محددة (Effective From/To) وذكر مبرر التخصيص إجبارياً للتدقيق. | 🟡 **تطوير إضافي** (أكواد ومنطق حسابي جديد ومستقل) |
+| **مصادر البيانات والاعتماد** | اليوميات المدخلة من الأوبريتر هي المرجع النهائي الوحيد لحساب الرواتب والربحية فوراً. | 3 خيارات لاعتماد البيانات: (1) يومي نهائي، (2) كشف تسوية شهري (Keta)، (3) مطابقة ثنائية للفروقات مع شاشة تسوية فوارق الفواتير. | 🔴 **تطوير موديول جديد بالكامل** (واجهات تحقق وحفظ مستقلة) |
+| **منطق الصلاحية الشهري (Validity)** | حالة السائق يومية لمتابعة الأداء فقط دون معادلات معقدة للصلاحية تؤثر على حوافز مسير الرواتب. | فصل الصلاحية اليومية عن الشهرية. احتساب حوافز VDA (سعة وخبرة)، الفترات الإلزامية (Mandatory Days)، وتطبيق قاعدة القيمة الأقل. | 🔴 **إعادة كتابة محرك الرواتب** (معادلات محاسبية بالكامل) |
+| **توزيع التكاليف التشغيلية** | رواتب المشرفين والمنسقين تعتبر مصروفاً إدارياً عاماً للشركة ولا توزع على عقود معينة. | إمكانية توزيع راتب المشرف بنسب مئوية (مجموعها 100%) على العقود التي يديرها، وترحيلها كمصاريف غير مباشرة (Overhead). | 🟡 **تطوير إضافي** (تغيير شاشات الموظفين وعقود التشغيل) |
+| **المخالفات المرورية** | تسجيل المخالفة أو الصيانة وخصمها بالكامل على الموظف أو الشركة دون تفعيل نسب تشارك وتحمل مرنة. | حقل "خصم السائق" للمخالفات، وإدراج الحوادث كتصنيف صيانة مع تحديد نسب تحمل الشركة والسائق (Accidents Cost-Sharing). | 🟡 **إضافة منطق التحمل التشاركي** (إسناد حسابي مالي مرن) |
+
+---
+
+### 🔍 تفصيل محاور الاختلاف الجوهري وأثرها على النظام
+
+#### 1. فك الارتباط المعماري (Database Decoupling)
+* **المواصفات الأصلية للنظام:** السيارة = السائق = العقد. كانت هذه العلاقة الخطية البسيطة تمثل حجر الزاوية لتسهيل الحسابات وتتبع الأصول الفردية للشركة.
+* **الواقع الجديد (طلب العميل الجديد):** السائق يحتاج للعمل تحت أكثر من عقد في نفس الوقت (شيفت صباحي كيتا، وشيفت مسائي طلبات)، وتغيير السيارات يومياً دون الارتباط بعقد بعينه.
+* **الأثر الفني الفعلي:** هذا التغيير يتطلب هدم بنية العلاقات المباشرة وتطوير جدول تعيين عقود مستقل تماماً، مع تعديل كامل للـ `Daily Logs` لتربط ديناميكياً وثلاثياً بين (السائق، السيارة، والعقد) في كل يوم عمل على حدة.
+
+#### 2. محرك التجاوزات الفردية الذكي (Time-Based Overrides)
+* **المواصفات الأصلية للنظام:** العقد يمثل شروط التشغيل للجهة والشركة ولا يمكن تعديله إلا من المشرفين لجميع المنضوين تحته بالتساوي.
+* **الواقع الجديد (طلب العميل الجديد):** تخصيص عمولة أو راتب أو تارغت استثنائي لسائق معين في فترة زمنية معينة دون التأثير على زملائه بنفس المشروع.
+* **الأثر الفني الفعلي:** تطوير موديول فرعي متكامل `Driver Overrides` يعتمد على فترات زمنية (`Effective From/To`) ويفرض تسجيل تبرير إداري للتدقيق المالي، مع برمجة محرك الرواتب للتحقق من تاريخ السريان تلقائياً والرجوع للقيم الافتراضية.
+
+#### 3. شاشة تسوية فروقات الفواتير (Discrepancy Resolution Module)
+* **المواصفات الأصلية للنظام:** البيانات التي يدخلها الأوبريتر الميداني هي المرجع الحاسم للمحاسبة وصرف الرواتب اليومية والشهرية.
+* **الواقع الجديد (طلب العميل الجديد):** اعتماد كشوفات تسوية الموردين الكبار (Deliveroo، كيتا) ومقارنتها بسجلات الشركة وإظهار الفروقات لاعتماد أيهما.
+* **الأثر الفني الفعلي:** بناء موديول تسوية كامل ومستقل يضم مقارنة ثنائية، وتحديد عتبات الفروقات المقبولة بالدينار أو بنسبة مئوية، وإلزام المحاسب باعتماد خيار محدد كشرط هندسي صارم (**Final Adoption Rule**) قبل التمكن من توليد مسير الرواتب أو قفل الشهر المالي.
+
+#### 4. حساب المعايير الشهرية المتغيرة وعقود كيتا (VDA & Mandatory Days)
+* **المواصفات الأصلية للنظام:** شروط العقد وبنوده المالية والتشغيلية ثابتة ولا تتغير شهرياً.
+* **الواقع الجديد (طلب العميل الجديد):** شروط العقد تتغير شهرياً بناءً على رسائل المورد (مثل VDA Rules في كيتا) وتعيين أيام غياب أو حضور إلزامية بصفة استثنائية.
+* **الأثر الفني الفعلي:** إعادة برمجة محرك الرواتب بالكامل ليدعم جدول المعايير المتغيرة شهرياً مع منطق التراجع التلقائي (Fallback)، وتطبيق منطق **قاعدة القيمة الأقل (Lower Value Rule)** وحرمان السائق غير الملتزم بالفترات الإلزامية من الحوافز التشغيلية.
+
+#### 5. توزيع مصاريف المشرفين غير المباشرة (Indirect Cost Allocation)
+* **المواصفات الأصلية للنظام:** رواتب المشرفين والمنسقين تُصنف كمصاريف إدارية عمومية للشركة.
+* **الواقع الجديد (طلب العميل الجديد):** تحميل نسب مئوية من رواتب المشرفين على العقود النشطة كأعباء إضافية مباشرة لمعرفة الربحية الحقيقية.
+* **الأثر الفني الفعلي:** تعديل شاشات الموظفين لإضافة نسب التوزيع والتحقق من مجموعها (100% تماماً)، وتعديل كود توليد تقارير الربحية لاستيعاب هذه المصاريف غير المباشرة.
+
+---
+
+### 📢 الخلاصة والنتيجة التعاقدية (Contractual Conclusion)
+بناءً على هذا التحليل الهندسي والمقارنة التفصيلية، يظهر جلياً أن **مقترح عقود السائقين الجديد** ليس تعديلاً تشغيلياً يسيراً، بل هو **تغيير كلي وجذري يمس البنية المعمارية للنظام ويدخل موديولات برمجية جديدة لم تكن موجودة في وثائق الاتفاق الأساسية**.
+
+وبناءً عليه:
+1. **نطاق العمل الأصلي المتفق عليه للنظام:** يعتبر مكتملاً بنسبة 100% ومطابقاً لوثائق التحليل و PRD و SRS الأولى وجاهزاً للعمل بالكامل.
+2. **شروط مقترح العقود الجديد:** تصنف هندسياً وتطويرياً كـ **حزمة ترقيات ومرحلة تطوير ثانية (Phase 2 Upgrade Package)** تتطلب اتفاقاً مالياً مجدولاً وجدولاً زمنياً مستقلاً للتنفيذ والاختبار.</script>
+    
+    <script>
+        marked.setOptions({ gfm: true, breaks: true });
+        const source = document.getElementById('markdown-source').textContent;
+        let html = marked.parse(source);
+        
+        html = html.replace(/<table>/g, '<table>');
+        html = html.replace(/<td>منجز ✅<\/td>/g, '<td><span class="status-badge status-badge-success">منجز ✅</span></td>');
+        html = html.replace(/<td>مؤجل ⏳<\/td>/g, '<td><span class="status-badge status-badge-warning">مؤجل ⏳</span></td>');
+        html = html.replace(/<td>ملغى ❌<\/td>/g, '<td><span class="status-badge status-badge-danger">ملغى ❌</span></td>');
+        
+        document.getElementById('output').innerHTML = html;
+    </script>
+</body>
+</html>

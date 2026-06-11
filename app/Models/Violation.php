@@ -13,13 +13,14 @@ class Violation extends Model
 
     protected $fillable = [
         'employee_id', 'vehicle_id', 'created_by', 'violation_date',
-        'violation_type', 'reference_number', 'amount',
+        'violation_type', 'reference_number', 'amount', 'driver_deduction',
         'photo_path', 'is_driver_liable', 'is_deducted', 'payroll_slip_id',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
     ];
 
     protected $casts = [
         'amount'           => 'decimal:3',
+        'driver_deduction' => 'decimal:3',
         'is_driver_liable' => 'boolean',
         'is_deducted'      => 'boolean',
     ];

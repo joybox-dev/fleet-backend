@@ -107,6 +107,21 @@ class Employee extends Model
         return $this->hasMany(MaintenanceRecord::class, 'liable_employee_id');
     }
 
+    public function contractAssignments(): HasMany
+    {
+        return $this->hasMany(ContractAssignment::class);
+    }
+
+    public function activeContractAssignment(): HasOne
+    {
+        return $this->hasOne(ContractAssignment::class)->where('status', 'active');
+    }
+
+    public function supervisorCostAllocations(): HasMany
+    {
+        return $this->hasMany(SupervisorCostAllocation::class);
+    }
+
     public function getDeletionBlocks(): array
     {
         $blocks = [];

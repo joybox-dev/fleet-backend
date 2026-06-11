@@ -35,7 +35,7 @@ class PaymentMapper
             'paid_to'          => $ctx->account('cash_in_hand'),
 
             'remarks'          => "تسوية كاش - FleetOps #{$settlement['id']} - "
-                . "سائق: {$employee['name_ar'] ?? $employee['name']} - "
+                . "سائق: " . ($employee['name_ar'] ?? $employee['name']) . " - "
                 . "المبلغ: {$settlement['amount']} KWD - "
                 . "تاريخ: {$settlement['settlement_date']}",
 

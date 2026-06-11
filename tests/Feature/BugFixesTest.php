@@ -805,6 +805,7 @@ class BugFixesTest extends TestCase
      */
     public function test_payroll_recalculation_bug(): void
     {
+        $this->withoutExceptionHandling();
         app()->instance('current_company_id', $this->company1->id);
 
         // 1. Create a hybrid employee
@@ -860,6 +861,7 @@ class BugFixesTest extends TestCase
                 'year' => 2026,
                 'month' => 5,
             ]);
+        $response->dump();
         $response->assertStatus(201);
         $runId = $response->json('run_id');
 

@@ -19,6 +19,12 @@ class DailyLog extends Model
         'odometer_start', 'odometer_end', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
         'driver_commission',
+        
+        // Keeta and contract specific daily metrics
+        'shift_valid',
+        'online_hours',
+        'ontime_rate',
+        'avg_delivery_time'
     ];
 
     protected $casts = [
@@ -28,6 +34,10 @@ class DailyLog extends Model
         'rate_per_order'    => 'decimal:3',
         'income_amount'     => 'decimal:3',
         'driver_commission' => 'decimal:3',
+        'shift_valid'       => 'boolean',
+        'online_hours'      => 'decimal:2',
+        'ontime_rate'       => 'decimal:2',
+        'avg_delivery_time' => 'integer',
     ];
 
     public function employee(): BelongsTo  { return $this->belongsTo(Employee::class)->withTrashed(); }

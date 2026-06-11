@@ -35,10 +35,30 @@ class MaintenanceController extends Controller
             'driver_deduction'  => 'nullable|numeric|min:0',
             'odometer_km'       => 'nullable|integer|min:0',
             'notes'             => 'nullable|string',
+            
+            // Accident bearing fields
+            'driver_bearing_percentage'  => 'nullable|numeric|min:0|max:100',
+            'company_bearing_percentage' => 'nullable|numeric|min:0|max:100',
+            'accident_status'            => 'nullable|string|in:open,under_review,closed',
+            'accident_description'       => 'nullable|string',
         ]);
 
         $validated['reported_by'] = $request->user()->id;
         $validated['status']      = 'pending';
+
+        // Auto-calculate driver deduction and company bearing percentage for accidents
+        if ($validated['maintenance_type'] === 'accident') {
+            $driverPercent = isset($validated['driver_bearing_percentage']) ? (float)$validated['driver_bearing_percentage'] : 0.00;
+            $validated['driver_bearing_percentage'] = $driverPercent;
+            $validated['company_bearing_percentage'] = 100.00 - $driverPercent;
+            
+            if ($validated['is_driver_liable'] ?? false) {
+                $estimatedCost = isset($validated['estimated_cost']) ? (float)$validated['estimated_cost'] : 0.00;
+                $validated['driver_deduction'] = $estimatedCost * ($driverPercent / 100.00);
+            } else {
+                $validated['driver_deduction'] = 0.00;
+            }
+        }
 
         $record = MaintenanceRecord::create($validated);
 
@@ -68,12 +88,38 @@ class MaintenanceController extends Controller
         }
 
         $validated = $request->validate([
-            'garage_name'     => 'nullable|string',
-            'estimated_cost'  => 'nullable|numeric|min:0',
-            'actual_cost'     => 'nullable|numeric|min:0',
-            'invoice_path'    => 'nullable|string',
-            'notes'           => 'nullable|string',
+            'garage_name'       => 'nullable|string',
+            'estimated_cost'    => 'nullable|numeric|min:0',
+            'actual_cost'       => 'nullable|numeric|min:0',
+            'invoice_path'      => 'nullable|string',
+            'notes'             => 'nullable|string',
+            'is_driver_liable'  => 'boolean',
+            'liable_employee_id'=> 'nullable|exists:employees,id',
+            'driver_deduction'  => 'nullable|numeric|min:0',
+            
+            // Accident bearing fields
+            'driver_bearing_percentage'  => 'nullable|numeric|min:0|max:100',
+            'company_bearing_percentage' => 'nullable|numeric|min:0|max:100',
+            'accident_status'            => 'nullable|string|in:open,under_review,closed',
+            'accident_description'       => 'nullable|string',
         ]);
+
+        // Auto-calculate for accident type
+        $type = $maintenance->maintenance_type;
+        if ($type === 'accident') {
+            if (isset($validated['driver_bearing_percentage'])) {
+                $driverPercent = (float)$validated['driver_bearing_percentage'];
+                $validated['company_bearing_percentage'] = 100.00 - $driverPercent;
+                
+                $liable = isset($validated['is_driver_liable']) ? $validated['is_driver_liable'] : $maintenance->is_driver_liable;
+                if ($liable) {
+                    $cost = isset($validated['estimated_cost']) ? (float)$validated['estimated_cost'] : (float)$maintenance->estimated_cost;
+                    $validated['driver_deduction'] = $cost * ($driverPercent / 100.00);
+                } else {
+                    $validated['driver_deduction'] = 0.00;
+                }
+            }
+        }
 
         $maintenance->update($validated);
 
@@ -101,13 +147,21 @@ class MaintenanceController extends Controller
             'notes'       => 'nullable|string',
         ]);
 
-        $maintenance->update([
+        $updateData = [
             'status'      => 'approved',
             'actual_cost' => $validated['actual_cost'],
             'approved_by' => $request->user()->id,
             'approved_at' => now(),
             'notes'       => $validated['notes'] ?? $maintenance->notes,
-        ]);
+        ];
+
+        // Recalculate driver deduction based on actual cost for accidents
+        if ($maintenance->maintenance_type === 'accident' && $maintenance->is_driver_liable) {
+            $driverPercent = (float)($maintenance->driver_bearing_percentage ?? 0);
+            $updateData['driver_deduction'] = $validated['actual_cost'] * ($driverPercent / 100.00);
+        }
+
+        $maintenance->update($updateData);
 
         // Sync approved cost to ERPNext as Journal Entry
         ErpSync::dispatch(\App\Services\ErpNext\Jobs\SyncMaintenanceJob::class, $maintenance->id);

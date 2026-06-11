@@ -20,6 +20,19 @@ class Contract extends Model
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
         'expected_monthly_revenue', 'target_driver_count',
         'expected_total_profit', 'expected_monthly_profit',
+        
+        // Mandatory fields (client feedback)
+        'client_name', 'status', 'currency',
+
+        // Optional default customization fields
+        'default_order_commission', 'default_hourly_rate', 'default_work_hours_source',
+        'default_fixed_salary', 'default_absence_divisor', 'default_monthly_target', 'default_daily_target',
+        'required_drivers_count', 'required_vehicles_count',
+        'expected_monthly_expenses', 'target_profit_margin',
+        'default_required_valid_days',
+        
+        // Discrepancy thresholds
+        'threshold_type', 'minor_threshold_limit', 'major_threshold_limit'
     ];
 
     protected $casts = [
@@ -37,6 +50,21 @@ class Contract extends Model
         'target_driver_count' => 'integer',
         'expected_total_profit' => 'decimal:3',
         'expected_monthly_profit' => 'decimal:3',
+        
+        // Defaults
+        'default_order_commission' => 'decimal:3',
+        'default_hourly_rate' => 'decimal:3',
+        'default_fixed_salary' => 'decimal:3',
+        'default_absence_divisor' => 'integer',
+        'default_monthly_target' => 'integer',
+        'default_daily_target' => 'integer',
+        'required_drivers_count' => 'integer',
+        'required_vehicles_count' => 'integer',
+        'expected_monthly_expenses' => 'decimal:3',
+        'target_profit_margin' => 'decimal:2',
+        'default_required_valid_days' => 'integer',
+        'minor_threshold_limit' => 'decimal:2',
+        'major_threshold_limit' => 'decimal:2',
     ];
 
     protected static function booted(): void
@@ -72,6 +100,26 @@ class Contract extends Model
         return $this->hasMany(VehicleAssignment::class);
     }
 
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(ContractAssignment::class);
+    }
+
+    public function monthlyParameters(): HasMany
+    {
+        return $this->hasMany(ContractMonthlyParameter::class);
+    }
+
+    public function bonuses(): HasMany
+    {
+        return $this->hasMany(ContractBonus::class);
+    }
+
+    public function supervisorCostAllocations(): HasMany
+    {
+        return $this->hasMany(SupervisorCostAllocation::class);
+    }
+
     public function getDeletionBlocks(): array
     {
         $blocks = [];
@@ -80,8 +128,8 @@ class Contract extends Model
             $blocks[] = 'لا يمكن حذف العقد لأنه مغلق ومحمي محاسبياً ضد التعديل.';
         }
 
-        if ($this->vehicleAssignments()->where('is_active', true)->exists()) {
-            $blocks[] = 'لا يمكن حذف العقد لوجود سيارات نشطة معينة عليه حالياً.';
+        if ($this->assignments()->where('status', 'active')->exists()) {
+            $blocks[] = 'لا يمكن حذف العقد لوجود تعيينات سائقين نشطة عليه حالياً.';
         }
 
         if ($this->dailyLogs()->exists()) {

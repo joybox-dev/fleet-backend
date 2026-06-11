@@ -14,7 +14,7 @@ class Vehicle extends Model
 
     protected $fillable = [
         'plate_number', 'make', 'model', 'year', 'color', 'vin', 'status',
-        'ownership_type',
+        'ownership_type', 'rental_price', 'installment_price',
         'odometer_km', 'last_oil_change_km', 'oil_change_interval_km',
         'monthly_fuel_allowance',
         'insurance_expiry', 'comprehensive_insurance_expiry',
@@ -24,6 +24,8 @@ class Vehicle extends Model
 
     protected $casts = [
         'monthly_fuel_allowance' => 'decimal:3',
+        'rental_price'           => 'decimal:3',
+        'installment_price'      => 'decimal:3',
     ];
 
     public function vehicleAssignments(): HasMany

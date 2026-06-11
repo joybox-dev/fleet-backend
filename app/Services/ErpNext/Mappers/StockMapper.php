@@ -23,7 +23,7 @@ class StockMapper
             'stock_entry_type' => 'Material Issue',
             'posting_date'   => $custodyItem['issued_date'],
             'company'        => $ctx->company,
-            'remarks'        => "تسليم عهدة إلى {$employee['name_ar'] ?? $employee['name']} - "
+            'remarks'        => "تسليم عهدة إلى " . ($employee['name_ar'] ?? $employee['name']) . " - "
                 . "{$custodyItem['item_description']} - FleetOps #{$custodyItem['id']}",
 
             'items' => [
@@ -50,7 +50,7 @@ class StockMapper
             'stock_entry_type' => 'Material Receipt',
             'posting_date'   => $custodyItem['returned_date'] ?? now()->toDateString(),
             'company'        => $ctx->company,
-            'remarks'        => "استرجاع عهدة من {$employee['name_ar'] ?? $employee['name']} - "
+            'remarks'        => "استرجاع عهدة من " . ($employee['name_ar'] ?? $employee['name']) . " - "
                 . "{$custodyItem['item_description']} - FleetOps #{$custodyItem['id']}",
 
             'items' => [

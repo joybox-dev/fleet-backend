@@ -22,7 +22,7 @@ class JournalMapper
             'voucher_type' => 'Journal Entry',
             'posting_date' => $violation['violation_date'],
             'company'      => $ctx->company,
-            'user_remark'  => "مخالفة مرورية #{$violation['reference_number']} - سائق {$employee['name_ar'] ?? $employee['name']} - "
+            'user_remark'  => "مخالفة مرورية #{$violation['reference_number']} - سائق " . ($employee['name_ar'] ?? $employee['name']) . " - "
                 . "سيارة {$violation['vehicle_id']} - {$violation['violation_type']} - {$violation['amount']} KWD",
 
             'accounts' => [
@@ -57,7 +57,7 @@ class JournalMapper
             'voucher_type' => 'Journal Entry',
             'posting_date' => now()->toDateString(),
             'company'      => $ctx->company,
-            'user_remark'  => "خصم صيانة على السائق {$employee['name_ar'] ?? $employee['name']} - "
+            'user_remark'  => "خصم صيانة على السائق " . ($employee['name_ar'] ?? $employee['name']) . " - "
                 . "طلب صيانة #{$maintenanceRequest['id']} - {$chargeAmount} KWD",
 
             'accounts' => [

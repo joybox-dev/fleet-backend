@@ -18,6 +18,12 @@ class MaintenanceRecord extends Model
         'is_driver_liable', 'liable_employee_id', 'driver_deduction',
         'photo_paths', 'invoice_path', 'odometer_km', 'approved_at', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
+        
+        // Accident fields
+        'driver_bearing_percentage',
+        'company_bearing_percentage',
+        'accident_status',
+        'accident_description'
     ];
 
     protected $casts = [
@@ -26,6 +32,8 @@ class MaintenanceRecord extends Model
         'driver_deduction' => 'decimal:3',
         'is_driver_liable' => 'boolean',
         'photo_paths'      => 'array',
+        'driver_bearing_percentage' => 'decimal:2',
+        'company_bearing_percentage' => 'decimal:2',
     ];
 
     protected static function booted(): void
