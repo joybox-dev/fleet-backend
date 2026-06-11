@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('payroll_slips', function (Blueprint $table) {
-            $table->string('final_monthly_status')->default('valid')->after('net_actual'); // valid, invalid, protected_exception
+            $table->string('final_monthly_status')->default('valid')->after('cash_portion'); // valid, invalid, protected_exception
             $table->text('status_override_reason')->nullable()->after('final_monthly_status');
             
             $table->decimal('total_contract_bonuses', 10, 3)->default(0.000)->after('status_override_reason');
