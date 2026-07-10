@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Vehicle extends Model
 {
@@ -20,13 +21,20 @@ class Vehicle extends Model
         'insurance_expiry', 'comprehensive_insurance_expiry',
         'food_authority_license_expiry', 'next_service_due',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
+        'vehicle_type_id',
     ];
 
     protected $casts = [
         'monthly_fuel_allowance' => 'decimal:3',
         'rental_price'           => 'decimal:3',
         'installment_price'      => 'decimal:3',
+        'vehicle_type_id'        => 'integer',
     ];
+
+    public function vehicleType(): BelongsTo
+    {
+        return $this->belongsTo(VehicleType::class);
+    }
 
     public function vehicleAssignments(): HasMany
     {

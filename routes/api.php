@@ -31,6 +31,10 @@ use App\Http\Controllers\Api\SupervisorAllocationController;
 use App\Http\Controllers\Api\KetaImportController;
 use App\Http\Controllers\Api\ContractDashboardController;
 use App\Http\Controllers\Api\CurrencyExchangeRateController;
+use App\Http\Controllers\Api\RoleController;
+use App\Http\Controllers\Api\ClientCollectionController;
+use App\Http\Controllers\Api\PayrollPaymentController;
+use App\Http\Controllers\Api\OperationalAdvanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -59,6 +63,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     // ── File Uploads (all roles) ─────────────────────────────────────
     Route::post('upload', [UploadController::class, 'store']);
     Route::post('upload/multiple', [UploadController::class, 'storeMultiple']);
+
+    // ── Operational Advances (Phase 16 - accessible to all company roles to request/view)
+    Route::apiResource('operational-advances', OperationalAdvanceController::class)->only(['index', 'store']);
 
     // ── Dashboard (all roles) ────────────────────────────────────────
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
@@ -126,13 +133,16 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Contracts — full CRUD + lock
         Route::apiResource('contracts', ContractController::class);
         Route::post('contracts/{contract}/lock', [ContractController::class, 'lock']);
+        Route::apiResource('roles', RoleController::class);
         Route::post('contracts/{contract}/monthly-parameters', [ContractController::class, 'storeMonthlyParameter']);
         Route::post('contracts/{contract}/bonuses', [ContractController::class, 'storeBonus']);
         Route::delete('contracts/{contract}/bonuses/{bonus}', [ContractController::class, 'destroyBonus']);
         Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
 
         // Contract Assignments & Overrides
-        Route::apiResource('contract-assignments', ContractAssignmentController::class);
+        Route::apiResource('contract-assignments', ContractAssignmentController::class)->parameters([
+            'contract-assignments' => 'assignment'
+        ]);
         Route::post('contract-assignments/{assignment}/overrides', [ContractAssignmentController::class, 'storeOverride']);
         Route::put('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'updateOverride']);
         Route::delete('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'destroyOverride']);
@@ -247,6 +257,22 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Salary Advances
         Route::apiResource('salary-advances', SalaryAdvanceController::class)->except(['update']);
         Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
+
+        // Operational Advances (Phase 16)
+        Route::post('operational-advances/{id}/approve', [OperationalAdvanceController::class, 'approve']);
+        Route::post('operational-advances/{id}/reject', [OperationalAdvanceController::class, 'reject']);
+        Route::post('operational-advances/{id}/expense', [OperationalAdvanceController::class, 'registerExpense']);
+        Route::post('operational-advances/{id}/return', [OperationalAdvanceController::class, 'registerReturn']);
+
+        // Client Collections (Phase 16)
+        Route::get('contracts/{contractId}/collections', [ClientCollectionController::class, 'index']);
+        Route::post('contracts/{contractId}/collections', [ClientCollectionController::class, 'store']);
+        Route::delete('contracts/{contractId}/collections/{id}', [ClientCollectionController::class, 'destroy']);
+
+        // Payroll Payments & Write-offs (Phase 16)
+        Route::get('payroll-slips/{slipId}/payments', [PayrollPaymentController::class, 'index']);
+        Route::post('payroll-slips/{slipId}/payments', [PayrollPaymentController::class, 'store']);
+        Route::delete('payroll-slips/{slipId}/payments/{id}', [PayrollPaymentController::class, 'destroy']);
     });
 
     // ═══════════════════════════════════════════════════════════════════

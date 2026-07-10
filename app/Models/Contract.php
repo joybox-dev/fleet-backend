@@ -15,7 +15,7 @@ class Contract extends Model
     protected $fillable = [
         'client_id', 'contract_number', 'name', 'payment_type',
         'rate_per_order', 'fixed_monthly', 'start_date', 'end_date',
-        'is_active', 'is_locked', 'notes',
+        'is_active', 'is_locked', 'is_validity_enabled', 'notes',
         'required_drivers', 'daily_target', 'monthly_target',
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
         'expected_monthly_revenue', 'target_driver_count',
@@ -32,12 +32,17 @@ class Contract extends Model
         'default_required_valid_days',
         
         // Discrepancy thresholds
-        'threshold_type', 'minor_threshold_limit', 'major_threshold_limit'
+        'threshold_type', 'minor_threshold_limit', 'major_threshold_limit',
+
+        // Pricing rules and vehicle types
+        'vehicle_type_id', 'client_payment_method', 'client_pricing_rules',
+        'driver_payment_method', 'driver_pricing_rules', 'capacity_target', 'capacity_pricing_rules',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'is_locked' => 'boolean',
+        'is_validity_enabled' => 'boolean',
         'rate_per_order' => 'decimal:3',
         'fixed_monthly'  => 'decimal:3',
         'required_drivers' => 'integer',
@@ -65,6 +70,12 @@ class Contract extends Model
         'default_required_valid_days' => 'integer',
         'minor_threshold_limit' => 'decimal:2',
         'major_threshold_limit' => 'decimal:2',
+
+        // Pricing rules and vehicle types
+        'vehicle_type_id'        => 'integer',
+        'client_pricing_rules'   => 'array',
+        'driver_pricing_rules'   => 'array',
+        'capacity_pricing_rules' => 'array',
     ];
 
     protected static function booted(): void
@@ -88,6 +99,11 @@ class Contract extends Model
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class);
+    }
+
+    public function vehicleType(): BelongsTo
+    {
+        return $this->belongsTo(VehicleType::class);
     }
 
     public function dailyLogs(): HasMany

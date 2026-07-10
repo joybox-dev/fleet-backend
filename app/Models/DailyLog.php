@@ -24,7 +24,11 @@ class DailyLog extends Model
         'shift_valid',
         'online_hours',
         'ontime_rate',
-        'avg_delivery_time'
+        'avg_delivery_time',
+        'late_login',
+        'early_logout',
+        'is_valid',
+        'zone'
     ];
 
     protected $casts = [
@@ -38,6 +42,9 @@ class DailyLog extends Model
         'online_hours'      => 'decimal:2',
         'ontime_rate'       => 'decimal:2',
         'avg_delivery_time' => 'integer',
+        'late_login'        => 'boolean',
+        'early_logout'      => 'boolean',
+        'is_valid'          => 'boolean',
     ];
 
     public function employee(): BelongsTo  { return $this->belongsTo(Employee::class)->withTrashed(); }

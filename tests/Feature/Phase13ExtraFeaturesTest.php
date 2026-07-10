@@ -227,4 +227,31 @@ class Phase13ExtraFeaturesTest extends TestCase
 
         $this->assertSoftDeleted('vehicle_handovers', ['id' => $handoverId]);
     }
+
+    /**
+     * Test a driver cannot be assigned to the same contract twice.
+     */
+    public function test_contract_assignment_uniqueness_constraint()
+    {
+        $this->actingAs($this->user);
+
+        // 1. Create a contract assignment
+        $response = $this->postJson('/api/contract-assignments', [
+            'employee_id' => $this->employee->id,
+            'contract_id' => $this->contract->id,
+            'start_date' => '2026-06-01',
+            'status' => 'active',
+        ]);
+        $response->assertStatus(201);
+
+        // 2. Try creating it again for the same driver and contract - should fail with 422
+        $responseDuplicate = $this->postJson('/api/contract-assignments', [
+            'employee_id' => $this->employee->id,
+            'contract_id' => $this->contract->id,
+            'start_date' => '2026-06-15',
+            'status' => 'active',
+        ]);
+        $responseDuplicate->assertStatus(422);
+        $responseDuplicate->assertJsonValidationErrors(['contract_id']);
+    }
 }

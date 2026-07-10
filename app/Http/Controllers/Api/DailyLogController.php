@@ -46,19 +46,34 @@ class DailyLogController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validator = \Validator::make($request->all(), [
-            'employee_id'    => 'required|exists:employees,id',
-            'vehicle_id'     => 'required|exists:vehicles,id',
-            'contract_id'    => 'required|exists:contracts,id',
-            'log_date'       => 'required|date',
-            'orders_count'   => 'required|integer|min:0',
-            'orders_online'  => 'nullable|integer|min:0',
-            'orders_cash'    => 'nullable|integer|min:0',
-            'cash_collected' => 'nullable|numeric|min:0',
-            'odometer_start' => 'nullable|integer|min:0',
-            'odometer_end'   => 'nullable|integer|min:0|gte:odometer_start',
+            'employee_id'         => [
+                'required',
+                \Illuminate\Validation\Rule::exists('employees', 'id')
+                    ->where('company_id', $companyId)
+                    ->where('role_category', 'driver'),
+            ],
+            'vehicle_id'          => 'required|exists:vehicles,id',
+            'contract_id'         => 'required|exists:contracts,id',
+            'log_date'            => 'required|date',
+            'orders_count'        => 'required|integer|min:0',
+            'orders_online'       => 'nullable|integer|min:0',
+            'orders_cash'         => 'nullable|integer|min:0',
+            'cash_collected'      => 'nullable|numeric|min:0',
+            'odometer_start'      => 'nullable|integer|min:0',
+            'odometer_end'        => 'nullable|integer|min:0|gte:odometer_start',
             'odometer_photo_path' => 'nullable|string',
-            'notes'          => 'nullable|string|max:500',
+            'notes'               => 'nullable|string|max:500',
+            'online_hours'        => 'nullable|numeric|min:0',
+            'ontime_rate'         => 'nullable|numeric|min:0|max:100',
+            'avg_delivery_time'   => 'nullable|integer|min:0',
+            'late_login'          => 'nullable|boolean',
+            'early_logout'        => 'nullable|boolean',
+            'is_valid'            => 'nullable|boolean',
+            'shift_valid'         => 'nullable|boolean',
+            'zone'                => 'nullable|string|max:255',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -84,8 +99,36 @@ class DailyLogController extends Controller
 
         // Fetch contract to snapshot rate and auto-calculate income
         $contract = Contract::findOrFail($validated['contract_id']);
+        $vehicle  = \App\Models\Vehicle::findOrFail($validated['vehicle_id']);
+
+        if ($contract->vehicle_type_id !== null && $vehicle->vehicle_type_id !== null) {
+            if ($contract->vehicle_type_id !== $vehicle->vehicle_type_id) {
+                return response()->json([
+                    'message' => 'فئة هذه المركبة غير مدعومة في هذا العقد.',
+                    'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                ], 422);
+            }
+        }
+
         $rate     = $contract->rate_per_order;
         $income   = $rate * $validated['orders_count'];
+
+        // Auto-calculate daily validity if not explicitly passed
+        $lateLogin = isset($validated['late_login']) ? (bool)$validated['late_login'] : false;
+        $earlyLogout = isset($validated['early_logout']) ? (bool)$validated['early_logout'] : false;
+        $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : 0.0;
+        $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : 0.0;
+        $ordersCount = (int)$validated['orders_count'];
+
+        if (isset($validated['is_valid'])) {
+            $isValid = (bool)$validated['is_valid'];
+        } else {
+            if ($contract->is_validity_enabled) {
+                $isValid = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && !$lateLogin && !$earlyLogout;
+            } else {
+                $isValid = true;
+            }
+        }
 
         // Cash pending = collected - settled (no settlement yet on creation)
         $cashCollected = $validated['cash_collected'] ?? 0;
@@ -99,6 +142,7 @@ class DailyLogController extends Controller
             'cash_collected'  => $cashCollected,
             'cash_settled'    => 0,
             'cash_pending'    => $cashCollected,
+            'is_valid'        => $isValid,
         ]));
 
         return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
@@ -127,6 +171,14 @@ class DailyLogController extends Controller
             'odometer_end'   => 'nullable|integer|min:0',
             'odometer_photo_path' => 'nullable|string',
             'notes'          => 'nullable|string|max:500',
+            'online_hours'   => 'nullable|numeric|min:0',
+            'ontime_rate'    => 'nullable|numeric|min:0|max:100',
+            'avg_delivery_time' => 'nullable|integer|min:0',
+            'late_login'     => 'nullable|boolean',
+            'early_logout'   => 'nullable|boolean',
+            'is_valid'       => 'nullable|boolean',
+            'shift_valid'    => 'nullable|boolean',
+            'zone'           => 'nullable|string|max:255',
         ]);
 
         $validator->after(function ($validator) use ($request, $dailyLog) {
@@ -166,6 +218,23 @@ class DailyLogController extends Controller
         // Recalculate pending cash if collected changed
         if (isset($validated['cash_collected'])) {
             $validated['cash_pending'] = $validated['cash_collected'] - $dailyLog->cash_settled;
+        }
+
+        // Auto-recalculate is_valid
+        $contract = $dailyLog->contract;
+        if (isset($validated['is_valid'])) {
+            // Respect manual override
+            $validated['is_valid'] = (bool)$validated['is_valid'];
+        } else {
+            if ($contract && $contract->is_validity_enabled) {
+                $lateLogin = isset($validated['late_login']) ? (bool)$validated['late_login'] : (bool)$dailyLog->late_login;
+                $earlyLogout = isset($validated['early_logout']) ? (bool)$validated['early_logout'] : (bool)$dailyLog->early_logout;
+                $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : (float)$dailyLog->online_hours;
+                $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : (float)$dailyLog->ontime_rate;
+                $ordersCount = isset($validated['orders_count']) ? (int)$validated['orders_count'] : (int)$dailyLog->orders_count;
+
+                $validated['is_valid'] = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && !$lateLogin && !$earlyLogout;
+            }
         }
 
         $dailyLog->update($validated);

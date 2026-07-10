@@ -33,6 +33,7 @@ class ContractDashboardController extends Controller
 
         // 1. Employee Count and Deficit
         $activeAssignments = $contract->assignments()
+            ->with(['overrides'])
             ->where('start_date', '<=', $endDateStr)
             ->where(function ($q) use ($startDateStr) {
                 $q->whereNull('end_date')
@@ -43,6 +44,10 @@ class ContractDashboardController extends Controller
         $activeDriversCount = $activeAssignments->unique('employee_id')->count();
         $requiredDriversCount = $contract->required_drivers_count ?? 0;
         $driverDeficit = max(0, $requiredDriversCount - $activeDriversCount);
+
+        $dailyLogs = DailyLog::where('contract_id', $contract->id)
+            ->whereBetween('log_date', [$startDateStr, $endDateStr])
+            ->get();
 
         // 2. Vehicles Count and Deficit
         // Get vehicles that logged activity on this contract this month
@@ -288,7 +293,14 @@ class ContractDashboardController extends Controller
                 'client_name' => $contract->client_name,
                 'currency' => $contract->currency ?? 'KWD',
                 'payment_type' => $contract->payment_type,
+                'driver_pricing_rules' => $contract->driver_pricing_rules,
+                'client_pricing_rules' => $contract->client_pricing_rules,
+                'is_validity_enabled' => $contract->is_validity_enabled,
+                'driver_payment_method' => $contract->driver_payment_method,
+                'client_payment_method' => $contract->client_payment_method,
             ],
+            'assignments' => $activeAssignments,
+            'daily_logs' => $dailyLogs,
             'timeframe' => [
                 'year' => $year,
                 'month' => $month,

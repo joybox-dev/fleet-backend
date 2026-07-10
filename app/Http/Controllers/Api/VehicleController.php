@@ -62,6 +62,7 @@ class VehicleController extends Controller
             'ownership_type'                    => 'nullable|string|in:rented,installment,owned',
             'rental_price'                      => 'nullable|numeric|min:0',
             'installment_price'                 => 'nullable|numeric|min:0',
+            'vehicle_type_id'                   => 'nullable|integer',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
@@ -100,6 +101,7 @@ class VehicleController extends Controller
             'food_authority_license_expiry'     => 'nullable|date',
             'next_service_due'                  => 'nullable|date',
             'notes'                             => 'nullable|string',
+            'vehicle_type_id'                   => 'nullable|integer',
         ]);
 
         $vehicle->update($validated);
@@ -136,12 +138,36 @@ class VehicleController extends Controller
      */
     public function assign(Request $request, Vehicle $vehicle): JsonResponse
     {
+        $companyId = app('current_company_id');
+
         $validated = $request->validate([
-            'employee_id'   => 'required|exists:employees,id',
+            'employee_id'   => [
+                'required',
+                \Illuminate\Validation\Rule::exists('employees', 'id')
+                    ->where('company_id', $companyId)
+                    ->where('role_category', 'driver'),
+            ],
             'contract_id'   => 'nullable|exists:contracts,id',
             'assigned_date' => 'required|date',
             'notes'         => 'nullable|string',
         ]);
+
+        // Check contract compatibility
+        $activeAssignments = \App\Models\ContractAssignment::where('employee_id', $validated['employee_id'])
+            ->where('status', 'active')
+            ->get();
+
+        foreach ($activeAssignments as $assignment) {
+            $contract = $assignment->contract;
+            if ($contract && $contract->vehicle_type_id !== null && $vehicle->vehicle_type_id !== null) {
+                if ($contract->vehicle_type_id !== $vehicle->vehicle_type_id) {
+                    return response()->json([
+                        'message' => 'نوع هذه المركبة لا يتوافق مع العقد النشط المعين عليه السائق (' . $contract->name . ').',
+                        'errors' => ['vehicle_id' => ['نوع المركبة غير متوافق مع العقد المعين عليه السائق.']]
+                    ], 422);
+                }
+            }
+        }
 
         // Close any existing active assignment
         VehicleAssignment::where('vehicle_id', $vehicle->id)

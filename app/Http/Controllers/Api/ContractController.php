@@ -16,6 +16,10 @@ class ContractController extends Controller
             ->when($request->client_id, fn($q) => $q->where('client_id', $request->client_id))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->boolean('active_only'), fn($q) => $q->where('status', 'active'))
+            ->when($request->vehicle_type_id, fn($q) => $q->where(function($query) use ($request) {
+                $query->where('vehicle_type_id', $request->vehicle_type_id)
+                      ->orWhereNull('vehicle_type_id');
+            }))
             ->orderByDesc('start_date')
             ->paginate(50);
 
@@ -66,7 +70,27 @@ class ContractController extends Controller
             
             'start_date'     => 'required|date',
             'end_date'       => 'nullable|date|after:start_date',
+            'is_validity_enabled' => 'nullable|boolean',
             'notes'          => 'nullable|string|max:1000',
+
+            // New Pricing Rules & Vehicle Types
+            'vehicle_type_id'        => 'nullable|exists:vehicle_types,id',
+            'client_payment_method'  => 'nullable|string|in:fixed,zones,tiers,hybrid',
+            'client_pricing_rules'   => 'nullable|array',
+            'driver_payment_method'  => [
+                'nullable',
+                'string',
+                'in:fixed,zones,tiers,hybrid,zones_tiers',
+                function ($attribute, $value, $fail) use ($request) {
+                    $clientMethod = $request->input('client_payment_method');
+                    if (in_array($value, ['zones', 'zones_tiers']) && $clientMethod !== 'zones') {
+                        $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
+                    }
+                }
+            ],
+            'driver_pricing_rules'   => 'nullable|array',
+            'capacity_target'        => 'nullable|integer|min:0',
+            'capacity_pricing_rules' => 'nullable|array',
         ]);
 
         if (empty($validated['client_name'])) {
@@ -145,7 +169,27 @@ class ContractController extends Controller
             'start_date'     => 'sometimes|date',
             'end_date'       => 'nullable|date',
             'is_active'      => 'sometimes|boolean',
+            'is_validity_enabled' => 'sometimes|boolean',
             'notes'          => 'nullable|string|max:1000',
+
+            // New Pricing Rules & Vehicle Types
+            'vehicle_type_id'        => 'nullable|exists:vehicle_types,id',
+            'client_payment_method'  => 'nullable|string|in:fixed,zones,tiers,hybrid',
+            'client_pricing_rules'   => 'nullable|array',
+            'driver_payment_method'  => [
+                'nullable',
+                'string',
+                'in:fixed,zones,tiers,hybrid,zones_tiers',
+                function ($attribute, $value, $fail) use ($request, $contract) {
+                    $clientMethod = $request->input('client_payment_method') ?? $contract->client_payment_method;
+                    if (in_array($value, ['zones', 'zones_tiers']) && $clientMethod !== 'zones') {
+                        $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
+                    }
+                }
+            ],
+            'driver_pricing_rules'   => 'nullable|array',
+            'capacity_target'        => 'nullable|integer|min:0',
+            'capacity_pricing_rules' => 'nullable|array',
         ]);
 
         if (isset($validated['rate_per_order']) && !isset($validated['default_order_commission'])) {

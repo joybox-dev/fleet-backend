@@ -18,10 +18,11 @@ class EmployeeController extends Controller
     public function index(Request $request): JsonResponse
     {
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
-        $employees = Employee::with(['activeAssignment.vehicle:id,plate_number'])
+        $employees = Employee::with(['activeAssignment.vehicle:id,plate_number,vehicle_type_id'])
             ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn($q) => $q->where('pay_type', $request->pay_type))
+            ->when($request->role_category, fn($q) => $q->where('role_category', $request->role_category))
             ->orderBy('name')
             ->paginate($perPage);
 
@@ -72,6 +73,12 @@ class EmployeeController extends Controller
             'notes'                 => 'nullable|string',
             'target_orders_monthly' => 'nullable|integer|min:0',
             'premium_commission_rate'=> 'nullable|numeric|min:0',
+            
+            'role_category'         => 'nullable|in:driver,admin',
+            'admin_role_id'         => 'nullable|exists:roles,id',
+            'salary_allocations'    => 'nullable|array',
+            'email'                 => 'nullable|email|max:255',
+            'password'              => 'nullable|string|min:6',
         ]);
 
         // ── Auto-generate employee number: EMP-0001, EMP-0002, ... ──
@@ -89,15 +96,31 @@ class EmployeeController extends Controller
 
         $employee = Employee::create($validated);
 
+        if (($validated['role_category'] ?? 'driver') === 'admin' && !empty($validated['email'])) {
+            $roleName = 'operator';
+            if (!empty($validated['admin_role_id'])) {
+                $roleModel = \App\Models\Role::find($validated['admin_role_id']);
+                if ($roleModel) {
+                    $roleName = $roleModel->name;
+                }
+            }
+            $user = \App\Models\User::create([
+                'name' => $employee->name,
+                'email' => $validated['email'],
+                'password' => bcrypt($validated['password'] ?? 'password123'),
+                'role' => $roleName,
+                'company_id' => $companyId,
+            ]);
+            $employee->update(['user_id' => $user->id]);
+        }
 
-
-        return response()->json($employee, 201);
+        return response()->json($employee->load(['user', 'adminRole']), 201);
     }
 
     public function show(Employee $employee): JsonResponse
     {
         return response()->json($employee->load([
-            'vehicleAssignments.vehicle:id,plate_number,make,model',
+            'vehicleAssignments.vehicle:id,plate_number,make,model,vehicle_type_id',
             'vehicleAssignments.contract:id,name,target_orders_monthly,base_commission_rate,premium_commission_rate',
         ]));
     }
@@ -151,6 +174,12 @@ class EmployeeController extends Controller
             'stage_license_obtained' => 'sometimes|boolean',
             'stage_license_date'     => 'nullable|date',
             'notes'                  => 'nullable|string',
+            
+            'role_category'         => 'sometimes|nullable|in:driver,admin',
+            'admin_role_id'         => 'nullable|exists:roles,id',
+            'salary_allocations'    => 'nullable|array',
+            'email'                 => 'nullable|email|max:255',
+            'password'              => 'nullable|string|min:6',
         ]);
 
         if (isset($validated['status'])) {
@@ -159,9 +188,41 @@ class EmployeeController extends Controller
 
         $employee->update($validated);
 
+        if (($employee->role_category) === 'admin' && !empty($validated['email'])) {
+            $roleName = 'operator';
+            if (!empty($validated['admin_role_id'] ?? $employee->admin_role_id)) {
+                $roleModel = \App\Models\Role::find($validated['admin_role_id'] ?? $employee->admin_role_id);
+                if ($roleModel) {
+                    $roleName = $roleModel->name;
+                }
+            }
+            
+            if ($employee->user_id) {
+                $user = \App\Models\User::find($employee->user_id);
+                if ($user) {
+                    $updateData = [
+                        'name' => $employee->name,
+                        'email' => $validated['email'],
+                        'role' => $roleName,
+                    ];
+                    if (!empty($validated['password'])) {
+                        $updateData['password'] = bcrypt($validated['password']);
+                    }
+                    $user->update($updateData);
+                }
+            } else {
+                $user = \App\Models\User::create([
+                    'name' => $employee->name,
+                    'email' => $validated['email'],
+                    'password' => bcrypt($validated['password'] ?? 'password123'),
+                    'role' => $roleName,
+                    'company_id' => $companyId,
+                ]);
+                $employee->update(['user_id' => $user->id]);
+            }
+        }
 
-
-        return response()->json($employee->fresh());
+        return response()->json($employee->fresh(['user', 'adminRole']));
     }
 
     public function deletionCheck(Employee $employee): JsonResponse

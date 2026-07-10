@@ -308,13 +308,15 @@ class ReportController extends Controller
      */
     public function driverStatus(): JsonResponse
     {
-        $total = Employee::count();
+        $total = Employee::where('role_category', 'driver')->count();
 
-        $byStatus = Employee::selectRaw('status, count(*) as count')
+        $byStatus = Employee::where('role_category', 'driver')
+            ->selectRaw('status, count(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status');
 
-        $overseasStages = Employee::where('employee_type', 'overseas')
+        $overseasStages = Employee::where('role_category', 'driver')
+            ->where('employee_type', 'overseas')
             ->where('status', '!=', 'inactive')
             ->selectRaw("
                 SUM(CASE WHEN stage_license_obtained = 1 THEN 1 ELSE 0 END) as licensed,
@@ -419,7 +421,8 @@ class ReportController extends Controller
             'driving_license_expiry'=> 'تاريخ انتهاء رخصة القيادة',
         ];
 
-        $employees = Employee::whereIn('status', ['active', 'probation'])
+        $employees = Employee::where('role_category', 'driver')
+            ->whereIn('status', ['active', 'probation'])
             ->where(function ($q) use ($docFields) {
                 foreach (array_keys($docFields) as $field) {
                     $q->orWhereNull($field);

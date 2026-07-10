@@ -31,13 +31,60 @@ class ContractAssignmentController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => [
+                'required',
+                \Illuminate\Validation\Rule::exists('employees', 'id')
+                    ->where('company_id', $companyId)
+                    ->where('role_category', 'driver'),
+            ],
             'contract_id' => 'required|exists:contracts,id',
             'start_date'  => 'required|date',
             'end_date'    => 'nullable|date|after_or_equal:start_date',
             'courier_id'  => 'nullable|string|max:255',
             'status'      => 'required|in:active,inactive',
         ]);
+
+        $driver = \App\Models\Employee::findOrFail($validated['employee_id']);
+        $contract = \App\Models\Contract::findOrFail($validated['contract_id']);
+
+        $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+            ->where('is_active', true)
+            ->first();
+
+        if ($activeVehicleAssignment && $activeVehicleAssignment->vehicle) {
+            $driverVehicleTypeId = $activeVehicleAssignment->vehicle->vehicle_type_id;
+            if ($driverVehicleTypeId !== null) {
+                if ($contract->vehicle_type_id !== null) {
+                    if ($contract->vehicle_type_id !== $driverVehicleTypeId) {
+                        return response()->json([
+                            'message' => 'نوع المركبة الحالية للسائق لا يتوافق مع نوع المركبة المسموح به لهذا العقد.',
+                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                        ], 422);
+                    }
+                } else {
+                    $clientPricing = $contract->client_pricing_rules ?? [];
+                    $configuredVehicleTypes = array_keys($clientPricing);
+                    if (!in_array((string)$driverVehicleTypeId, array_map('strval', $configuredVehicleTypes))) {
+                        return response()->json([
+                            'message' => 'نوع المركبة الحالية للسائق لا يتوافق مع المركبات المتاحة في تسعير هذا العقد.',
+                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                        ], 422);
+                    }
+                }
+            }
+        }
+
+        // Check if the driver is already assigned to this contract (uniqueness check)
+        $exists = ContractAssignment::where('employee_id', $validated['employee_id'])
+            ->where('contract_id', $validated['contract_id'])
+            ->exists();
+
+        if ($exists) {
+            return response()->json([
+                'message' => 'السائق معين بالفعل على هذا العقد ولا يمكن تكرار تعيينه.',
+                'errors' => ['contract_id' => ['السائق معين بالفعل على هذا العقد.']]
+            ], 422);
+        }
 
         // Check for overlapping assignments on the same contract
         $overlap = ContractAssignment::where('employee_id', $validated['employee_id'])
@@ -134,12 +181,23 @@ class ContractAssignmentController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'custom_order_commission' => 'nullable|numeric|min:0',
-            'custom_hourly_rate'      => 'nullable|numeric|min:0',
-            'custom_fixed_salary'     => 'nullable|numeric|min:0',
-            'custom_monthly_target'    => 'nullable|integer|min:0',
-            'custom_monthly_bonus'     => 'nullable|numeric|min:0',
-            'custom_valid_days'        => 'nullable|integer|min:0',
+            'override_type'           => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers',
+            'fixed_amount'            => 'nullable|numeric|min:0',
+            'fixed_target'            => 'nullable|integer|min:0',
+            'fixed_deficit_rate'      => 'nullable|numeric|min:0',
+            'fixed_bonus_type'        => 'nullable|string|in:lump_sum,per_order',
+            'fixed_surplus_bonus'     => 'nullable|numeric|min:0',
+            'fixed_surplus_rate'      => 'nullable|numeric|min:0',
+            'zone_target_orders'      => 'nullable|integer|min:0',
+            'zone_deficit_rate'       => 'nullable|numeric|min:0',
+            'zone_bonus_type'         => 'nullable|string|in:lump_sum,per_order',
+            'zone_target_bonus'       => 'nullable|numeric|min:0',
+            'zone_surplus_rate'       => 'nullable|numeric|min:0',
+            'zones'                   => 'nullable|array',
+            'tiers'                   => 'nullable|array',
+            'hybrid_fixed'            => 'nullable|numeric|min:0',
+            'hybrid_tiers'            => 'nullable|array',
+            'zones_tiers'             => 'nullable|array',
             'customization_reason'    => 'required|string|max:1000',
             'effective_from'          => 'required|date',
             'effective_to'            => 'nullable|date|after_or_equal:effective_from',
@@ -186,6 +244,29 @@ class ContractAssignmentController extends Controller
             ], 422);
         }
 
+        $pricingRulesFields = [
+            'fixed_amount', 'fixed_target', 'fixed_deficit_rate', 'fixed_bonus_type',
+            'fixed_surplus_bonus', 'fixed_surplus_rate', 'zone_target_orders',
+            'zone_deficit_rate', 'zone_bonus_type', 'zone_target_bonus', 'zone_surplus_rate',
+            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers'
+        ];
+        $rules = [];
+        foreach ($pricingRulesFields as $field) {
+            if ($request->has($field)) {
+                $rules[$field] = $request->input($field);
+            }
+        }
+        $validated['custom_pricing_rules'] = $rules;
+
+        // Legacy mapping for backwards-compatibility & payroll runs
+        if (isset($validated['override_type'])) {
+            $oType = $validated['override_type'];
+            $validated['custom_fixed_salary'] = ($oType === 'fixed') ? $request->input('fixed_amount') : (($oType === 'hybrid') ? $request->input('hybrid_fixed') : null);
+            $validated['custom_monthly_target'] = ($oType === 'fixed') ? $request->input('fixed_target') : (($oType === 'zones') ? $request->input('zone_target_orders') : null);
+            $validated['custom_monthly_bonus'] = ($oType === 'fixed') ? $request->input('fixed_surplus_bonus') : (($oType === 'zones') ? $request->input('zone_target_bonus') : null);
+            $validated['custom_order_commission'] = ($oType === 'fixed') ? $request->input('fixed_deficit_rate') : (($oType === 'zones') ? $request->input('zone_deficit_rate') : null);
+        }
+
         $validated['company_id'] = $companyId;
         $validated['contract_assignment_id'] = $assignment->id;
         
@@ -199,12 +280,23 @@ class ContractAssignmentController extends Controller
         $assignment = $override->contractAssignment;
         
         $validated = $request->validate([
-            'custom_order_commission' => 'nullable|numeric|min:0',
-            'custom_hourly_rate'      => 'nullable|numeric|min:0',
-            'custom_fixed_salary'     => 'nullable|numeric|min:0',
-            'custom_monthly_target'    => 'nullable|integer|min:0',
-            'custom_monthly_bonus'     => 'nullable|numeric|min:0',
-            'custom_valid_days'        => 'nullable|integer|min:0',
+            'override_type'           => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers',
+            'fixed_amount'            => 'nullable|numeric|min:0',
+            'fixed_target'            => 'nullable|integer|min:0',
+            'fixed_deficit_rate'      => 'nullable|numeric|min:0',
+            'fixed_bonus_type'        => 'nullable|string|in:lump_sum,per_order',
+            'fixed_surplus_bonus'     => 'nullable|numeric|min:0',
+            'fixed_surplus_rate'      => 'nullable|numeric|min:0',
+            'zone_target_orders'      => 'nullable|integer|min:0',
+            'zone_deficit_rate'       => 'nullable|numeric|min:0',
+            'zone_bonus_type'         => 'nullable|string|in:lump_sum,per_order',
+            'zone_target_bonus'       => 'nullable|numeric|min:0',
+            'zone_surplus_rate'       => 'nullable|numeric|min:0',
+            'zones'                   => 'nullable|array',
+            'tiers'                   => 'nullable|array',
+            'hybrid_fixed'            => 'nullable|numeric|min:0',
+            'hybrid_tiers'            => 'nullable|array',
+            'zones_tiers'             => 'nullable|array',
             'customization_reason'    => 'sometimes|required|string|max:1000',
             'effective_from'          => 'sometimes|required|date',
             'effective_to'            => 'nullable|date|after_or_equal:effective_from',
@@ -251,6 +343,32 @@ class ContractAssignmentController extends Controller
                 'message' => 'يوجد تجاوز آخر مخصص متداخل في نفس التواريخ لهذا السائق.',
                 'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']]
             ], 422);
+        }
+
+        $pricingRulesFields = [
+            'fixed_amount', 'fixed_target', 'fixed_deficit_rate', 'fixed_bonus_type',
+            'fixed_surplus_bonus', 'fixed_surplus_rate', 'zone_target_orders',
+            'zone_deficit_rate', 'zone_bonus_type', 'zone_target_bonus', 'zone_surplus_rate',
+            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers'
+        ];
+        
+        // Merge pricing rules
+        $existingRules = $override->custom_pricing_rules ?? [];
+        $rules = $existingRules;
+        foreach ($pricingRulesFields as $field) {
+            if ($request->has($field)) {
+                $rules[$field] = $request->input($field);
+            }
+        }
+        $validated['custom_pricing_rules'] = $rules;
+
+        // Legacy mapping for backwards-compatibility & payroll runs
+        $oType = $validated['override_type'] ?? $override->override_type;
+        if ($oType) {
+            $validated['custom_fixed_salary'] = ($oType === 'fixed') ? ($request->has('fixed_amount') ? $request->input('fixed_amount') : $override->custom_fixed_salary) : (($oType === 'hybrid') ? ($request->has('hybrid_fixed') ? $request->input('hybrid_fixed') : $override->custom_fixed_salary) : null);
+            $validated['custom_monthly_target'] = ($oType === 'fixed') ? ($request->has('fixed_target') ? $request->input('fixed_target') : $override->custom_monthly_target) : (($oType === 'zones') ? ($request->has('zone_target_orders') ? $request->input('zone_target_orders') : $override->custom_monthly_target) : null);
+            $validated['custom_monthly_bonus'] = ($oType === 'fixed') ? ($request->has('fixed_surplus_bonus') ? $request->input('fixed_surplus_bonus') : $override->custom_monthly_bonus) : (($oType === 'zones') ? ($request->has('zone_target_bonus') ? $request->input('zone_target_bonus') : $override->custom_monthly_bonus) : null);
+            $validated['custom_order_commission'] = ($oType === 'fixed') ? ($request->has('fixed_deficit_rate') ? $request->input('fixed_deficit_rate') : $override->custom_order_commission) : (($oType === 'zones') ? ($request->has('zone_deficit_rate') ? $request->input('zone_deficit_rate') : $override->custom_order_commission) : null);
         }
 
         $override->update($validated);

@@ -53,12 +53,12 @@ class SupervisorAllocationController extends Controller
         $effectiveDate = Carbon::parse($request->effective_date)->startOfMonth()->toDateString();
         $allocationsList = $request->allocations;
 
-        // Check if sum of percentages equals 100%
+        // Check if sum of percentages exceeds 100%
         $sum = collect($allocationsList)->sum('allocation_percentage');
-        if (abs($sum - 100.00) > 0.01) {
+        if ($sum > 100.01) {
             return response()->json([
-                'message' => 'يجب أن يكون مجموع نسب التوزيع مساوياً لـ 100% تماماً.',
-                'errors'  => ['allocations' => ['مجموع النسب الحالية هو ' . $sum . '% ويجب أن يكون 100%']]
+                'message' => 'يجب ألا يتجاوز مجموع نسب التوزيع 100% بأي حال من الأحوال.',
+                'errors'  => ['allocations' => ['مجموع النسب الحالية هو ' . $sum . '% ويجب ألا يتجاوز 100%']]
             ], 422);
         }
 

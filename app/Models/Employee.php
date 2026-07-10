@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Employee extends Model
 {
@@ -23,6 +24,7 @@ class Employee extends Model
         'stage_driving_trial_done', 'stage_license_obtained', 'stage_license_date',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
+        'role_category', 'admin_role_id', 'user_id', 'salary_allocations',
     ];
 
     protected $casts = [
@@ -38,6 +40,9 @@ class Employee extends Model
         'target_orders_monthly' => 'integer',
         'base_commission_rate'  => 'decimal:3',
         'premium_commission_rate'=> 'decimal:3',
+        'admin_role_id'         => 'integer',
+        'user_id'               => 'integer',
+        'salary_allocations'    => 'array',
     ];
 
     protected $appends = ['active_assignments'];
@@ -155,6 +160,21 @@ class Employee extends Model
         }
 
         return $blocks;
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function adminRole(): BelongsTo
+    {
+        return $this->belongsTo(Role::class, 'admin_role_id');
+    }
+
+    public function operationalAdvances(): HasMany
+    {
+        return $this->hasMany(OperationalAdvance::class, 'employee_id');
     }
 
     /**

@@ -594,9 +594,9 @@ class FlexibleCalculationsE2ETest extends TestCase
         $this->assertEquals(35.000, (float)$sData['total_contract_bonuses']);
         $this->assertEquals(40.000, (float)$sData['fuel_allowance']);
         $this->assertEquals(50.000, (float)$sData['violations_deduction']);
-        $this->assertEquals(540.000, (float)$sData['gross']);
+        $this->assertEquals(475.000, (float)$sData['gross']);
         $this->assertEquals(100.000, (float)$sData['bank_portion']);
-        $this->assertEquals(440.000, (float)$sData['cash_portion']);
+        $this->assertEquals(375.000, (float)$sData['cash_portion']);
 
         // --- Mohammad (Invalid Driver) ---
         // Orders: 200. Override Target: 400. Comm: Contract default Kheta order commission = 0.300.

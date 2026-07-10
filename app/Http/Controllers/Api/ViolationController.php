@@ -78,6 +78,17 @@ class ViolationController extends Controller
             'is_driver_liable' => 'boolean',
             'photo_path'       => 'nullable|string',
             'notes'            => 'nullable|string',
+            
+            // New Phase 16 fields
+            'split_mode'       => 'nullable|in:percentage,manual',
+            'driver_share'     => 'nullable|numeric|min:0',
+            'contract_share'   => 'nullable|numeric|min:0',
+            'charge_contract_id' => 'nullable|exists:contracts,id',
+            'manual_audit_reason' => 'nullable|string',
+            
+            // Overrides
+            'employee_id'      => 'nullable|exists:employees,id',
+            'assignment_override_reason' => 'nullable|string',
         ]);
 
         $vehicleId = $request->vehicle_id;
@@ -93,13 +104,66 @@ class ViolationController extends Controller
             })
             ->first();
 
-        if (!$assignment) {
+        if (!$assignment && !$request->has('employee_id')) {
             return response()->json([
                 'message' => 'No active driver was assigned to this vehicle at the specified date/time.'
             ], 422);
         }
 
-        $employeeId = $assignment->employee_id;
+        $autoResolvedEmployeeId = $assignment ? $assignment->employee_id : null;
+        $employeeId = $request->employee_id ?? $autoResolvedEmployeeId;
+
+        // Auto-resolve contract
+        $autoResolvedContractId = null;
+        if ($autoResolvedEmployeeId) {
+            $contractAssign = \App\Models\ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
+                ->where('start_date', '<=', $dateOnly)
+                ->where(function($query) use ($dateOnly) {
+                    $query->where('end_date', '>=', $dateOnly)
+                          ->orWhereNull('end_date');
+                })
+                ->first();
+            if ($contractAssign) {
+                $autoResolvedContractId = $contractAssign->contract_id;
+            }
+        }
+
+        $chargeContractId = $request->has('charge_contract_id') ? $request->charge_contract_id : $autoResolvedContractId;
+
+        // Check overrides and validate assignment_override_reason
+        $isDriverOverride = false;
+        $isContractOverride = false;
+
+        if ($request->has('employee_id') && $request->employee_id != $autoResolvedEmployeeId) {
+            $isDriverOverride = true;
+            if (empty($request->assignment_override_reason)) {
+                return response()->json([
+                    'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز السائق.',
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                ], 422);
+            }
+        }
+
+        if ($request->has('charge_contract_id') && $request->charge_contract_id != $autoResolvedContractId) {
+            $isContractOverride = true;
+            if (empty($request->assignment_override_reason)) {
+                return response()->json([
+                    'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز العقد.',
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                ], 422);
+            }
+        }
+
+        // Validate splits
+        $driverShare = $request->has('driver_share') ? (float)$request->driver_share : ($request->boolean('is_driver_liable', true) ? (float)$request->amount : 0.0);
+        $contractShare = $request->has('contract_share') ? (float)$request->contract_share : ($request->boolean('is_driver_liable', true) ? 0.0 : (float)$request->amount);
+
+        if (abs(($driverShare + $contractShare) - (float)$request->amount) > 0.0001) {
+            return response()->json([
+                'message' => 'مجموع حصة السائق وحصة الشركة يجب أن يساوي القيمة الإجمالية للمخالفة.',
+                'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']]
+            ], 422);
+        }
 
         $violationData = [
             'employee_id'      => $employeeId,
@@ -112,6 +176,17 @@ class ViolationController extends Controller
             'photo_path'       => $request->photo_path,
             'notes'            => $request->notes,
             'created_by'       => $request->user()->id,
+
+            // New fields
+            'split_mode'       => $request->split_mode ?? 'percentage',
+            'driver_share'     => $driverShare,
+            'contract_share'   => $contractShare,
+            'charge_contract_id' => $chargeContractId,
+            'manual_audit_reason' => $request->manual_audit_reason,
+            'is_driver_override' => $isDriverOverride,
+            'is_contract_override' => $isContractOverride,
+            'assignment_override_reason' => $request->assignment_override_reason,
+            'driver_deduction' => $driverShare,
         ];
 
         $violation = Violation::create($violationData);
@@ -134,7 +209,7 @@ class ViolationController extends Controller
             }
         }
 
-        return response()->json($violation->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
+        return response()->json($violation->load(['employee:id,name', 'vehicle:id,plate_number', 'chargeContract:id,name']), 201);
     }
 
     public function show(Violation $violation): JsonResponse
@@ -154,11 +229,84 @@ class ViolationController extends Controller
             'is_driver_liable' => 'sometimes|boolean',
             'photo_path'       => 'nullable|string',
             'notes'            => 'nullable|string',
+
+            // New Phase 16 fields
+            'split_mode'       => 'nullable|in:percentage,manual',
+            'driver_share'     => 'nullable|numeric|min:0',
+            'contract_share'   => 'nullable|numeric|min:0',
+            'charge_contract_id' => 'nullable|exists:contracts,id',
+            'manual_audit_reason' => 'nullable|string',
+
+            // Overrides
+            'employee_id'      => 'nullable|exists:employees,id',
+            'assignment_override_reason' => 'nullable|string',
         ]);
+
+        // Auto-resolve check for overrides
+        $dateOnly = date('Y-m-d', strtotime($violation->violation_date));
+        $assignment = \App\Models\VehicleAssignment::where('vehicle_id', $violation->vehicle_id)
+            ->where('assigned_date', '<=', $dateOnly)
+            ->where(function($query) use ($dateOnly) {
+                $query->where('unassigned_date', '>=', $dateOnly)
+                      ->orWhereNull('unassigned_date');
+            })
+            ->first();
+        $autoResolvedEmployeeId = $assignment ? $assignment->employee_id : null;
+
+        $autoResolvedContractId = null;
+        if ($autoResolvedEmployeeId) {
+            $contractAssign = \App\Models\ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
+                ->where('start_date', '<=', $dateOnly)
+                ->where(function($query) use ($dateOnly) {
+                    $query->where('end_date', '>=', $dateOnly)
+                          ->orWhereNull('end_date');
+                })
+                ->first();
+            if ($contractAssign) {
+                $autoResolvedContractId = $contractAssign->contract_id;
+            }
+        }
+
+        if ($request->has('employee_id') && $request->employee_id != $autoResolvedEmployeeId) {
+            $validated['is_driver_override'] = true;
+            if (empty($request->assignment_override_reason)) {
+                return response()->json([
+                    'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز السائق.',
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                ], 422);
+            }
+        }
+
+        if ($request->has('charge_contract_id') && $request->charge_contract_id != $autoResolvedContractId) {
+            $validated['is_contract_override'] = true;
+            if (empty($request->assignment_override_reason)) {
+                return response()->json([
+                    'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز العقد.',
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                ], 422);
+            }
+        }
+
+        // Validate splits
+        $newAmount = $request->has('amount') ? (float)$request->amount : (float)$violation->amount;
+        $driverShare = $request->has('driver_share') ? (float)$request->driver_share : (float)$violation->driver_share;
+        $contractShare = $request->has('contract_share') ? (float)$request->contract_share : (float)$violation->contract_share;
+
+        if ($request->has('driver_share') || $request->has('contract_share') || $request->has('amount')) {
+            if (abs(($driverShare + $contractShare) - $newAmount) > 0.0001) {
+                return response()->json([
+                    'message' => 'مجموع حصة السائق وحصة الشركة يجب أن يساوي القيمة الإجمالية للمخالفة.',
+                    'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']]
+                ], 422);
+            }
+            $validated['driver_share'] = $driverShare;
+            $validated['contract_share'] = $contractShare;
+            $validated['driver_deduction'] = $driverShare; // Backwards compatibility
+        }
 
         $violation->update($validated);
 
-        return response()->json($violation->fresh());
+        return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract']));
     }
 
     public function destroy(Violation $violation): JsonResponse

@@ -74,7 +74,16 @@ class MersalCompanySeeder extends Seeder
             ]);
         }
         
-        $this->command->info('✓ Default leave types & evaluation criteria settings seeded');
+        $vTypes = [
+            ['id' => 1, 'name' => 'Motorcycle', 'name_ar' => 'سيكل / دراجة نارية', 'company_id' => $company->id],
+            ['id' => 2, 'name' => 'Small Car', 'name_ar' => 'سيارة صغيرة', 'company_id' => $company->id],
+            ['id' => 3, 'name' => 'Large Car', 'name_ar' => 'سيارة كبيرة', 'company_id' => $company->id],
+        ];
+        foreach ($vTypes as $vt) {
+            \App\Models\VehicleType::firstOrCreate(['id' => $vt['id']], $vt);
+        }
+        
+        $this->command->info('✓ Default leave types, evaluation criteria & vehicle types settings seeded');
         $this->command->info('🚀 Ready for testing from scratch!');
         $this->command->info('   Login: mersal@fleetops.kw / abuhadram');
     }

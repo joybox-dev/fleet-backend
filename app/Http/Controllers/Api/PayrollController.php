@@ -45,7 +45,7 @@ class PayrollController extends Controller
                 return response()->json([
                     'message'        => 'تم تحديث وإعادة احتساب رواتب هذا الشهر بنجاح.',
                     'run_id'         => $existingRun->id,
-                    'employees'      => Employee::whereIn('status', ['active', 'probation'])->count(),
+                    'employees'      => Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->count(),
                     'total_official' => $existingRun->total_official,
                     'total_actual'   => $existingRun->total_actual,
                     'total_cash'     => $existingRun->total_cash_diff,
@@ -67,7 +67,7 @@ class PayrollController extends Controller
                 'notes'      => $validated['notes'] ?? null,
             ]);
 
-            $employees = Employee::whereIn('status', ['active', 'probation'])->get();
+            $employees = Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->get();
             $employeeIds = $employees->pluck('id');
             $totalOfficial = 0;
             $totalActual   = 0;
@@ -77,7 +77,7 @@ class PayrollController extends Controller
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout'])
                 ->groupBy('employee_id');
 
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -161,12 +161,41 @@ class PayrollController extends Controller
                     $allAssignments
                 );
 
-                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_capacity_incentive'] + $data['total_experience_incentive'] + $data['total_contract_bonuses'];
+                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_contract_bonuses'];
                 $totalGrossActual = $data['base_actual'] + $totalBonuses;
                 $totalDeductions  = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + $data['leave_deduction'] + $data['advance_deduction'];
-                $netActual        = max(0, $totalGrossActual - $totalDeductions);
-                $netBank          = min($netActual, (float) $employee->official_salary);
-                $netCash          = max(0, $netActual - $netBank);
+                
+                $netActual = $totalGrossActual - $totalDeductions;
+                
+                if ($netActual < 0) {
+                    $netBank = (float)$employee->official_salary;
+                    $netCash = 0.0;
+                    
+                    \App\Models\SalaryAdvance::where('employee_id', $employee->id)
+                        ->where('company_id', $employee->company_id)
+                        ->where('reason', 'like', '%ترصيد عجز مالي وسالفة راتب سالب لشهر ' . $month . '/' . $year . '%')
+                        ->delete();
+
+                    // Create SalaryAdvance to be deducted next month
+                    $debitAmount = $netBank - $netActual;
+                    $nextMonthDate = \Carbon\Carbon::parse($startDate)->addMonth();
+                    
+                    \App\Models\SalaryAdvance::create([
+                        'employee_id' => $employee->id,
+                        'company_id'  => $employee->company_id,
+                        'amount'      => $debitAmount,
+                        'advance_date' => $nextMonthDate->startOfMonth()->toDateString(),
+                        'monthly_installment' => $debitAmount,
+                        'total_installments' => 1,
+                        'remaining_balance' => $debitAmount,
+                        'approved_by' => auth()->id() ?? 1,
+                        'status'      => 'active',
+                        'reason'      => 'ترصيد عجز مالي وسالفة راتب سالب لشهر ' . $month . '/' . $year,
+                    ]);
+                } else {
+                    $netBank = min($netActual, (float) $employee->official_salary);
+                    $netCash = max(0.0, $netActual - $netBank);
+                }
 
                 $slip = PayrollSlip::create([
                     'payroll_run_id'             => $run->id,
@@ -438,7 +467,7 @@ class PayrollController extends Controller
 
             $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
             if (empty($employeeIds)) {
-                $employeeIds = Employee::whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
+                $employeeIds = Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
             }
             
             $employees = Employee::whereIn('id', $employeeIds)->get();
@@ -450,7 +479,7 @@ class PayrollController extends Controller
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout'])
                 ->groupBy('employee_id');
 
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -540,12 +569,42 @@ class PayrollController extends Controller
                     $existingSlip
                 );
 
-                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_capacity_incentive'] + $data['total_experience_incentive'] + $data['total_contract_bonuses'];
+                $totalBonuses     = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_contract_bonuses'];
                 $totalGrossActual = $data['base_actual'] + $totalBonuses;
                 $totalDeductions  = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + $data['leave_deduction'] + $data['advance_deduction'];
-                $netActual        = max(0, $totalGrossActual - $totalDeductions);
-                $netBank          = min($netActual, (float) $employee->official_salary);
-                $netCash          = max(0, $netActual - $netBank);
+                
+                $netActual = $totalGrossActual - $totalDeductions;
+                
+                if ($netActual < 0) {
+                    $netBank = (float)$employee->official_salary;
+                    $netCash = 0.0;
+                    
+                    // Clean up any existing auto-advance for this employee from this run
+                    \App\Models\SalaryAdvance::where('employee_id', $employee->id)
+                        ->where('company_id', $employee->company_id)
+                        ->where('reason', 'like', '%ترصيد عجز مالي وسالفة راتب سالب لشهر ' . $month . '/' . $year . '%')
+                        ->delete();
+
+                    // Create SalaryAdvance to be deducted next month
+                    $debitAmount = $netBank - $netActual;
+                    $nextMonthDate = \Carbon\Carbon::parse($startDate)->addMonth();
+                    
+                    \App\Models\SalaryAdvance::create([
+                        'employee_id' => $employee->id,
+                        'company_id'  => $employee->company_id,
+                        'amount'      => $debitAmount,
+                        'advance_date' => $nextMonthDate->startOfMonth()->toDateString(),
+                        'monthly_installment' => $debitAmount,
+                        'total_installments' => 1,
+                        'remaining_balance' => $debitAmount,
+                        'approved_by' => auth()->id() ?? 1,
+                        'status'      => 'active',
+                        'reason'      => 'ترصيد عجز مالي وسالفة راتب سالب لشهر ' . $month . '/' . $year,
+                    ]);
+                } else {
+                    $netBank = min($netActual, (float) $employee->official_salary);
+                    $netCash = max(0.0, $netActual - $netBank);
+                }
 
                 $slip = PayrollSlip::updateOrCreate([
                     'payroll_run_id' => $run->id,
@@ -682,6 +741,27 @@ class PayrollController extends Controller
                     ->first();
                 if ($assignment) {
                     $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $log->log_date, 'order_commission');
+                    if ($rate === null) {
+                        $contractObj = \App\Models\Contract::find($contractId);
+                        if ($contractObj && ($contractObj->driver_payment_method === 'zones' || $contractObj->payment_type === 'zones')) {
+                            $pricingRules = is_string($contractObj->driver_pricing_rules) 
+                                ? json_decode($contractObj->driver_pricing_rules, true) 
+                                : $contractObj->driver_pricing_rules;
+                            $zoneName = $log->zone;
+                            if (is_array($pricingRules)) {
+                                if (isset($pricingRules[$zoneName])) {
+                                    $rate = (float)$pricingRules[$zoneName];
+                                } else {
+                                    foreach ($pricingRules as $rule) {
+                                        if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
+                                            $rate = (float)($rule['rate'] ?? 0.0);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -766,103 +846,436 @@ class PayrollController extends Controller
         // 1. Recalculate daily log commissions
         $empLogs = self::recalculateEmployeeCommissions($employee, $year, $month, $empLogs);
 
-        $totalOrders = 0;
-        $ordersBonus = 0;
-        foreach ($empLogs as $log) {
-            $totalOrders += (int) $log->orders_count;
-            $ordersBonus += (float) $log->driver_commission;
-        }
+        $daysInMonth = \Carbon\Carbon::parse($startDate)->daysInMonth;
 
-        // 2. Determine active contract assignment for currency and contract rates
-        $assignment = \App\Models\ContractAssignment::where('employee_id', $employeeId)
+        // Fetch contract assignments for this employee
+        $empContractAssignments = \App\Models\ContractAssignment::where('employee_id', $employeeId)
             ->where('start_date', '<=', $endDate)
             ->where(function ($q) use ($startDate) {
                 $q->whereNull('end_date')
                   ->orWhere('end_date', '>=', $startDate);
             })
-            ->first();
+            ->with('contract')
+            ->get();
 
-        $contractId = null;
-        $paymentType = $employee->pay_type;
-        $exchangeRate = 1.0;
-        $contract = null;
+        // Fetch vehicle assignments active in this month
+        $empVehicleAssignments = \App\Models\VehicleAssignment::where('employee_id', $employeeId)
+            ->where('assigned_date', '<=', $endDate)
+            ->where(function ($q) use ($startDate) {
+                $q->whereNull('unassigned_date')
+                  ->orWhere('unassigned_date', '>=', $startDate);
+            })
+            ->with('vehicle')
+            ->get();
 
-        if ($assignment) {
-            $contractId = $assignment->contract_id;
-            $contract = $assignment->contract;
-            if ($contract) {
-                $paymentType = $contract->payment_type;
-                if ($contract->currency && $contract->currency !== 'KWD') {
-                    $rateModel = \App\Models\CurrencyExchangeRate::where('company_id', $employee->company_id)
-                        ->where('from_currency', $contract->currency)
-                        ->where('to_currency', 'KWD')
-                        ->where('year', $year)
-                        ->where('month', $month)
-                        ->first();
-                    if ($rateModel) {
-                        $exchangeRate = (float)$rateModel->exchange_rate;
-                    }
+        // Map each day of the month to its active contract and vehicle type
+        $dayMap = [];
+        $hasAnyContractAssignment = false;
+        for ($d = 1; $d <= $daysInMonth; $d++) {
+            $date = sprintf("%04d-%02d-%02d", $year, $month, $d);
+
+            // Find contract assignment active on this day
+            $activeContractAssign = $empContractAssignments->first(function($a) use ($date) {
+                $sDate = $a->start_date instanceof \Carbon\Carbon ? $a->start_date->toDateString() : substr($a->start_date, 0, 10);
+                $eDate = $a->end_date ? ($a->end_date instanceof \Carbon\Carbon ? $a->end_date->toDateString() : substr($a->end_date, 0, 10)) : null;
+                return $sDate <= $date 
+                    && ($eDate === null || $eDate >= $date);
+            });
+
+            // Find vehicle assignment active on this day
+            $activeVehicleAssign = $empVehicleAssignments->first(function($va) use ($date) {
+                $sDate = $va->assigned_date instanceof \Carbon\Carbon ? $va->assigned_date->toDateString() : substr($va->assigned_date, 0, 10);
+                $eDate = $va->unassigned_date ? ($va->unassigned_date instanceof \Carbon\Carbon ? $va->unassigned_date->toDateString() : substr($va->unassigned_date, 0, 10)) : null;
+                return $sDate <= $date 
+                    && ($eDate === null || $eDate >= $date);
+            });
+
+            $contractIdVal = $activeContractAssign ? $activeContractAssign->contract_id : null;
+            if ($contractIdVal) {
+                $hasAnyContractAssignment = true;
+            }
+
+            // Find vehicle type id
+            $vehicleTypeIdVal = null;
+            if ($activeVehicleAssign && $activeVehicleAssign->vehicle) {
+                $vehicleTypeIdVal = $activeVehicleAssign->vehicle->vehicle_type_id;
+            }
+
+            $dayMap[$date] = [
+                'contract_id' => $contractIdVal,
+                'contract_assignment' => $activeContractAssign,
+                'vehicle_type_id' => $vehicleTypeIdVal,
+            ];
+        }
+
+        // Group consecutive days into segments
+        $segments = [];
+        $currentSegment = null;
+
+        foreach ($dayMap as $date => $info) {
+            if ($currentSegment === null) {
+                $currentSegment = [
+                    'contract_id' => $info['contract_id'],
+                    'contract_assignment' => $info['contract_assignment'],
+                    'vehicle_type_id' => $info['vehicle_type_id'],
+                    'start_date' => $date,
+                    'end_date' => $date,
+                    'days' => 1,
+                ];
+            } else {
+                if ($currentSegment['contract_id'] === $info['contract_id'] 
+                    && $currentSegment['vehicle_type_id'] === $info['vehicle_type_id']) {
+                    $currentSegment['end_date'] = $date;
+                    $currentSegment['days']++;
+                } else {
+                    $segments[] = $currentSegment;
+                    $currentSegment = [
+                        'contract_id' => $info['contract_id'],
+                        'contract_assignment' => $info['contract_assignment'],
+                        'vehicle_type_id' => $info['vehicle_type_id'],
+                        'start_date' => $date,
+                        'end_date' => $date,
+                        'days' => 1,
+                    ];
                 }
             }
         }
+        if ($currentSegment !== null) {
+            $segments[] = $currentSegment;
+        }
 
-        // 3. Calculate Base Actual and Adjust Orders Bonus
-        $baseActual = (float)$employee->actual_salary;
+        if (!$hasAnyContractAssignment) {
+            $segments = [[
+                'contract_id' => null,
+                'contract_assignment' => null,
+                'vehicle_type_id' => null,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'days' => $daysInMonth,
+            ]];
+        }
+
+        // Get primary assignment info for overall slip info
+        $primarySegment = null;
+        foreach ($segments as $seg) {
+            if ($seg['contract_id'] !== null && $primarySegment === null) {
+                $primarySegment = $seg;
+            }
+        }
+        if ($primarySegment === null) {
+            $primarySegment = $segments[0];
+        }
+
+        $contractId = $primarySegment['contract_id'];
+        $contract = $primarySegment['contract_assignment'] ? $primarySegment['contract_assignment']->contract : null;
+        $paymentType = $employee->pay_type;
+        if ($contract) {
+            $paymentType = $contract->payment_type;
+        }
+
+        $exchangeRate = 1.0;
+        if ($contract && $contract->currency && $contract->currency !== 'KWD') {
+            $rateModel = \App\Models\CurrencyExchangeRate::where('company_id', $employee->company_id)
+                ->where('from_currency', $contract->currency)
+                ->where('to_currency', 'KWD')
+                ->where('year', $year)
+                ->where('month', $month)
+                ->first();
+            if ($rateModel) {
+                $exchangeRate = (float)$rateModel->exchange_rate;
+            }
+        }
+
+        $totalOrders = 0;
+        $ordersBonus = 0.0;
+        $baseActual = 0.0;
         $absenceDeduction = 0.0;
+        $totalMonthlyTarget = 0;
+        $totalRequiredValidDays = 0;
 
-        if ($contractId && $contract) {
-            if ($paymentType === 'fixed' || $paymentType === 'hybrid') {
-                $fixedSalary = SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'fixed_salary');
-                if ($fixedSalary === null) {
-                    $fixedSalary = (float)$employee->actual_salary;
-                } else {
-                    $fixedSalary = (float)$fixedSalary * $exchangeRate;
-                }
+        foreach ($segments as $segment) {
+            $segContractId = $segment['contract_id'];
+            $segRatio = $segment['days'] / $daysInMonth;
+            $segLogs = $empLogs->whereBetween('log_date', [$segment['start_date'], $segment['end_date']]);
+            $segOrders = $segLogs->sum('orders_count');
+            $totalOrders += $segOrders;
 
-                $divisor = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'absence_divisor') ?? 26);
-                $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'valid_days') ?? 26);
-                
-                // Calculate worked days (count of logs with shift_valid = 1)
-                $workedDays = $empLogs->where('shift_valid', 1)->count();
-                $absentDays = max(0, $requiredValidDays - $workedDays);
-                $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
-                $absenceDeduction = $absentDays * $dailyRate;
-                
-                $baseActual = max(0.0, $fixedSalary - $absenceDeduction);
-                if ($paymentType === 'fixed') {
-                    $ordersBonus = 0.0; // Fixed contract has no orders bonus
-                }
-            } elseif ($paymentType === 'per_order') {
-                $baseActual = $ordersBonus;
-                $ordersBonus = 0.0;
-            } elseif ($paymentType === 'hourly') {
-                $hourlyRate = SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'hourly_rate');
-                if ($hourlyRate === null) {
-                    $hourlyRate = 0.0;
+            if ($segContractId === null) {
+                // Legacy segment
+                $segCommissions = $segLogs->sum('driver_commission');
+                if ($employee->pay_type === 'per_order') {
+                    $baseActual += $segCommissions;
                 } else {
-                    $hourlyRate = (float)$hourlyRate * $exchangeRate;
+                    $baseActual += ((float)$employee->actual_salary) * $segRatio;
+                    if ($employee->pay_type === 'hybrid') {
+                        $ordersBonus += $segCommissions;
+                    }
                 }
-                $totalHours = (float)$empLogs->sum('online_hours');
-                $baseActual = $totalHours * $hourlyRate;
-                $ordersBonus = 0.0;
+                continue;
             }
-        } else {
-            // Legacy / No contract
-            if ($employee->pay_type === 'per_order') {
-                $baseActual = $ordersBonus;
-                $ordersBonus = 0.0;
+
+            $segContract = \App\Models\Contract::find($segContractId);
+            if (!$segContract) continue;
+
+            $segExchangeRate = 1.0;
+            if ($segContract->currency && $segContract->currency !== 'KWD') {
+                $rateModel = \App\Models\CurrencyExchangeRate::where('company_id', $employee->company_id)
+                    ->where('from_currency', $segContract->currency)
+                    ->where('to_currency', 'KWD')
+                    ->where('year', $year)
+                    ->where('month', $month)
+                    ->first();
+                if ($rateModel) {
+                    $segExchangeRate = (float)$rateModel->exchange_rate;
+                }
             }
+
+            $segPaymentType = $segContract->payment_type;
+            $driverPaymentMethod = $segContract->driver_payment_method ?? $segPaymentType;
+
+            // Recalculate daily log commissions for this segment logs
+            $segLogsRecalculated = self::recalculateEmployeeCommissions($employee, $year, $month, $segLogs);
+
+            // Resolve fixed salary and absence divisor
+            $fixedSalary = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'fixed_salary');
+            if ($fixedSalary === null) {
+                $fixedSalary = (float)$employee->actual_salary;
+            } else {
+                $fixedSalary = (float)$fixedSalary * $segExchangeRate;
+            }
+            $proratedFixedSalary = $fixedSalary * $segRatio;
+
+            $divisor = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'absence_divisor') ?? 26);
+            $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'valid_days') ?? 26);
+            $proratedRequiredValidDays = (int)round($requiredValidDays * $segRatio);
+
+            $monthlyTarget = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'monthly_target') ?? 0);
+            $proratedMonthlyTarget = (int)round($monthlyTarget * $segRatio);
+
+            $totalMonthlyTarget += $proratedMonthlyTarget;
+            $totalRequiredValidDays += $proratedRequiredValidDays;
+
+            // Determine if there is a flat commission override for this driver
+            $flatCommissionRate = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'order_commission');
+            if ($flatCommissionRate !== null) {
+                $flatCommissionRate = (float)$flatCommissionRate * $segExchangeRate;
+            }
+
+            $segOrdersBonus = 0.0;
+            $segBaseActual = 0.0;
+            $segAbsenceDeduction = 0.0;
+
+            if ($flatCommissionRate !== null) {
+                // Flat rate override
+                $segOrdersBonus = $segOrders * $flatCommissionRate;
+                if ($driverPaymentMethod === 'fixed') {
+                    $workedDays = $segLogs->where('shift_valid', 1)->count();
+                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
+                    $segAbsenceDeduction = $absentDays * $dailyRate;
+                    $baseSalary = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
+
+                    // Deficit/Surplus Calculation
+                    $deficitDeduction = 0.0;
+                    $surplusBonusAmt = 0.0;
+                    if ($proratedMonthlyTarget > 0) {
+                        $deficitRate = $flatCommissionRate;
+                        if ($segOrders < $proratedMonthlyTarget) {
+                            $deficitDeduction = ($proratedMonthlyTarget - $segOrders) * $deficitRate;
+                        } else {
+                            $surplusBonus = (float)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'custom_monthly_bonus') ?? 0.0);
+                            $surplusRate = (float)($employee->premium_commission_rate ?? $segContract->premium_commission_rate ?? $deficitRate);
+                            if ($surplusBonus > 0) {
+                                $surplusBonusAmt = $surplusBonus;
+                            } else {
+                                $surplusBonusAmt = ($segOrders - $proratedMonthlyTarget) * $surplusRate;
+                            }
+                        }
+                    }
+                    $segBaseActual = $baseSalary - $deficitDeduction + $surplusBonusAmt;
+                    $segOrdersBonus = 0.0;
+                } else if ($driverPaymentMethod === 'hybrid') {
+                    $workedDays = $segLogs->where('shift_valid', 1)->count();
+                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
+                    $segAbsenceDeduction = $absentDays * $dailyRate;
+                    $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
+                } else if ($driverPaymentMethod === 'per_order') {
+                    $segBaseActual = $segOrdersBonus;
+                    $segOrdersBonus = 0.0;
+                }
+            } else {
+                if ($driverPaymentMethod === 'fixed') {
+                    $workedDays = $segLogs->where('shift_valid', 1)->count();
+                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
+                    $segAbsenceDeduction = $absentDays * $dailyRate;
+                    $baseSalary = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
+
+                    // Deficit/Surplus Calculation
+                    $deficitDeduction = 0.0;
+                    $surplusBonusAmt = 0.0;
+                    if ($proratedMonthlyTarget > 0) {
+                        $deficitRate = (float)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'order_commission') ?? 0.0);
+                        if ($segOrders < $proratedMonthlyTarget) {
+                            $deficitDeduction = ($proratedMonthlyTarget - $segOrders) * $deficitRate;
+                        } else {
+                            $surplusBonus = (float)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'custom_monthly_bonus') ?? 0.0);
+                            $surplusRate = (float)($employee->premium_commission_rate ?? $segContract->premium_commission_rate ?? $deficitRate);
+                            if ($surplusBonus > 0) {
+                                $surplusBonusAmt = $surplusBonus;
+                            } else {
+                                $surplusBonusAmt = ($segOrders - $proratedMonthlyTarget) * $surplusRate;
+                            }
+                        }
+                    }
+                    $segBaseActual = $baseSalary - $deficitDeduction + $surplusBonusAmt;
+                } else if ($driverPaymentMethod === 'per_order') {
+                    $segBaseActual = $segLogsRecalculated->sum('driver_commission');
+                } else if ($driverPaymentMethod === 'hourly') {
+                    $hourlyRate = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'hourly_rate');
+                    if ($hourlyRate === null) {
+                        $hourlyRate = 0.0;
+                    } else {
+                        $hourlyRate = (float)$hourlyRate * $segExchangeRate;
+                    }
+                    $totalHours = (float)$segLogs->sum('online_hours');
+                    $segBaseActual = $totalHours * $hourlyRate;
+                } else if ($driverPaymentMethod === 'hybrid') {
+                    $workedDays = $segLogs->where('shift_valid', 1)->count();
+                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
+                    $segAbsenceDeduction = $absentDays * $dailyRate;
+                    $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
+                    $segOrdersBonus = $segLogsRecalculated->sum('driver_commission');
+                } else if ($driverPaymentMethod === 'zones') {
+                    $pricingRules = is_string($segContract->driver_pricing_rules) 
+                        ? json_decode($segContract->driver_pricing_rules, true) 
+                        : $segContract->driver_pricing_rules;
+
+                    $payout = 0.0;
+                    $groupedLogs = $segLogs->groupBy('zone');
+                    foreach ($groupedLogs as $zoneName => $zoneLogs) {
+                        $zoneOrders = $zoneLogs->sum('orders_count');
+                        $rate = null;
+                        if (is_array($pricingRules)) {
+                            if (isset($pricingRules[$zoneName])) {
+                                $rate = (float)$pricingRules[$zoneName];
+                            } else {
+                                foreach ($pricingRules as $rule) {
+                                    if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
+                                        $rate = (float)($rule['rate'] ?? 0.0);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if ($rate === null) {
+                            $rate = (float)($segContract->default_order_commission ?? 0.0);
+                        }
+                        $payout += $zoneOrders * $rate * $segExchangeRate;
+                    }
+
+                    // Deficit/Surplus Calculation for Zones
+                    $deficitDeduction = 0.0;
+                    $surplusBonusAmt = 0.0;
+                    if ($proratedMonthlyTarget > 0) {
+                        $deficitRate = (float)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'order_commission') ?? 0.0);
+                        if ($segOrders < $proratedMonthlyTarget) {
+                            $deficitDeduction = ($proratedMonthlyTarget - $segOrders) * $deficitRate;
+                        } else {
+                            $surplusBonus = (float)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'custom_monthly_bonus') ?? 0.0);
+                            $surplusRate = (float)($employee->premium_commission_rate ?? $segContract->premium_commission_rate ?? $deficitRate);
+                            if ($surplusBonus > 0) {
+                                $surplusBonusAmt = $surplusBonus;
+                            } else {
+                                $surplusBonusAmt = ($segOrders - $proratedMonthlyTarget) * $surplusRate;
+                            }
+                        }
+                    }
+                    $segBaseActual = $payout - $deficitDeduction + $surplusBonusAmt;
+                } elseif ($driverPaymentMethod === 'zones_tiers') {
+                    $pricingRules = is_string($segContract->driver_pricing_rules) 
+                        ? json_decode($segContract->driver_pricing_rules, true) 
+                        : $segContract->driver_pricing_rules;
+
+                    $payout = 0.0;
+                    $groupedLogs = $segLogs->groupBy('zone');
+                    foreach ($groupedLogs as $zoneName => $zoneLogs) {
+                        $zoneOrders = $zoneLogs->sum('orders_count');
+                        $zoneTiers = null;
+                        if (is_array($pricingRules)) {
+                            if (isset($pricingRules[$zoneName]) && is_array($pricingRules[$zoneName])) {
+                                $zoneTiers = $pricingRules[$zoneName];
+                            } else {
+                                foreach ($pricingRules as $rule) {
+                                    if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
+                                        $zoneTiers = $rule['tiers'] ?? null;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        $selectedPrice = 0.0;
+                        if (is_array($zoneTiers)) {
+                            foreach ($zoneTiers as $tier) {
+                                $min = (int)round(($tier['min_orders'] ?? $tier['min'] ?? 0) * $segRatio);
+                                $price = (float)($tier['price'] ?? $tier['rate'] ?? $tier['bonus'] ?? 0.0);
+                                if ($zoneOrders >= $min) {
+                                    $selectedPrice = $price;
+                                }
+                            }
+                        }
+                        if ($selectedPrice === 0.0) {
+                            $selectedPrice = (float)($segContract->default_order_commission ?? 0.0);
+                        }
+                        $payout += $zoneOrders * $selectedPrice * $segExchangeRate;
+                    }
+                    $segBaseActual = $payout;
+                } elseif ($driverPaymentMethod === 'tiers') {
+                    $pricingRules = is_string($segContract->driver_pricing_rules) 
+                        ? json_decode($segContract->driver_pricing_rules, true) 
+                        : $segContract->driver_pricing_rules;
+
+                    $selectedPrice = 0.0;
+                    if (is_array($pricingRules)) {
+                        foreach ($pricingRules as $tier) {
+                            $min = (int)round(($tier['min_orders'] ?? $tier['min'] ?? 0) * $segRatio);
+                            $price = (float)($tier['price'] ?? $tier['rate'] ?? $tier['bonus'] ?? 0.0);
+                            if ($segOrders >= $min) {
+                                $selectedPrice = $price;
+                            }
+                        }
+                    }
+                    if ($selectedPrice === 0.0) {
+                        $selectedPrice = (float)($segContract->default_order_commission ?? 0.0);
+                    }
+                    $segBaseActual = $segOrders * $selectedPrice * $segExchangeRate;
+                }
+            }
+
+            $baseActual += $segBaseActual;
+            $ordersBonus += $segOrdersBonus;
+            $absenceDeduction += $segAbsenceDeduction;
         }
 
         // 4. Calculate Auto-Validity (Final Monthly Status)
         $status = 'Valid';
         if ($contractId && $contract) {
-            $monthlyTarget = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'monthly_target') ?? 0);
-            $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $contractId, $endDate, 'valid_days') ?? 0);
             $workedValidDays = $empLogs->where('shift_valid', 1)->count();
 
-            $meetsOrdersTarget = ($totalOrders >= $monthlyTarget);
-            $meetsValidDays = ($workedValidDays >= $requiredValidDays);
+            $meetsOrdersTarget = ($totalOrders >= $totalMonthlyTarget);
+            
+            if ($contract->is_validity_enabled) {
+                $daysInMonthVal = \Carbon\Carbon::parse($startDate)->daysInMonth;
+                $validAttendanceDays = $empLogs->where('is_valid', true)->count();
+                $attendanceRate = $daysInMonthVal > 4 ? ($validAttendanceDays / ($daysInMonthVal - 4)) : 1.0;
+                $attendanceRate = min(1.0, $attendanceRate);
+                $meetsValidDays = ($attendanceRate >= 0.90);
+            } else {
+                $meetsValidDays = ($workedValidDays >= $totalRequiredValidDays);
+            }
 
             // Check mandatory periods
             $meetsMandatoryPeriods = true;
@@ -874,7 +1287,9 @@ class PayrollController extends Controller
             if ($monthlyParam) {
                 $mandatoryPeriods = \App\Models\ContractMandatoryDay::where('contract_monthly_parameter_id', $monthlyParam->id)->get();
                 foreach ($mandatoryPeriods as $period) {
-                    $periodLogsCount = $empLogs->whereBetween('log_date', [$period->start_date, $period->end_date])
+                    $periodStart = \Carbon\Carbon::parse($period->start_date)->toDateString();
+                    $periodEnd = \Carbon\Carbon::parse($period->end_date)->toDateString();
+                    $periodLogsCount = $empLogs->whereBetween('log_date', [$periodStart, $periodEnd])
                         ->where('shift_valid', 1)
                         ->count();
                     if ($periodLogsCount < $period->min_required_days) {
@@ -897,7 +1312,24 @@ class PayrollController extends Controller
         $totalCapacityIncentive = 0.0;
         $totalExperienceIncentive = 0.0;
 
-        if ($contractId && $contract && $status !== 'Invalid') {
+        $attendanceRate = 0.0;
+        $isValidDA = false;
+        $shouldCalculateIncentives = false;
+
+        if ($contractId && $contract) {
+            if ($contract->is_validity_enabled) {
+                $daysInMonth = \Carbon\Carbon::parse($startDate)->daysInMonth;
+                $validAttendanceDays = $empLogs->where('is_valid', true)->count();
+                $attendanceRate = $daysInMonth > 4 ? ($validAttendanceDays / ($daysInMonth - 4)) : 1.0;
+                $attendanceRate = min(1.0, $attendanceRate);
+                $isValidDA = ($attendanceRate >= 0.90);
+                $shouldCalculateIncentives = $isValidDA;
+            } else {
+                $shouldCalculateIncentives = ($status !== 'Invalid');
+            }
+        }
+
+        if ($shouldCalculateIncentives) {
             $monthlyParam = \App\Models\ContractMonthlyParameter::where('contract_id', $contractId)
                 ->where('year', $year)
                 ->where('month', $month)
@@ -933,7 +1365,8 @@ class PayrollController extends Controller
                             $bonus = (float)($tier['bonus'] ?? 0);
                             $bonusPerOrder = (float)($tier['bonus_per_order'] ?? 0);
                             if ($monthsTenure >= $minMonths) {
-                                $totalExperienceIncentive = ($bonus + ($bonusPerOrder * $totalOrders)) * $exchangeRate;
+                                $factor = ($contract && $contract->is_validity_enabled) ? $attendanceRate : 1.0;
+                                $totalExperienceIncentive = ($bonus + ($bonusPerOrder * $totalOrders)) * $exchangeRate * $factor;
                             }
                         }
                     }
@@ -993,6 +1426,8 @@ class PayrollController extends Controller
             'total_capacity_incentive'   => $totalCapacityIncentive,
             'total_experience_incentive' => $totalExperienceIncentive,
             'total_contract_bonuses'     => $totalContractBonuses,
+            'base_actual_salary'         => $baseActual,
+            'total_absence_deduction'    => $absenceDeduction,
         ];
     }
 }
