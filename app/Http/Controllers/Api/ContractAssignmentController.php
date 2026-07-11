@@ -205,7 +205,7 @@ class ContractAssignmentController extends Controller
 
         // Validate override dates are within assignment dates
         $from = Carbon::parse($validated['effective_from']);
-        $to = $validated['effective_to'] ? Carbon::parse($validated['effective_to']) : null;
+        $to = (!empty($validated['effective_to'])) ? Carbon::parse($validated['effective_to']) : null;
         
         $assignStart = Carbon::parse($assignment->start_date);
         $assignEnd = $assignment->end_date ? Carbon::parse($assignment->end_date) : null;
@@ -242,6 +242,32 @@ class ContractAssignmentController extends Controller
                 'message' => 'يوجد تجاوز آخر مخصص متداخل في نفس التواريخ لهذا السائق.',
                 'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']]
             ], 422);
+        }
+
+        $oType = $validated['override_type'] ?? null;
+        if (in_array($oType, ['zones', 'zones_tiers'])) {
+            $driver = $assignment->employee;
+            $contract = $assignment->contract;
+            $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+                ->where('is_active', true)
+                ->first();
+            
+            $vehicleTypeId = $activeVehicleAssignment?->vehicle?->vehicle_type_id;
+            $clientPricing = $contract->client_pricing_rules ?? [];
+            
+            $clientMethod = null;
+            if ($vehicleTypeId !== null && isset($clientPricing[$vehicleTypeId])) {
+                $clientMethod = $clientPricing[$vehicleTypeId]['payment_method'] ?? null;
+            } elseif ($contract->vehicle_type_id !== null) {
+                $clientMethod = $contract->client_payment_method;
+            }
+            
+            if ($clientMethod !== 'zones') {
+                return response()->json([
+                    'message' => 'لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل لهذه الفئة من المركبات هي الفئات.',
+                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']]
+                ], 422);
+            }
         }
 
         $pricingRulesFields = [
@@ -343,6 +369,32 @@ class ContractAssignmentController extends Controller
                 'message' => 'يوجد تجاوز آخر مخصص متداخل في نفس التواريخ لهذا السائق.',
                 'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']]
             ], 422);
+        }
+
+        $oType = $validated['override_type'] ?? $override->override_type;
+        if (in_array($oType, ['zones', 'zones_tiers'])) {
+            $driver = $assignment->employee;
+            $contract = $assignment->contract;
+            $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+                ->where('is_active', true)
+                ->first();
+            
+            $vehicleTypeId = $activeVehicleAssignment?->vehicle?->vehicle_type_id;
+            $clientPricing = $contract->client_pricing_rules ?? [];
+            
+            $clientMethod = null;
+            if ($vehicleTypeId !== null && isset($clientPricing[$vehicleTypeId])) {
+                $clientMethod = $clientPricing[$vehicleTypeId]['payment_method'] ?? null;
+            } elseif ($contract->vehicle_type_id !== null) {
+                $clientMethod = $contract->client_payment_method;
+            }
+            
+            if ($clientMethod !== 'zones') {
+                return response()->json([
+                    'message' => 'لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل لهذه الفئة من المركبات هي الفئات.',
+                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']]
+                ], 422);
+            }
         }
 
         $pricingRulesFields = [

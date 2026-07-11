@@ -77,7 +77,7 @@ class PayrollController extends Controller
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout', 'zone'])
                 ->groupBy('employee_id');
 
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -479,7 +479,7 @@ class PayrollController extends Controller
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
-                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout'])
+                ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout', 'zone'])
                 ->groupBy('employee_id');
 
             $violationSums = Violation::whereIn('employee_id', $employeeIds)
@@ -701,7 +701,7 @@ class PayrollController extends Controller
             ->whereBetween('log_date', [$startDate, $endDate])
             ->orderBy('log_date')
             ->orderBy('id')
-            ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id']);
+            ->get(['id', 'employee_id', 'vehicle_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'zone', 'shift_valid', 'is_valid', 'online_hours', 'created_by']);
 
         $target = (int) ($employee->target_orders_monthly ?? 0);
         $baseRate = (float) (($target > 0 && $employee->base_commission_rate !== null) ? $employee->base_commission_rate : ($employee->rate_per_order ?? 0.000));
@@ -1030,8 +1030,26 @@ class PayrollController extends Controller
                 }
             }
 
+            $activeOverride = null;
+            if (isset($segment['contract_assignment']) && $segment['contract_assignment']) {
+                $activeOverride = \App\Models\DriverContractOverride::where('contract_assignment_id', $segment['contract_assignment']->id)
+                    ->whereDate('effective_from', '<=', $segment['end_date'])
+                    ->where(function ($q) use ($segment) {
+                        $q->whereNull('effective_to')
+                          ->orWhereDate('effective_to', '>=', $segment['start_date']);
+                    })
+                    ->first();
+            }
+
+            $vehicleTypeId = $segment['vehicle_type_id'] ?? null;
             $segPaymentType = $segContract->payment_type;
             $driverPaymentMethod = $segContract->driver_payment_method ?? $segPaymentType;
+            
+            if ($activeOverride && $activeOverride->override_type !== null) {
+                $driverPaymentMethod = $activeOverride->override_type;
+            } elseif ($vehicleTypeId !== null && is_array($segContract->driver_pricing_rules) && isset($segContract->driver_pricing_rules[$vehicleTypeId]['payment_method'])) {
+                $driverPaymentMethod = $segContract->driver_pricing_rules[$vehicleTypeId]['payment_method'];
+            }
 
             // Recalculate daily log commissions for this segment logs
             $segLogsRecalculated = self::recalculateEmployeeCommissions($employee, $year, $month, $segLogs);
@@ -1149,9 +1167,20 @@ class PayrollController extends Controller
                     $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
                     $segOrdersBonus = $segLogsRecalculated->sum('driver_commission');
                 } else if ($driverPaymentMethod === 'zones') {
-                    $pricingRules = is_string($segContract->driver_pricing_rules) 
-                        ? json_decode($segContract->driver_pricing_rules, true) 
-                        : $segContract->driver_pricing_rules;
+                    $pricingRules = null;
+                    if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {
+                        $pricingRules = $activeOverride->custom_pricing_rules;
+                    } else {
+                        $pricingRules = is_string($segContract->driver_pricing_rules) 
+                            ? json_decode($segContract->driver_pricing_rules, true) 
+                            : $segContract->driver_pricing_rules;
+                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        }
+                    }
+                    if (is_array($pricingRules) && isset($pricingRules['zones'])) {
+                        $pricingRules = $pricingRules['zones'];
+                    }
 
                     $payout = 0.0;
                     $groupedLogs = $segLogs->groupBy('zone');
@@ -1195,9 +1224,20 @@ class PayrollController extends Controller
                     }
                     $segBaseActual = $payout - $deficitDeduction + $surplusBonusAmt;
                 } elseif ($driverPaymentMethod === 'zones_tiers') {
-                    $pricingRules = is_string($segContract->driver_pricing_rules) 
-                        ? json_decode($segContract->driver_pricing_rules, true) 
-                        : $segContract->driver_pricing_rules;
+                    $pricingRules = null;
+                    if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {
+                        $pricingRules = $activeOverride->custom_pricing_rules;
+                    } else {
+                        $pricingRules = is_string($segContract->driver_pricing_rules) 
+                            ? json_decode($segContract->driver_pricing_rules, true) 
+                            : $segContract->driver_pricing_rules;
+                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        }
+                    }
+                    if (is_array($pricingRules) && isset($pricingRules['zones_tiers'])) {
+                        $pricingRules = $pricingRules['zones_tiers'];
+                    }
 
                     $payout = 0.0;
                     $groupedLogs = $segLogs->groupBy('zone');
@@ -1209,7 +1249,7 @@ class PayrollController extends Controller
                                 $zoneTiers = $pricingRules[$zoneName];
                             } else {
                                 foreach ($pricingRules as $rule) {
-                                    if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
+                                    if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && ($rule['zone'] ?? $rule['name']) == $zoneName) {
                                         $zoneTiers = $rule['tiers'] ?? null;
                                         break;
                                     }
@@ -1227,6 +1267,7 @@ class PayrollController extends Controller
                                 }
                             }
                         }
+
                         if ($selectedPrice === 0.0) {
                             $selectedPrice = (float)($segContract->default_order_commission ?? 0.0);
                         }
@@ -1234,9 +1275,20 @@ class PayrollController extends Controller
                     }
                     $segBaseActual = $payout;
                 } elseif ($driverPaymentMethod === 'tiers') {
-                    $pricingRules = is_string($segContract->driver_pricing_rules) 
-                        ? json_decode($segContract->driver_pricing_rules, true) 
-                        : $segContract->driver_pricing_rules;
+                    $pricingRules = null;
+                    if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {
+                        $pricingRules = $activeOverride->custom_pricing_rules;
+                    } else {
+                        $pricingRules = is_string($segContract->driver_pricing_rules) 
+                            ? json_decode($segContract->driver_pricing_rules, true) 
+                            : $segContract->driver_pricing_rules;
+                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        }
+                    }
+                    if (is_array($pricingRules) && isset($pricingRules['tiers'])) {
+                        $pricingRules = $pricingRules['tiers'];
+                    }
 
                     $selectedPrice = 0.0;
                     if (is_array($pricingRules)) {
