@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Models\Vehicle;
 use App\Models\VehicleType;
+use Illuminate\Support\Facades\DB;
 
 class ClassifyVehicles extends Command
 {
