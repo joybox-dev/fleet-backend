@@ -27,19 +27,29 @@ class ClassifyVehicles extends Command
      */
     public function handle()
     {
-        // Ensure vehicle types exist
-        VehicleType::firstOrCreate(['id' => 1], [
-            'name' => 'Motorcycle',
-            'name_ar' => 'سيكل / دراجة نارية',
-            'company_id' => 1
-        ]);
-        VehicleType::firstOrCreate(['id' => 2], [
-            'name' => 'Small Car',
-            'name_ar' => 'سيارة صغيرة',
-            'company_id' => 1
-        ]);
+        // Ensure vehicle types exist in DB table directly
+        if (!DB::table('vehicle_types')->where('id', 1)->exists()) {
+            DB::table('vehicle_types')->insert([
+                'id' => 1,
+                'name' => 'Motorcycle',
+                'name_ar' => 'سيكل / دراجة نارية',
+                'company_id' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        if (!DB::table('vehicle_types')->where('id', 2)->exists()) {
+            DB::table('vehicle_types')->insert([
+                'id' => 2,
+                'name' => 'Small Car',
+                'name_ar' => 'سيارة صغيرة',
+                'company_id' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
 
-        $vehicles = Vehicle::all();
+        $vehicles = DB::table('vehicles')->get();
         $updated = 0;
 
         foreach ($vehicles as $vehicle) {
@@ -58,8 +68,8 @@ class ClassifyVehicles extends Command
                 $typeId = 2; // Car
             }
 
-            if ($vehicle->vehicle_type_id !== $typeId) {
-                $vehicle->update(['vehicle_type_id' => $typeId]);
+            if ((int)$vehicle->vehicle_type_id !== $typeId) {
+                DB::table('vehicles')->where('id', $vehicle->id)->update(['vehicle_type_id' => $typeId]);
                 $updated++;
             }
         }
