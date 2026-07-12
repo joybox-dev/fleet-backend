@@ -312,29 +312,13 @@ class EmployeesAndContractsScenarioTest extends TestCase
     {
         $this->actingAs($this->user);
 
-        // 1. Locked Contract
-        $lockedContract = Contract::create([
-            'client_id' => $this->client->id,
-            'contract_number' => 'CON-LOCKED',
-            'name' => 'Locked Contract',
-            'payment_type' => 'per_order',
-            'start_date' => '2026-07-01',
-            'is_locked' => true,
-            'company_id' => $this->company->id,
-        ]);
-
-        $response = $this->deleteJson("/api/contracts/{$lockedContract->id}");
-        $response->assertStatus(422); // Validation block on deletion
-        $this->assertDatabaseHas('contracts', ['id' => $lockedContract->id]);
-
-        // 2. Unlock contract but assign a driver to it
+        // 1. Assign a driver to a contract and try to delete it (should fail)
         $unlockedContract = Contract::create([
             'client_id' => $this->client->id,
             'contract_number' => 'CON-UNLOCKED',
             'name' => 'Unlocked Contract',
             'payment_type' => 'per_order',
             'start_date' => '2026-07-01',
-            'is_locked' => false,
             'company_id' => $this->company->id,
         ]);
 

@@ -15,7 +15,7 @@ class Contract extends Model
     protected $fillable = [
         'client_id', 'contract_number', 'name', 'payment_type',
         'rate_per_order', 'fixed_monthly', 'start_date', 'end_date',
-        'is_active', 'is_locked', 'is_validity_enabled', 'notes',
+        'is_active', 'is_validity_enabled', 'notes',
         'required_drivers', 'daily_target', 'monthly_target',
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
         'expected_monthly_revenue', 'target_driver_count',
@@ -25,15 +25,12 @@ class Contract extends Model
         'client_name', 'status', 'currency',
 
         // Optional default customization fields
-        'default_order_commission', 'default_hourly_rate', 'default_work_hours_source',
-        'default_fixed_salary', 'default_absence_divisor', 'default_monthly_target', 'default_daily_target',
-        'required_drivers_count', 'required_vehicles_count',
+        'default_order_commission', 'default_absence_divisor', 'default_monthly_target', 'default_daily_target',
+        'required_vehicles_count',
         'expected_monthly_expenses', 'target_profit_margin',
         'default_required_valid_days',
+        'default_required_work_days',
         
-        // Discrepancy thresholds
-        'threshold_type', 'minor_threshold_limit', 'major_threshold_limit',
-
         // Pricing rules and vehicle types
         'vehicle_type_id', 'client_payment_method', 'client_pricing_rules',
         'driver_payment_method', 'driver_pricing_rules', 'capacity_target', 'capacity_pricing_rules',
@@ -41,7 +38,6 @@ class Contract extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
-        'is_locked' => 'boolean',
         'is_validity_enabled' => 'boolean',
         'rate_per_order' => 'decimal:3',
         'fixed_monthly'  => 'decimal:3',
@@ -58,18 +54,14 @@ class Contract extends Model
         
         // Defaults
         'default_order_commission' => 'decimal:3',
-        'default_hourly_rate' => 'decimal:3',
-        'default_fixed_salary' => 'decimal:3',
         'default_absence_divisor' => 'integer',
         'default_monthly_target' => 'integer',
         'default_daily_target' => 'integer',
-        'required_drivers_count' => 'integer',
         'required_vehicles_count' => 'integer',
         'expected_monthly_expenses' => 'decimal:3',
         'target_profit_margin' => 'decimal:2',
         'default_required_valid_days' => 'integer',
-        'minor_threshold_limit' => 'decimal:2',
-        'major_threshold_limit' => 'decimal:2',
+        'default_required_work_days' => 'integer',
 
         // Pricing rules and vehicle types
         'vehicle_type_id'        => 'integer',

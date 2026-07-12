@@ -150,6 +150,7 @@ class FlexibleCalculationsE2ETest extends TestCase
             'default_order_commission' => 0.300,
             'default_monthly_target' => 700,
             'default_required_valid_days' => 25,
+            'default_required_work_days' => 25,
             'expected_monthly_revenue' => 1000.000,
             'expected_monthly_expenses' => 160.000,
             'target_profit_margin' => 10.00,

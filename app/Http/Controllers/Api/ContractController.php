@@ -49,13 +49,9 @@ class ContractController extends Controller
 
             // Defaults and customizations
             'default_order_commission'   => 'nullable|numeric|min:0',
-            'default_hourly_rate'        => 'nullable|numeric|min:0',
-            'default_work_hours_source'  => 'nullable|in:manual,timesheet,keeta_report',
-            'default_fixed_salary'       => 'nullable|numeric|min:0',
             'default_absence_divisor'    => 'nullable|integer|min:1',
             'default_monthly_target'     => 'nullable|integer|min:0',
             'default_daily_target'       => 'nullable|integer|min:0',
-            'required_drivers_count'     => 'nullable|integer|min:0',
             'required_vehicles_count'    => 'nullable|integer|min:0',
             
             'expected_monthly_revenue'   => 'nullable|numeric|min:0',
@@ -64,9 +60,6 @@ class ContractController extends Controller
             'expected_total_profit'      => 'nullable|numeric|min:0',
             
             'default_required_valid_days' => 'nullable|integer|min:0',
-            'threshold_type'             => 'nullable|in:percentage,fixed_count,both',
-            'minor_threshold_limit'      => 'nullable|numeric|min:0',
-            'major_threshold_limit'      => 'nullable|numeric|min:0',
             
             'start_date'     => 'required|date',
             'end_date'       => 'nullable|date|after:start_date',
@@ -107,9 +100,6 @@ class ContractController extends Controller
         if (isset($validated['rate_per_order']) && !isset($validated['default_order_commission'])) {
             $validated['default_order_commission'] = $validated['rate_per_order'];
         }
-        if (isset($validated['fixed_monthly']) && !isset($validated['default_fixed_salary'])) {
-            $validated['default_fixed_salary'] = $validated['fixed_monthly'];
-        }
 
         $contract = Contract::create($validated);
 
@@ -123,10 +113,6 @@ class ContractController extends Controller
 
     public function update(Request $request, Contract $contract): JsonResponse
     {
-        if ($contract->is_locked) {
-            return response()->json(['message' => 'Contract is locked and cannot be modified.'], 403);
-        }
-
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -147,13 +133,9 @@ class ContractController extends Controller
             'fixed_monthly'  => 'nullable|numeric|min:0',
 
             'default_order_commission'   => 'nullable|numeric|min:0',
-            'default_hourly_rate'        => 'nullable|numeric|min:0',
-            'default_work_hours_source'  => 'nullable|in:manual,timesheet,keeta_report',
-            'default_fixed_salary'       => 'nullable|numeric|min:0',
             'default_absence_divisor'    => 'nullable|integer|min:1',
             'default_monthly_target'     => 'nullable|integer|min:0',
             'default_daily_target'       => 'nullable|integer|min:0',
-            'required_drivers_count'     => 'nullable|integer|min:0',
             'required_vehicles_count'    => 'nullable|integer|min:0',
             
             'expected_monthly_revenue'   => 'nullable|numeric|min:0',
@@ -162,9 +144,6 @@ class ContractController extends Controller
             'expected_total_profit'      => 'nullable|numeric|min:0',
             
             'default_required_valid_days' => 'nullable|integer|min:0',
-            'threshold_type'             => 'nullable|in:percentage,fixed_count,both',
-            'minor_threshold_limit'      => 'nullable|numeric|min:0',
-            'major_threshold_limit'      => 'nullable|numeric|min:0',
             
             'start_date'     => 'sometimes|date',
             'end_date'       => 'nullable|date',
@@ -194,9 +173,6 @@ class ContractController extends Controller
 
         if (isset($validated['rate_per_order']) && !isset($validated['default_order_commission'])) {
             $validated['default_order_commission'] = $validated['rate_per_order'];
-        }
-        if (isset($validated['fixed_monthly']) && !isset($validated['default_fixed_salary'])) {
-            $validated['default_fixed_salary'] = $validated['fixed_monthly'];
         }
 
         $contract->update($validated);

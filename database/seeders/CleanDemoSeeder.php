@@ -95,19 +95,19 @@ class CleanDemoSeeder extends Seeder
             'client_id' => $c1->id, 'contract_number' => 'TB-2026-01',
             'name' => 'Talabat Q1', 'payment_type' => 'per_order',
             'rate_per_order' => 1.250, 'start_date' => '2026-01-01',
-            'end_date' => '2026-06-30', 'is_active' => true, 'is_locked' => true,
+            'end_date' => '2026-06-30', 'is_active' => true,
         ]);
         $ct2 = Contract::firstOrCreate(['contract_number' => 'KT-2026-01'], [
             'client_id' => $c2->id, 'contract_number' => 'KT-2026-01',
             'name' => 'Keeta H1', 'payment_type' => 'per_order',
             'rate_per_order' => 1.000, 'start_date' => '2026-01-01',
-            'end_date' => '2026-12-31', 'is_active' => true, 'is_locked' => true,
+            'end_date' => '2026-12-31', 'is_active' => true,
         ]);
         $ct3 = Contract::firstOrCreate(['contract_number' => 'YG-2026-FX'], [
             'client_id' => $c3->id, 'contract_number' => 'YG-2026-FX',
             'name' => 'Yalla Go Fixed', 'payment_type' => 'fixed',
             'fixed_monthly' => 200.000, 'start_date' => '2026-01-01',
-            'is_active' => true, 'is_locked' => false,
+            'is_active' => true,
         ]);
         $this->command->info('✓ 3 contracts');
 

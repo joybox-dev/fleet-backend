@@ -48,13 +48,13 @@ class MasterPhase2Seeder extends Seeder
             'client_id' => $clTalabat->id, 'name' => 'Talabat Q2',
             'payment_type' => 'per_order', 'rate_per_order' => 0.900,
             'start_date' => '2026-04-01', 'end_date' => '2026-06-30',
-            'is_active' => true, 'is_locked' => true, 'company_id' => $eagle->id,
+            'is_active' => true, 'company_id' => $eagle->id,
         ]);
         $ctKaram = Contract::firstOrCreate(['contract_number' => 'KR-MAY-2026', 'company_id' => $eagle->id], [
             'client_id' => $clKaram->id, 'name' => 'Karam May',
             'payment_type' => 'fixed', 'fixed_monthly' => 1500.000,
             'start_date' => '2026-04-01', 'end_date' => '2026-12-31',
-            'is_active' => true, 'is_locked' => true, 'company_id' => $eagle->id,
+            'is_active' => true, 'company_id' => $eagle->id,
         ]);
         $ctCarriage = Contract::firstOrCreate(['contract_number' => 'CR-MAY-2026', 'company_id' => $eagle->id], [
             'client_id' => $clCarriage->id, 'name' => 'Carriage May',
@@ -188,7 +188,7 @@ class MasterPhase2Seeder extends Seeder
             'client_id' => $clDeliveroo->id, 'name' => 'Deliveroo Q2',
             'payment_type' => 'per_order', 'rate_per_order' => 1.100,
             'start_date' => '2026-04-01', 'end_date' => '2026-06-30',
-            'is_active' => true, 'is_locked' => true, 'company_id' => $buraq->id,
+            'is_active' => true, 'company_id' => $buraq->id,
         ]);
         $ctSawan = Contract::firstOrCreate(['contract_number' => 'SW-MAY-2026', 'company_id' => $buraq->id], [
             'client_id' => $clSawan->id, 'name' => 'Al-Sawan May',

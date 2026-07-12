@@ -470,15 +470,7 @@ class BugFixesTest extends TestCase
         $this->assertEquals('2026-02-01', $updated->start_date);
         $this->assertFalse((bool)$updated->is_active);
 
-        // 2. Lock the contract
-        $contract->update(['is_locked' => true]);
-
-        // 3. Try to update locked contract - should fail
-        $response2 = $this->actingAs($this->user1)
-            ->putJson("/api/contracts/{$contract->id}", [
-                'name' => 'Violating Update',
-            ]);
-        $response2->assertStatus(403);
+        // 2. Lock check is obsolete and deleted.
     }
 
     /**

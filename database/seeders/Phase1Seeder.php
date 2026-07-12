@@ -45,10 +45,10 @@ class Phase1Seeder extends Seeder
         $talabat = Client::where('name', 'Talabat')->first();
 
         $contracts = [
-            ['client_id' => $yalla->id, 'contract_number' => 'YG-2026-Q1', 'name' => 'Yalla Go Q1 2026', 'payment_type' => 'per_order', 'rate_per_order' => 1.350, 'start_date' => '2026-01-01', 'end_date' => '2026-06-30', 'is_active' => true, 'is_locked' => true],
-            ['client_id' => $keeta->id, 'contract_number' => 'KT-2026-H1', 'name' => 'Keeta H1 2026', 'payment_type' => 'per_order', 'rate_per_order' => 1.000, 'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'is_active' => true, 'is_locked' => true],
-            ['client_id' => $talabat->id, 'contract_number' => 'TB-2026-FX', 'name' => 'Talabat Fixed 2026', 'payment_type' => 'fixed', 'fixed_monthly' => 180.000, 'start_date' => '2026-01-01', 'is_active' => true, 'is_locked' => true],
-            ['client_id' => $yalla->id, 'contract_number' => 'YG-2026-Q2', 'name' => 'Yalla Go Q2 2026', 'payment_type' => 'hybrid', 'rate_per_order' => 0.750, 'fixed_monthly' => 80.000, 'start_date' => '2026-04-01', 'is_active' => true, 'is_locked' => false],
+            ['client_id' => $yalla->id, 'contract_number' => 'YG-2026-Q1', 'name' => 'Yalla Go Q1 2026', 'payment_type' => 'per_order', 'rate_per_order' => 1.350, 'start_date' => '2026-01-01', 'end_date' => '2026-06-30', 'is_active' => true],
+            ['client_id' => $keeta->id, 'contract_number' => 'KT-2026-H1', 'name' => 'Keeta H1 2026', 'payment_type' => 'per_order', 'rate_per_order' => 1.000, 'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'is_active' => true],
+            ['client_id' => $talabat->id, 'contract_number' => 'TB-2026-FX', 'name' => 'Talabat Fixed 2026', 'payment_type' => 'fixed', 'fixed_monthly' => 180.000, 'start_date' => '2026-01-01', 'is_active' => true],
+            ['client_id' => $yalla->id, 'contract_number' => 'YG-2026-Q2', 'name' => 'Yalla Go Q2 2026', 'payment_type' => 'hybrid', 'rate_per_order' => 0.750, 'fixed_monthly' => 80.000, 'start_date' => '2026-04-01', 'is_active' => true],
         ];
         foreach ($contracts as $c) {
             Contract::firstOrCreate(['contract_number' => $c['contract_number']], $c);

@@ -42,8 +42,8 @@ class ContractDashboardController extends Controller
             ->get();
             
         $activeDriversCount = $activeAssignments->unique('employee_id')->count();
-        $requiredDriversCount = $contract->required_drivers_count ?? 0;
-        $driverDeficit = max(0, $requiredDriversCount - $activeDriversCount);
+        $requiredDriversCount = 0;
+        $driverDeficit = 0;
 
         $dailyLogs = DailyLog::where('contract_id', $contract->id)
             ->whereBetween('log_date', [$startDateStr, $endDateStr])
@@ -75,7 +75,7 @@ class ContractDashboardController extends Controller
 
         $fixedRevenue = 0;
         if ($contract->payment_type === 'fixed' || $contract->payment_type === 'hybrid') {
-            $fixedRevenue = (float)($contract->default_fixed_salary ?? $contract->fixed_monthly ?? 0);
+            $fixedRevenue = (float)($contract->fixed_monthly ?? 0);
         }
         $actualRevenue = $logsRevenue + $fixedRevenue;
 

@@ -105,11 +105,10 @@ class SmartValueFallbackService
         if ($contract) {
             $contractField = match ($parameterName) {
                 'order_commission' => 'default_order_commission',
-                'hourly_rate' => 'default_hourly_rate',
-                'fixed_salary' => 'default_fixed_salary',
                 'monthly_target' => 'default_monthly_target',
                 'daily_target' => 'default_daily_target',
                 'valid_days' => 'default_required_valid_days',
+                'required_work_days' => 'default_required_work_days',
                 'absence_divisor' => 'default_absence_divisor',
                 default => null
             };
@@ -122,14 +121,12 @@ class SmartValueFallbackService
             if ($parameterName === 'order_commission' && isset($contract->rate_per_order) && (float)$contract->rate_per_order > 0) {
                 return $contract->rate_per_order;
             }
-            if ($parameterName === 'fixed_salary' && isset($contract->fixed_monthly) && (float)$contract->fixed_monthly > 0) {
-                return $contract->fixed_monthly;
-            }
         }
 
         // Final defaults
         return match ($parameterName) {
             'absence_divisor' => 26,
+            'required_work_days' => 26,
             default => null
         };
     }

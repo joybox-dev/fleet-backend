@@ -1064,6 +1064,10 @@ class PayrollController extends Controller
             $proratedFixedSalary = $fixedSalary * $segRatio;
 
             $divisor = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'absence_divisor') ?? 26);
+            
+            $requiredWorkDays = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'required_work_days') ?? 26);
+            $proratedRequiredWorkDays = (int)round($requiredWorkDays * $segRatio);
+
             $requiredValidDays = (int)(SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'valid_days') ?? 26);
             $proratedRequiredValidDays = (int)round($requiredValidDays * $segRatio);
 
@@ -1087,8 +1091,8 @@ class PayrollController extends Controller
                 // Flat rate override
                 $segOrdersBonus = $segOrders * $flatCommissionRate;
                 if ($driverPaymentMethod === 'fixed') {
-                    $workedDays = $segLogs->where('shift_valid', 1)->count();
-                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $workedDays = $segLogs->count();
+                    $absentDays = max(0, $proratedRequiredWorkDays - $workedDays);
                     $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
                     $segAbsenceDeduction = $absentDays * $dailyRate;
                     $baseSalary = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
@@ -1113,8 +1117,8 @@ class PayrollController extends Controller
                     $segBaseActual = $baseSalary - $deficitDeduction + $surplusBonusAmt;
                     $segOrdersBonus = 0.0;
                 } else if ($driverPaymentMethod === 'hybrid') {
-                    $workedDays = $segLogs->where('shift_valid', 1)->count();
-                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $workedDays = $segLogs->count();
+                    $absentDays = max(0, $proratedRequiredWorkDays - $workedDays);
                     $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
                     $segAbsenceDeduction = $absentDays * $dailyRate;
                     $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
@@ -1124,8 +1128,8 @@ class PayrollController extends Controller
                 }
             } else {
                 if ($driverPaymentMethod === 'fixed') {
-                    $workedDays = $segLogs->where('shift_valid', 1)->count();
-                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $workedDays = $segLogs->count();
+                    $absentDays = max(0, $proratedRequiredWorkDays - $workedDays);
                     $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
                     $segAbsenceDeduction = $absentDays * $dailyRate;
                     $baseSalary = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
@@ -1160,8 +1164,8 @@ class PayrollController extends Controller
                     $totalHours = (float)$segLogs->sum('online_hours');
                     $segBaseActual = $totalHours * $hourlyRate;
                 } else if ($driverPaymentMethod === 'hybrid') {
-                    $workedDays = $segLogs->where('shift_valid', 1)->count();
-                    $absentDays = max(0, $proratedRequiredValidDays - $workedDays);
+                    $workedDays = $segLogs->count();
+                    $absentDays = max(0, $proratedRequiredWorkDays - $workedDays);
                     $dailyRate = $divisor > 0 ? ($fixedSalary / $divisor) : 0.0;
                     $segAbsenceDeduction = $absentDays * $dailyRate;
                     $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);

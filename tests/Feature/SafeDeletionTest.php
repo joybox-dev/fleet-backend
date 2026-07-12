@@ -261,20 +261,6 @@ class SafeDeletionTest extends TestCase
             ->assertStatus(200)->assertJson(['is_deletable' => true]);
         $this->deleteJson("/api/contracts/{$cleanContract->id}")->assertStatus(200);
 
-        // 2. Block: Locked contract
-        $lockedContract = Contract::create([
-            'client_id' => $this->client->id,
-            'contract_number' => 'CON-LOCKED',
-            'name' => 'Locked Contract',
-            'payment_type' => 'fixed',
-            'fixed_monthly' => 500,
-            'start_date' => '2026-05-01',
-            'is_active' => true,
-            'is_locked' => true,
-            'company_id' => $this->company->id,
-        ]);
-        $this->getJson("/api/contracts/{$lockedContract->id}/deletion-check")
-            ->assertJsonFragment(['لا يمكن حذف العقد لأنه مغلق ومحمي محاسبياً ضد التعديل.']);
-        $this->deleteJson("/api/contracts/{$lockedContract->id}")->assertStatus(422);
+        // Locked contract checks are obsolete.
     }
 }
