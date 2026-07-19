@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Api\PayrollController;
 use App\Models\Company;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
@@ -11,8 +12,6 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use App\Models\VehicleType;
-use App\Models\CurrencyExchangeRate;
-use App\Http\Controllers\Api\PayrollController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -21,15 +20,24 @@ class BackendPhase15Test extends TestCase
     use RefreshDatabase;
 
     protected $company;
+
     protected $admin;
+
     protected $bikeType;
+
     protected $carType;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->company = Company::create(['name' => 'Test Fleet Company']);
+        $this->company = Company::create([
+            'name' => 'Test Fleet Company',
+            'subdomain' => 'test-fleet',
+            'code' => 'TFC',
+            'enabled_modules' => Company::DEFAULT_MODULES,
+            'is_active' => true,
+        ]);
         $this->admin = User::create([
             'name' => 'Admin User',
             'email' => 'admin@test.com',
@@ -41,7 +49,7 @@ class BackendPhase15Test extends TestCase
         $this->actingAs($this->admin);
 
         // Define company context
-        app()->bind('current_company_id', fn() => $this->company->id);
+        app()->bind('current_company_id', fn () => $this->company->id);
 
         // Create Vehicle Types
         $this->bikeType = VehicleType::create([
@@ -58,11 +66,12 @@ class BackendPhase15Test extends TestCase
     }
 
     /** @test */
-    public function contract_assignment_validates_compatibility_and_duplicates()
+    public function test_contract_assignment_validates_compatibility_and_duplicates()
     {
         // 1. Create a driver
         $driver = Employee::create([
             'name' => 'Compatible Driver',
+            'date_of_joining' => '2026-07-01',
             'employee_number' => 'EMP101',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
@@ -148,10 +157,11 @@ class BackendPhase15Test extends TestCase
     }
 
     /** @test */
-    public function daily_log_validates_contract_vehicle_compatibility()
+    public function test_daily_log_validates_contract_vehicle_compatibility()
     {
         $driver = Employee::create([
             'name' => 'Driver Log compatibility',
+            'date_of_joining' => '2026-07-01',
             'employee_number' => 'EMP102',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
@@ -203,16 +213,17 @@ class BackendPhase15Test extends TestCase
     }
 
     /** @test */
-    public function mid_month_joiner_proration_calculation()
+    public function test_mid_month_joiner_proration_calculation()
     {
         $driver = Employee::create([
             'name' => 'Mid Month Driver',
+            'date_of_joining' => '2026-06-16',
             'employee_number' => 'EMP201',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
             'status' => 'active',
             'pay_type' => 'fixed',
-            'actual_salary' => 200.0,
+            'actual_salary' => 300.0,
         ]);
 
         // Monthly salary: 300 KWD, required valid days: 26, absence divisor: 26
@@ -225,7 +236,6 @@ class BackendPhase15Test extends TestCase
             'status' => 'active',
             'payment_type' => 'fixed',
             'start_date' => '2026-06-01',
-            'default_fixed_salary' => 300.000,
             'default_required_valid_days' => 26,
             'default_absence_divisor' => 26,
         ]);
@@ -284,16 +294,17 @@ class BackendPhase15Test extends TestCase
         // Absent days = 13 - 10 = 3
         // Absence deduction = 3 * (300 / 26) = 34.615 KWD
         // Expected base actual = 150 - 34.615 = 115.385 KWD
-        
+
         $this->assertEquals(115.385, round($slipData['base_actual_salary'], 3));
         $this->assertEquals(34.615, round($slipData['total_absence_deduction'], 3));
     }
 
     /** @test */
-    public function mid_month_vehicle_type_transition_segment_splitting()
+    public function test_mid_month_vehicle_type_transition_segment_splitting()
     {
         $driver = Employee::create([
             'name' => 'Transition Driver',
+            'date_of_joining' => '2026-07-01',
             'employee_number' => 'EMP301',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
@@ -309,8 +320,8 @@ class BackendPhase15Test extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 10, 'price' => 0.500],
                     ['min' => 11, 'max' => 50, 'price' => 0.600],
-                ]
-            ]
+                ],
+            ],
         ];
 
         $carPricingRules = [
@@ -319,8 +330,8 @@ class BackendPhase15Test extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 10, 'price' => 0.400],
                     ['min' => 11, 'max' => 50, 'price' => 0.450],
-                ]
-            ]
+                ],
+            ],
         ];
 
         $bikeContract = Contract::create([
@@ -419,7 +430,7 @@ class BackendPhase15Test extends TestCase
                 'employee_id' => $driver->id,
                 'vehicle_id' => $bike->id,
                 'contract_id' => $bikeContract->id,
-                'log_date' => sprintf("2026-07-%02d", $day),
+                'log_date' => sprintf('2026-07-%02d', $day),
                 'orders_count' => ($day === 1 ? 12 : 0),
                 'orders_online' => ($day === 1 ? 12 : 0),
                 'orders_cash' => 0,
@@ -441,7 +452,7 @@ class BackendPhase15Test extends TestCase
                 'employee_id' => $driver->id,
                 'vehicle_id' => $car->id,
                 'contract_id' => $carContract->id,
-                'log_date' => sprintf("2026-07-%02d", $day),
+                'log_date' => sprintf('2026-07-%02d', $day),
                 'orders_count' => ($day === 11 ? 25 : 0),
                 'orders_online' => ($day === 11 ? 25 : 0),
                 'orders_cash' => 0,
