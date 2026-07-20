@@ -48,6 +48,17 @@ class DailyLogController extends Controller
     {
         $companyId = app('current_company_id');
 
+        // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
+        $total = (int) $request->input('orders_count', 0);
+        $online = $request->input('orders_online');
+        $cash = $request->input('orders_cash');
+        if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0) && $total > 0) {
+            $request->merge([
+                'orders_online' => $total,
+                'orders_cash' => 0
+            ]);
+        }
+
         $validator = \Validator::make($request->all(), [
             'employee_id'         => [
                 'required',
@@ -162,6 +173,17 @@ class DailyLogController extends Controller
      */
     public function update(Request $request, DailyLog $dailyLog): JsonResponse
     {
+        // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
+        $total = $request->has('orders_count') ? (int) $request->input('orders_count') : (int) $dailyLog->orders_count;
+        $online = $request->input('orders_online');
+        $cash = $request->input('orders_cash');
+        if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0) && $total > 0) {
+            $request->merge([
+                'orders_online' => $total,
+                'orders_cash' => 0
+            ]);
+        }
+
         $validator = \Validator::make($request->all(), [
             'orders_count'   => 'sometimes|integer|min:0',
             'orders_online'  => 'sometimes|integer|min:0',
