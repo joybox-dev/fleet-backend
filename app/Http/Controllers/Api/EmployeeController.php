@@ -77,7 +77,7 @@ class EmployeeController extends Controller
             'role_category'         => 'nullable|in:driver,admin',
             'admin_role_id'         => 'nullable|exists:roles,id',
             'salary_allocations'    => 'nullable|array',
-            'email'                 => 'nullable|email|max:255',
+            'email'                 => 'nullable|email|max:255|unique:users,email',
             'password'              => 'nullable|string|min:6',
         ]);
 
@@ -178,7 +178,12 @@ class EmployeeController extends Controller
             'role_category'         => 'sometimes|nullable|in:driver,admin',
             'admin_role_id'         => 'nullable|exists:roles,id',
             'salary_allocations'    => 'nullable|array',
-            'email'                 => 'nullable|email|max:255',
+            'email'                 => [
+                'nullable',
+                'email',
+                'max:255',
+                Rule::unique('users', 'email')->ignore($employee->user_id),
+            ],
             'password'              => 'nullable|string|min:6',
         ]);
 
