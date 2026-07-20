@@ -50,13 +50,41 @@ class DailyLogController extends Controller
 
         // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
         $total = (int) $request->input('orders_count', 0);
-        $online = $request->input('orders_online');
-        $cash = $request->input('orders_cash');
-        if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0) && $total > 0) {
+
+        if ($total === 0) {
             $request->merge([
-                'orders_online' => $total,
+                'orders_online' => 0,
                 'orders_cash' => 0
             ]);
+        } else {
+            $contract = Contract::find($request->input('contract_id'));
+            $isZones = false;
+            if ($contract) {
+                $pricing = $contract->driver_pricing_rules ?? [];
+                foreach ($pricing as $rule) {
+                    $method = $rule['payment_method'] ?? 'fixed';
+                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers') {
+                        $isZones = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($isZones) {
+                $request->merge([
+                    'orders_online' => $total,
+                    'orders_cash' => 0
+                ]);
+            } else {
+                $online = $request->input('orders_online');
+                $cash = $request->input('orders_cash');
+                if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
+                    $request->merge([
+                        'orders_online' => $total,
+                        'orders_cash' => 0
+                    ]);
+                }
+            }
         }
 
         $validator = \Validator::make($request->all(), [
@@ -175,13 +203,41 @@ class DailyLogController extends Controller
     {
         // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
         $total = $request->has('orders_count') ? (int) $request->input('orders_count') : (int) $dailyLog->orders_count;
-        $online = $request->input('orders_online');
-        $cash = $request->input('orders_cash');
-        if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0) && $total > 0) {
+
+        if ($total === 0) {
             $request->merge([
-                'orders_online' => $total,
+                'orders_online' => 0,
                 'orders_cash' => 0
             ]);
+        } else {
+            $contract = $dailyLog->contract ?? Contract::find($request->input('contract_id'));
+            $isZones = false;
+            if ($contract) {
+                $pricing = $contract->driver_pricing_rules ?? [];
+                foreach ($pricing as $rule) {
+                    $method = $rule['payment_method'] ?? 'fixed';
+                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers') {
+                        $isZones = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($isZones) {
+                $request->merge([
+                    'orders_online' => $total,
+                    'orders_cash' => 0
+                ]);
+            } else {
+                $online = $request->input('orders_online');
+                $cash = $request->input('orders_cash');
+                if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
+                    $request->merge([
+                        'orders_online' => $total,
+                        'orders_cash' => 0
+                    ]);
+                }
+            }
         }
 
         $validator = \Validator::make($request->all(), [
