@@ -167,9 +167,10 @@ class ContractDashboardController extends Controller
                       ->orWhere(function ($q2) {
                           $q2->where('maintenance_type', 'repair')
                              ->where(function ($q3) {
-                                 $q3->where('category', 'accident')
-                                    ->orWhere('notes', 'like', '%حادث%')
-                                    ->orWhere('notes', 'like', '%accident%');
+                                 $q3->where('notes', 'like', '%حادث%')
+                                    ->orWhere('notes', 'like', '%accident%')
+                                    ->orWhere('accident_description', 'like', '%حادث%')
+                                    ->orWhere('accident_description', 'like', '%accident%');
                              });
                       });
                 })
