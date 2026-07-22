@@ -9,6 +9,8 @@ use App\Models\Contract;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
+use App\Services\ContractScopeService;
+
 class DailyLogController extends Controller
 {
     /**
@@ -17,8 +19,11 @@ class DailyLogController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $allowedIds = ContractScopeService::getAllocatedContractIds();
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
+
         $logs = DailyLog::with(['employee:id,name', 'vehicle:id,plate_number', 'contract:id,name,payment_type'])
+            ->when($allowedIds !== null, fn($q) => $q->whereIn('contract_id', $allowedIds))
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
             ->when($request->contract_id, fn($q) => $q->where('contract_id', $request->contract_id))

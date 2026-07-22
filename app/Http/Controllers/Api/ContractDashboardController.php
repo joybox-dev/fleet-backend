@@ -14,6 +14,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
+use App\Services\ContractScopeService;
+
 class ContractDashboardController extends Controller
 {
     /**
@@ -22,6 +24,10 @@ class ContractDashboardController extends Controller
      */
     public function show(Request $request, Contract $contract): JsonResponse
     {
+        $allowedIds = ContractScopeService::getAllocatedContractIds();
+        if ($allowedIds !== null && !in_array($contract->id, $allowedIds)) {
+            return response()->json(['message' => 'عذراً، ليس لديك صلاحية للوصول لهذا العقد.'], 403);
+        }
         $year = $request->integer('year', (int) date('Y'));
         $month = $request->integer('month', (int) date('n'));
 

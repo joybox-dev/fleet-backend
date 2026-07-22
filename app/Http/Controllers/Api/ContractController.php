@@ -8,11 +8,16 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
 
+use App\Services\ContractScopeService;
+
 class ContractController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $allowedIds = ContractScopeService::getAllocatedContractIds();
+
         $contracts = Contract::with('client:id,name')
+            ->when($allowedIds !== null, fn($q) => $q->whereIn('id', $allowedIds))
             ->when($request->client_id, fn($q) => $q->where('client_id', $request->client_id))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->boolean('active_only'), fn($q) => $q->where('status', 'active'))
@@ -108,6 +113,11 @@ class ContractController extends Controller
 
     public function show(Contract $contract): JsonResponse
     {
+        $allowedIds = ContractScopeService::getAllocatedContractIds();
+        if ($allowedIds !== null && !in_array($contract->id, $allowedIds)) {
+            return response()->json(['message' => 'عذراً، ليس لديك صلاحية للوصول لهذا العقد.'], 403);
+        }
+
         return response()->json($contract->load(['client', 'assignments.employee', 'monthlyParameters', 'bonuses']));
     }
 
