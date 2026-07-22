@@ -11,6 +11,17 @@ class VehicleTypeController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $companyId = app('current_company_id');
+        if ($companyId) {
+            if (VehicleType::where('company_id', $companyId)->count() === 0) {
+                VehicleType::create(['company_id' => $companyId, 'name' => 'Motorcycle', 'name_ar' => 'سيكل / دراجة نارية']);
+                VehicleType::create(['company_id' => $companyId, 'name' => 'Small Car', 'name_ar' => 'سيارة صغيرة']);
+                VehicleType::create(['company_id' => $companyId, 'name' => 'Large Car', 'name_ar' => 'سيارة كبيرة']);
+            } else if (!VehicleType::where('company_id', $companyId)->where('name_ar', 'like', '%كبيرة%')->exists()) {
+                VehicleType::create(['company_id' => $companyId, 'name' => 'Large Car', 'name_ar' => 'سيارة كبيرة']);
+            }
+        }
+
         $types = VehicleType::orderBy('id')->get();
         return response()->json($types);
     }
