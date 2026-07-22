@@ -26,23 +26,12 @@ class ContractScopeService
             return null;
         }
 
-        // 2. Find associated employee record by user_id or email
-        $employee = Employee::where('user_id', $user->id)
-            ->orWhere(function($q) use ($user) {
-                if (!empty($user->email)) {
-                    $q->whereNotNull('email')->where('email', $user->email);
-                }
-            })
-            ->first();
+        // 2. Find associated employee record by user_id
+        $employee = Employee::where('user_id', $user->id)->first();
 
         if (!$employee) {
             // Full Company Admin without employee restrictions sees all contracts
             return null;
-        }
-
-        // Auto-heal missing user_id link
-        if (empty($employee->user_id) && $user->id) {
-            $employee->update(['user_id' => $user->id]);
         }
 
         $contractIds = [];
