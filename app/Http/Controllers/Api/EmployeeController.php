@@ -265,6 +265,10 @@ class EmployeeController extends Controller
             ], 422);
         }
 
+        if ($employee->user_id) {
+            \App\Models\User::where('id', $employee->user_id)->delete();
+        }
+
         $employee->delete();
         return response()->json(['message' => 'Employee deleted.']);
     }
