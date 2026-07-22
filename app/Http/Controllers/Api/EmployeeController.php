@@ -103,10 +103,14 @@ class EmployeeController extends Controller
         if (($validated['role_category'] ?? 'driver') === 'admin' && !empty($validated['email'])) {
             $roleId = $validated['admin_role_id'] ?? $request->input('assigned_role_id') ?? null;
             $roleName = 'admin';
+            $numericAdminRoleId = is_numeric($roleId) ? (int)$roleId : null;
             if (!empty($roleId)) {
-                $roleModel = \App\Models\Role::find($roleId);
+                $roleModel = \App\Models\Role::where('id', $roleId)->orWhere('name', $roleId)->first();
                 if ($roleModel) {
                     $roleName = $roleModel->name;
+                    $numericAdminRoleId = $roleModel->id;
+                } else if (!is_numeric($roleId)) {
+                    $roleName = $roleId;
                 }
             }
             $user = \App\Models\User::create([
@@ -118,7 +122,7 @@ class EmployeeController extends Controller
             ]);
             $employee->update([
                 'user_id' => $user->id,
-                'admin_role_id' => $roleId
+                'admin_role_id' => $numericAdminRoleId
             ]);
         }
 
@@ -208,10 +212,14 @@ class EmployeeController extends Controller
         if (($employee->role_category) === 'admin' && !empty($validated['email'])) {
             $roleId = $validated['admin_role_id'] ?? $request->input('assigned_role_id') ?? $employee->admin_role_id ?? null;
             $roleName = 'admin';
+            $numericAdminRoleId = is_numeric($roleId) ? (int)$roleId : null;
             if (!empty($roleId)) {
-                $roleModel = \App\Models\Role::find($roleId);
+                $roleModel = \App\Models\Role::where('id', $roleId)->orWhere('name', $roleId)->first();
                 if ($roleModel) {
                     $roleName = $roleModel->name;
+                    $numericAdminRoleId = $roleModel->id;
+                } else if (!is_numeric($roleId)) {
+                    $roleName = $roleId;
                 }
             }
             
@@ -228,6 +236,7 @@ class EmployeeController extends Controller
                     }
                     $user->update($updateData);
                 }
+                $employee->update(['admin_role_id' => $numericAdminRoleId]);
             } else {
                 $user = \App\Models\User::create([
                     'name' => $employee->name,
@@ -238,7 +247,7 @@ class EmployeeController extends Controller
                 ]);
                 $employee->update([
                     'user_id' => $user->id,
-                    'admin_role_id' => $roleId
+                    'admin_role_id' => $numericAdminRoleId
                 ]);
             }
         }
