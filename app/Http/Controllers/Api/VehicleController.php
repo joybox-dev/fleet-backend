@@ -72,7 +72,7 @@ class VehicleController extends Controller
             'ownership_type'                    => 'nullable|string|in:rented,installment,owned',
             'rental_price'                      => 'nullable|numeric|min:0',
             'installment_price'                 => 'nullable|numeric|min:0',
-            'vehicle_type_id'                   => 'nullable|integer',
+            'vehicle_type_id'                   => 'nullable|exists:vehicle_types,id',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
@@ -111,7 +111,7 @@ class VehicleController extends Controller
             'food_authority_license_expiry'     => 'nullable|date',
             'next_service_due'                  => 'nullable|date',
             'notes'                             => 'nullable|string',
-            'vehicle_type_id'                   => 'nullable|integer',
+            'vehicle_type_id'                   => 'nullable|exists:vehicle_types,id',
         ]);
 
         $vehicle->update($validated);
