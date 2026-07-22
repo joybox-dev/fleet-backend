@@ -101,9 +101,10 @@ class EmployeeController extends Controller
         $employee = Employee::create($validated);
 
         if (($validated['role_category'] ?? 'driver') === 'admin' && !empty($validated['email'])) {
-            $roleName = 'operator';
-            if (!empty($validated['admin_role_id'])) {
-                $roleModel = \App\Models\Role::find($validated['admin_role_id']);
+            $roleId = $validated['admin_role_id'] ?? $request->input('assigned_role_id') ?? null;
+            $roleName = 'admin';
+            if (!empty($roleId)) {
+                $roleModel = \App\Models\Role::find($roleId);
                 if ($roleModel) {
                     $roleName = $roleModel->name;
                 }
@@ -115,7 +116,10 @@ class EmployeeController extends Controller
                 'role' => $roleName,
                 'company_id' => $companyId,
             ]);
-            $employee->update(['user_id' => $user->id]);
+            $employee->update([
+                'user_id' => $user->id,
+                'admin_role_id' => $roleId
+            ]);
         }
 
         return response()->json($employee->load(['user', 'adminRole']), 201);
@@ -202,9 +206,10 @@ class EmployeeController extends Controller
         $employee->update($validated);
 
         if (($employee->role_category) === 'admin' && !empty($validated['email'])) {
-            $roleName = 'operator';
-            if (!empty($validated['admin_role_id'] ?? $employee->admin_role_id)) {
-                $roleModel = \App\Models\Role::find($validated['admin_role_id'] ?? $employee->admin_role_id);
+            $roleId = $validated['admin_role_id'] ?? $request->input('assigned_role_id') ?? $employee->admin_role_id ?? null;
+            $roleName = 'admin';
+            if (!empty($roleId)) {
+                $roleModel = \App\Models\Role::find($roleId);
                 if ($roleModel) {
                     $roleName = $roleModel->name;
                 }
@@ -231,7 +236,10 @@ class EmployeeController extends Controller
                     'role' => $roleName,
                     'company_id' => $companyId,
                 ]);
-                $employee->update(['user_id' => $user->id]);
+                $employee->update([
+                    'user_id' => $user->id,
+                    'admin_role_id' => $roleId
+                ]);
             }
         }
 

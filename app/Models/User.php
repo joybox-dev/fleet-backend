@@ -59,7 +59,7 @@ class User extends Authenticatable
     public function resolvePermissions(): array
     {
         return PermissionService::resolve(
-            $this->role ?? 'operator',
+            $this->role ?? 'admin',
             $this->permissions,
             $this->isSuperAdmin()
         );
@@ -73,7 +73,7 @@ class User extends Authenticatable
         // If called with a dotted permission key (our system), use PermissionService
         if (is_string($ability) && str_contains($ability, '.')) {
             return PermissionService::can(
-                $this->role ?? 'operator',
+                $this->role ?? 'admin',
                 $ability,
                 $this->permissions,
                 $this->isSuperAdmin()
