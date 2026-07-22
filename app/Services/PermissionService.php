@@ -109,45 +109,55 @@ class PermissionService
      * @param  bool        $isSuperAdmin
      * @return array<string, bool>
      */
-    public static function resolve(string $role, ?array $overrides = null, bool $isSuperAdmin = false): array
+    public static function resolve(string $role, ?array $overrides = null, bool $isSuperAdmin = false, ?User $user = null): array
     {
         // Super admin gets everything
         if ($isSuperAdmin) {
             return array_fill_keys(self::ALL_PERMISSIONS, true);
         }
 
-        // 1. Check built-in role defaults
-        if (isset(self::ROLE_DEFAULTS[$role])) {
+        $user = $user ?? auth()->user();
+        $roleModel = null;
+
+        // 1. Try finding role model directly from Employee assignment
+        if ($user) {
+            $employee = \App\Models\Employee::where('user_id', $user->id)->first();
+            if ($employee && $employee->admin_role_id) {
+                $roleModel = \App\Models\Role::find($employee->admin_role_id);
+            }
+        }
+
+        // 2. Try finding by name or ID in roles table
+        if (!$roleModel) {
+            $roleModel = \App\Models\Role::where('name', $role)
+                ->orWhere('id', $role)
+                ->orWhere('name', 'like', "%{$role}%")
+                ->first();
+        }
+
+        if ($roleModel && !empty($roleModel->allowed_modules)) {
+            $effective = ['dashboard.view' => true];
+            $modules = (array) $roleModel->allowed_modules;
+            foreach (self::ALL_PERMISSIONS as $perm) {
+                $mod = explode('.', $perm)[0];
+                if (in_array($mod, $modules)) {
+                    $effective[$perm] = true;
+                }
+            }
+        } else if ($role === 'role_contracts' || str_contains(strtolower($role), 'contract') || str_contains($role, 'عقود')) {
+            $effective = ['dashboard.view' => true];
+            $modules = ['clients', 'contracts'];
+            foreach (self::ALL_PERMISSIONS as $perm) {
+                $mod = explode('.', $perm)[0];
+                if (in_array($mod, $modules)) {
+                    $effective[$perm] = true;
+                }
+            }
+        } else if (isset(self::ROLE_DEFAULTS[$role])) {
             $effective = self::ROLE_DEFAULTS[$role];
         } else {
-            // 2. Check if role corresponds to a custom Role model in database
-            $roleModel = \App\Models\Role::where('name', $role)->orWhere('id', $role)->first();
-            if (!$roleModel && (str_contains(strtolower($role), 'contract') || str_contains(strtolower($role), 'عقود'))) {
-                $roleModel = \App\Models\Role::where('name', 'like', '%عقود%')->orWhere('name', 'like', '%مشرف%')->first();
-            }
-
-            if ($roleModel && !empty($roleModel->allowed_modules)) {
-                $effective = ['dashboard.view' => true];
-                $modules = (array) $roleModel->allowed_modules;
-                foreach (self::ALL_PERMISSIONS as $perm) {
-                    $mod = explode('.', $perm)[0];
-                    if (in_array($mod, $modules)) {
-                        $effective[$perm] = true;
-                    }
-                }
-            } else if ($role === 'role_contracts') {
-                $effective = ['dashboard.view' => true];
-                $modules = ['daily_logs', 'vehicles', 'violations', 'clients', 'contracts'];
-                foreach (self::ALL_PERMISSIONS as $perm) {
-                    $mod = explode('.', $perm)[0];
-                    if (in_array($mod, $modules)) {
-                        $effective[$perm] = true;
-                    }
-                }
-            } else {
-                // 3. Fallback to full admin permissions if custom role is missing or unmapped
-                $effective = self::ROLE_DEFAULTS['admin'];
-            }
+            // Fallback to full admin permissions
+            $effective = self::ROLE_DEFAULTS['admin'];
         }
 
         // Merge user-level overrides (they win over role defaults)
