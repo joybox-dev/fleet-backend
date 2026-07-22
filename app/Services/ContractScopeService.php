@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\User;
 use App\Models\Employee;
 use App\Models\SupervisorCostAllocation;
+use App\Models\ContractAssignment;
 
 class ContractScopeService
 {
@@ -46,7 +47,7 @@ class ContractScopeService
 
         $contractIds = [];
 
-        // Check supervisor cost allocations table
+        // Source A: Supervisor cost allocations table
         $supervisorContractIds = SupervisorCostAllocation::where('employee_id', $employee->id)
             ->where('allocation_percentage', '>', 0)
             ->pluck('contract_id')
@@ -56,7 +57,16 @@ class ContractScopeService
             $contractIds[] = (int) $id;
         }
 
-        // Check salary allocations array on employee record
+        // Source B: Direct Contract Assignments table
+        $directContractIds = ContractAssignment::where('employee_id', $employee->id)
+            ->pluck('contract_id')
+            ->toArray();
+
+        foreach ($directContractIds as $id) {
+            $contractIds[] = (int) $id;
+        }
+
+        // Source C: Check salary allocations array on employee record
         if (!empty($employee->salary_allocations) && is_array($employee->salary_allocations)) {
             foreach ($employee->salary_allocations as $alloc) {
                 if (is_array($alloc) && !empty($alloc['contract_id'])) {
@@ -70,16 +80,12 @@ class ContractScopeService
 
         $contractIds = array_values(array_unique(array_filter($contractIds)));
 
-        // If employee has specific contract allocations, return those IDs
+        // If employee has specific contract allocations or assignments, return those IDs
         if (count($contractIds) > 0) {
             return $contractIds;
         }
 
-        // If no specific allocations are defined for this employee and role is admin, return null (unrestricted)
-        if ($user->role === 'admin') {
-            return null;
-        }
-
-        return $contractIds;
+        // If no specific contract allocations or assignments exist, return null (unrestricted access)
+        return null;
     }
 }
