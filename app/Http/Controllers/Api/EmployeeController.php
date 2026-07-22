@@ -39,6 +39,10 @@ class EmployeeController extends Controller
     {
         $companyId = app('current_company_id');
 
+        if ($request->filled('email')) {
+            $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
+        }
+
         $validated = $request->validate([
             'name'                  => 'required|string|max:255',
             'name_ar'               => 'nullable|string|max:255',
@@ -128,6 +132,10 @@ class EmployeeController extends Controller
     public function update(Request $request, Employee $employee): JsonResponse
     {
         $companyId = app('current_company_id');
+
+        if ($request->filled('email')) {
+            $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
+        }
 
         $validated = $request->validate([
             'name'                   => 'sometimes|string|max:255',
