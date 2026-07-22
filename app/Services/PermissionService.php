@@ -122,9 +122,22 @@ class PermissionService
         } else {
             // 2. Check if role corresponds to a custom Role model in database
             $roleModel = \App\Models\Role::where('name', $role)->orWhere('id', $role)->first();
+            if (!$roleModel && (str_contains(strtolower($role), 'contract') || str_contains(strtolower($role), 'عقود'))) {
+                $roleModel = \App\Models\Role::where('name', 'like', '%عقود%')->orWhere('name', 'like', '%مشرف%')->first();
+            }
+
             if ($roleModel && !empty($roleModel->allowed_modules)) {
                 $effective = ['dashboard.view' => true];
                 $modules = (array) $roleModel->allowed_modules;
+                foreach (self::ALL_PERMISSIONS as $perm) {
+                    $mod = explode('.', $perm)[0];
+                    if (in_array($mod, $modules)) {
+                        $effective[$perm] = true;
+                    }
+                }
+            } else if ($role === 'role_contracts') {
+                $effective = ['dashboard.view' => true];
+                $modules = ['daily_logs', 'vehicles', 'violations', 'clients', 'contracts'];
                 foreach (self::ALL_PERMISSIONS as $perm) {
                     $mod = explode('.', $perm)[0];
                     if (in_array($mod, $modules)) {
