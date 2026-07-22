@@ -35,6 +35,7 @@ use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\ClientCollectionController;
 use App\Http\Controllers\Api\PayrollPaymentController;
 use App\Http\Controllers\Api\OperationalAdvanceController;
+use App\Http\Controllers\Api\VehicleTypeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -86,6 +87,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('vehicles/{vehicle}/assign', [VehicleController::class, 'assign']);
         Route::post('vehicles/{vehicle}/unassign', [VehicleController::class, 'unassign']);
         Route::patch('vehicles/{vehicle}/odometer', [VehicleController::class, 'updateOdometer']);
+        Route::get('vehicle-types', [VehicleTypeController::class, 'index']);
 
         // Violations — record traffic fines
         Route::get('violations/resolve-driver', [ViolationController::class, 'resolveDriver']);
