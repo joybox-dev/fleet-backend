@@ -18,6 +18,7 @@ class VehicleController extends Controller
         $vehicles = Vehicle::query()
             ->with(['vehicleType:id,name,name_ar', 'activeAssignment.employee:id,name', 'activeAssignment.contract:id,name'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
+            ->when($request->vehicle_type_id, fn($q) => $q->where('vehicle_type_id', $request->vehicle_type_id))
             ->when($request->search, fn($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
             ->orderBy('plate_number')
             ->paginate($perPage);
