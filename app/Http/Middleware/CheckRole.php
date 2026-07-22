@@ -30,12 +30,19 @@ class CheckRole
 
         $userRole = $user->role;
 
-        if (!in_array($userRole, $roles)) {
-            return response()->json([
-                'message'   => 'غير مصرح. الدور المطلوب: ' . implode(' أو ', $roles),
-                'your_role' => $userRole,
-            ], 403);
+        if (in_array($userRole, $roles)) {
+            return $next($request);
         }
+
+        // Allow any administrative staff role (non-driver) if 'admin' is in allowed roles list
+        if (in_array('admin', $roles) && $userRole !== 'driver') {
+            return $next($request);
+        }
+
+        return response()->json([
+            'message'   => 'غير مصرح. الدور المطلوب: ' . implode(' أو ', $roles),
+            'your_role' => $userRole,
+        ], 403);
 
         return $next($request);
     }
