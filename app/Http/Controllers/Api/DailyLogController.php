@@ -136,8 +136,23 @@ class DailyLogController extends Controller
 
         $validated = $validator->validate();
 
-        // Auto-update existing record if log already exists for same employee on same date
+        // Check Payroll Approval Lock
+        $logTime = strtotime($validated['log_date']);
+        $logYear = (int) date('Y', $logTime);
+        $logMonth = (int) date('n', $logTime);
+        $isPayrollLocked = \App\Models\PayrollRun::where('company_id', app('current_company_id') ?? 1)
+            ->where('year', $logYear)
+            ->where('month', $logMonth)
+            ->where('status', 'approved')
+            ->exists();
+
+        if ($isPayrollLocked) {
+            return response()->json(['message' => 'تم اعتماد رواتب هذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+        }
+
+        // Auto-update existing record if log already exists for same employee, contract, and date
         $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
+            ->where('contract_id', $validated['contract_id'])
             ->where('log_date', $validated['log_date'])
             ->first();
 
@@ -163,6 +178,7 @@ class DailyLogController extends Controller
         $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : 0.0;
         $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : 0.0;
         $ordersCount = (int)$validated['orders_count'];
+        $driverStatus = $validated['driver_status'] ?? ($ordersCount > 0 ? 'working' : 'working');
 
         if (isset($validated['is_valid'])) {
             $isValid = (bool)$validated['is_valid'];
@@ -186,12 +202,13 @@ class DailyLogController extends Controller
                 'cash_collected' => $cashCollected,
                 'cash_pending'   => max(0, $cashCollected - $settled),
                 'is_valid'       => $isValid,
+                'driver_status'  => $driverStatus,
             ]));
             return response()->json($existingLog->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
         }
 
         $log = DailyLog::create(array_merge($validated, [
-            'created_by'      => $request->user()->id,
+            'created_by'      => $request->user()?->id ?? 1,
             'rate_per_order'  => $rate,
             'income_amount'   => $income,
             'orders_online'   => $validated['orders_online'] ?? 0,
@@ -200,6 +217,7 @@ class DailyLogController extends Controller
             'cash_settled'    => 0,
             'cash_pending'    => $cashCollected,
             'is_valid'        => $isValid,
+            'driver_status'  => $driverStatus,
         ]));
 
         return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
@@ -216,14 +234,33 @@ class DailyLogController extends Controller
             return response()->json(['message' => 'قائمة السجلات فارغة.'], 422);
         }
 
+        // Check Payroll Approval Lock for the batch
+        if (!empty($logs)) {
+            $sampleDate = $logs[0]['log_date'] ?? null;
+            if ($sampleDate) {
+                $time = strtotime($sampleDate);
+                $logYear = (int) date('Y', $time);
+                $logMonth = (int) date('n', $time);
+                $isPayrollLocked = \App\Models\PayrollRun::where('company_id', app('current_company_id') ?? 1)
+                    ->where('year', $logYear)
+                    ->where('month', $logMonth)
+                    ->where('status', 'approved')
+                    ->exists();
+
+                if ($isPayrollLocked) {
+                    return response()->json(['message' => 'تم اعتماد رواتب هذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+                }
+            }
+        }
+
         $savedLogs = [];
         \Illuminate\Support\Facades\DB::transaction(function () use ($logs, $request, &$savedLogs) {
             foreach ($logs as $logData) {
                 $employeeId = $logData['employee_id'] ?? null;
                 $logDate = $logData['log_date'] ?? null;
-                if (!$employeeId || !$logDate) continue;
-
                 $contractId = $logData['contract_id'] ?? null;
+                if (!$employeeId || !$logDate || !$contractId) continue;
+
                 $vehicleId = $logData['vehicle_id'] ?? 1;
                 $ordersCount = (int) ($logData['orders_count'] ?? 0);
                 $cashCollected = (float) ($logData['cash_collected'] ?? 0);
@@ -232,12 +269,14 @@ class DailyLogController extends Controller
                 $isValid = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
                 $lateLogin = isset($logData['late_login']) ? (bool) $logData['late_login'] : false;
                 $earlyLogout = isset($logData['early_logout']) ? (bool) $logData['early_logout'] : false;
+                $driverStatus = $logData['driver_status'] ?? ($ordersCount > 0 ? 'working' : 'working');
 
-                $contract = $contractId ? Contract::find($contractId) : null;
+                $contract = Contract::find($contractId);
                 $rate = $contract ? $contract->rate_per_order : 0;
                 $income = $rate * $ordersCount;
 
                 $existing = DailyLog::where('employee_id', $employeeId)
+                    ->where('contract_id', $contractId)
                     ->where('log_date', $logDate)
                     ->first();
 
@@ -245,7 +284,7 @@ class DailyLogController extends Controller
                     $settled = $existing->cash_settled ?? 0;
                     $existing->update([
                         'vehicle_id'     => $vehicleId,
-                        'contract_id'    => $contractId ?? $existing->contract_id,
+                        'contract_id'    => $contractId,
                         'orders_count'   => $ordersCount,
                         'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
                         'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
@@ -259,6 +298,7 @@ class DailyLogController extends Controller
                         'early_logout'   => $earlyLogout,
                         'rate_per_order' => $rate,
                         'income_amount'  => $income,
+                        'driver_status'  => $driverStatus,
                     ]);
                     $savedLogs[] = $existing;
                 } else {
@@ -283,6 +323,7 @@ class DailyLogController extends Controller
                         'created_by'     => $request->user()?->id ?? 1,
                         'rate_per_order' => $rate,
                         'income_amount'  => $income,
+                        'driver_status'  => $driverStatus,
                     ]);
                     $savedLogs[] = $newLog;
                 }
