@@ -79,6 +79,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::middleware('role:admin,operator')->group(function () {
 
         // Daily Logs — core operator entry
+        Route::post('daily-logs/bulk', [DailyLogController::class, 'bulkStore']);
         Route::apiResource('daily-logs', DailyLogController::class);
 
         // Vehicles — view + assign/unassign + odometer

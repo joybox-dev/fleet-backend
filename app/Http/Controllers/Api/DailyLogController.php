@@ -136,10 +136,10 @@ class DailyLogController extends Controller
 
         $validated = $validator->validate();
 
-        // Prevent duplicate log for same employee on same date
-        if (DailyLog::where('employee_id', $validated['employee_id'])->where('log_date', $validated['log_date'])->exists()) {
-            return response()->json(['message' => 'A daily log already exists for this employee on this date.'], 422);
-        }
+        // Auto-update existing record if log already exists for same employee on same date
+        $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
+            ->where('log_date', $validated['log_date'])
+            ->first();
 
         // Fetch contract to snapshot rate and auto-calculate income
         $contract = Contract::findOrFail($validated['contract_id']);
@@ -174,8 +174,21 @@ class DailyLogController extends Controller
             }
         }
 
-        // Cash pending = collected - settled (no settlement yet on creation)
         $cashCollected = $validated['cash_collected'] ?? 0;
+
+        if ($existingLog) {
+            $settled = $existingLog->cash_settled ?? 0;
+            $existingLog->update(array_merge($validated, [
+                'rate_per_order' => $rate,
+                'income_amount'  => $income,
+                'orders_online'  => $validated['orders_online'] ?? $ordersCount,
+                'orders_cash'    => $validated['orders_cash'] ?? 0,
+                'cash_collected' => $cashCollected,
+                'cash_pending'   => max(0, $cashCollected - $settled),
+                'is_valid'       => $isValid,
+            ]));
+            return response()->json($existingLog->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
+        }
 
         $log = DailyLog::create(array_merge($validated, [
             'created_by'      => $request->user()->id,
@@ -190,6 +203,96 @@ class DailyLogController extends Controller
         ]));
 
         return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
+    }
+
+    /**
+     * POST /api/daily-logs/bulk
+     * Batch save multiple daily logs in a single fast transaction.
+     */
+    public function bulkStore(Request $request): JsonResponse
+    {
+        $logs = $request->input('logs', []);
+        if (!is_array($logs) || empty($logs)) {
+            return response()->json(['message' => 'قائمة السجلات فارغة.'], 422);
+        }
+
+        $savedLogs = [];
+        \Illuminate\Support\Facades\DB::transaction(function () use ($logs, $request, &$savedLogs) {
+            foreach ($logs as $logData) {
+                $employeeId = $logData['employee_id'] ?? null;
+                $logDate = $logData['log_date'] ?? null;
+                if (!$employeeId || !$logDate) continue;
+
+                $contractId = $logData['contract_id'] ?? null;
+                $vehicleId = $logData['vehicle_id'] ?? 1;
+                $ordersCount = (int) ($logData['orders_count'] ?? 0);
+                $cashCollected = (float) ($logData['cash_collected'] ?? 0);
+                $onlineHours = (float) ($logData['online_hours'] ?? 10);
+                $zone = $logData['zone'] ?? null;
+                $isValid = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
+                $lateLogin = isset($logData['late_login']) ? (bool) $logData['late_login'] : false;
+                $earlyLogout = isset($logData['early_logout']) ? (bool) $logData['early_logout'] : false;
+
+                $contract = $contractId ? Contract::find($contractId) : null;
+                $rate = $contract ? $contract->rate_per_order : 0;
+                $income = $rate * $ordersCount;
+
+                $existing = DailyLog::where('employee_id', $employeeId)
+                    ->where('log_date', $logDate)
+                    ->first();
+
+                if ($existing) {
+                    $settled = $existing->cash_settled ?? 0;
+                    $existing->update([
+                        'vehicle_id'     => $vehicleId,
+                        'contract_id'    => $contractId ?? $existing->contract_id,
+                        'orders_count'   => $ordersCount,
+                        'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
+                        'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                        'cash_collected' => $cashCollected,
+                        'cash_pending'   => max(0, $cashCollected - $settled),
+                        'online_hours'   => $onlineHours,
+                        'zone'           => $zone,
+                        'is_valid'       => $isValid,
+                        'shift_valid'    => $isValid,
+                        'late_login'     => $lateLogin,
+                        'early_logout'   => $earlyLogout,
+                        'rate_per_order' => $rate,
+                        'income_amount'  => $income,
+                    ]);
+                    $savedLogs[] = $existing;
+                } else {
+                    $newLog = DailyLog::create([
+                        'company_id'     => app('current_company_id') ?? 1,
+                        'employee_id'    => $employeeId,
+                        'vehicle_id'     => $vehicleId,
+                        'contract_id'    => $contractId,
+                        'log_date'       => $logDate,
+                        'orders_count'   => $ordersCount,
+                        'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
+                        'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                        'cash_collected' => $cashCollected,
+                        'cash_settled'   => 0,
+                        'cash_pending'   => $cashCollected,
+                        'online_hours'   => $onlineHours,
+                        'zone'           => $zone,
+                        'is_valid'       => $isValid,
+                        'shift_valid'    => $isValid,
+                        'late_login'     => $lateLogin,
+                        'early_logout'   => $earlyLogout,
+                        'created_by'     => $request->user()?->id ?? 1,
+                        'rate_per_order' => $rate,
+                        'income_amount'  => $income,
+                    ]);
+                    $savedLogs[] = $newLog;
+                }
+            }
+        });
+
+        return response()->json([
+            'message' => 'تم حفظ السجلات بنجاح.',
+            'count'   => count($savedLogs)
+        ]);
     }
 
     /**
