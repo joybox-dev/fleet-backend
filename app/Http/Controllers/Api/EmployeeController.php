@@ -50,13 +50,13 @@ class EmployeeController extends Controller
             'civil_id'              => [
                 'nullable',
                 'string',
-                Rule::unique('employees', 'civil_id')->where('company_id', $companyId),
+                Rule::unique('employees', 'civil_id')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'phone'                 => [
                 'nullable',
                 'string',
                 'max:30',
-                Rule::unique('employees', 'phone')->where('company_id', $companyId),
+                Rule::unique('employees', 'phone')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'has_whatsapp'          => 'nullable|boolean',
             'whatsapp_company_number'=> 'nullable|string|max:30',
@@ -161,13 +161,13 @@ class EmployeeController extends Controller
             'civil_id'               => [
                 'nullable',
                 'string',
-                Rule::unique('employees', 'civil_id')->ignore($employee->id)->where('company_id', $companyId),
+                Rule::unique('employees', 'civil_id')->ignore($employee->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'phone'                  => [
                 'nullable',
                 'string',
                 'max:30',
-                Rule::unique('employees', 'phone')->ignore($employee->id)->where('company_id', $companyId),
+                Rule::unique('employees', 'phone')->ignore($employee->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'has_whatsapp'           => 'nullable|boolean',
             'whatsapp_company_number'=> 'nullable|string|max:30',

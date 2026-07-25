@@ -31,7 +31,7 @@ class ClientController extends Controller
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('clients', 'name')->where('company_id', $companyId),
+                Rule::unique('clients', 'name')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'name_ar'        => 'nullable|string|max:255',
             'contact_person' => 'nullable|string|max:255',
@@ -39,25 +39,23 @@ class ClientController extends Controller
                 'nullable',
                 'string',
                 'max:30',
-                Rule::unique('clients', 'phone')->where('company_id', $companyId),
+                Rule::unique('clients', 'phone')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'email'          => [
                 'nullable',
                 'email',
                 'max:255',
-                Rule::unique('clients', 'email')->where('company_id', $companyId),
+                Rule::unique('clients', 'email')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'tax_number'     => [
                 'nullable',
                 'string',
                 'max:50',
-                Rule::unique('clients', 'tax_number')->where('company_id', $companyId),
+                Rule::unique('clients', 'tax_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
         ]);
 
         $client = Client::create($validated);
-
-
 
         return response()->json($client, 201);
     }
@@ -76,7 +74,7 @@ class ClientController extends Controller
                 'sometimes',
                 'string',
                 'max:255',
-                Rule::unique('clients', 'name')->ignore($client->id)->where('company_id', $companyId),
+                Rule::unique('clients', 'name')->ignore($client->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'name_ar'        => 'nullable|string|max:255',
             'contact_person' => 'nullable|string|max:255',
@@ -84,13 +82,13 @@ class ClientController extends Controller
                 'nullable',
                 'string',
                 'max:30',
-                Rule::unique('clients', 'phone')->ignore($client->id)->where('company_id', $companyId),
+                Rule::unique('clients', 'phone')->ignore($client->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'email'          => [
                 'nullable',
                 'email',
                 'max:255',
-                Rule::unique('clients', 'email')->ignore($client->id)->where('company_id', $companyId),
+                Rule::unique('clients', 'email')->ignore($client->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'is_active'      => 'sometimes|boolean',
         ]);

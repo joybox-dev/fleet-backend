@@ -51,7 +51,7 @@ class VehicleController extends Controller
             'plate_number'                      => [
                 'required',
                 'string',
-                Rule::unique('vehicles', 'plate_number')->where('company_id', $companyId),
+                Rule::unique('vehicles', 'plate_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'make'                              => 'nullable|string|max:100',
             'model'                             => 'nullable|string|max:100',
@@ -60,7 +60,7 @@ class VehicleController extends Controller
             'vin'                               => [
                 'nullable',
                 'string',
-                Rule::unique('vehicles', 'vin')->where('company_id', $companyId),
+                Rule::unique('vehicles', 'vin')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'oil_change_interval_km'            => 'nullable|integer|min:1000',
             'monthly_fuel_allowance'            => 'nullable|numeric|min:0',

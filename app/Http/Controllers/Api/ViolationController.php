@@ -72,7 +72,7 @@ class ViolationController extends Controller
                 'nullable',
                 'string',
                 'max:100',
-                Rule::unique('violations', 'reference_number')->where('company_id', $companyId),
+                Rule::unique('violations', 'reference_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'amount'           => 'required|numeric|min:0',
             'is_driver_liable' => 'boolean',

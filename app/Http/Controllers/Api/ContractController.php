@@ -40,7 +40,7 @@ class ContractController extends Controller
             'contract_number'=> [
                 'required',
                 'string',
-                Rule::unique('contracts', 'contract_number')->where('company_id', $companyId),
+                Rule::unique('contracts', 'contract_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'name'           => 'required|string|max:255',
             'client_name'    => 'nullable|string|max:255',
@@ -130,7 +130,7 @@ class ContractController extends Controller
             'contract_number'=> [
                 'sometimes',
                 'string',
-                Rule::unique('contracts', 'contract_number')->ignore($contract->id)->where('company_id', $companyId),
+                Rule::unique('contracts', 'contract_number')->ignore($contract->id)->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
             'name'           => 'sometimes|string|max:255',
             'client_name'    => 'sometimes|string|max:255',
