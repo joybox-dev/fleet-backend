@@ -16,10 +16,10 @@ class RoleController extends Controller
 
         if ($roles->isEmpty()) {
             $defaultRoles = [
-                ['name' => 'مدير النظام (Admin)', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves', 'custody', 'payroll', 'cash', 'reports', 'clients', 'contracts', 'settings']],
-                ['name' => 'مشرف عمليات (Operations Supervisor)', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves']],
-                ['name' => 'محاسب (Accountant)', 'allowed_modules' => ['payroll', 'cash', 'reports', 'custody', 'clients']],
-                ['name' => 'مسؤول حركة وأسطول (Fleet Dispatcher)', 'allowed_modules' => ['vehicles', 'maintenance', 'violations']]
+                ['name' => 'أدمن رئيسي', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves', 'custody', 'payroll', 'cash', 'reports', 'clients', 'contracts', 'settings']],
+                ['name' => 'موظف عقود', 'allowed_modules' => ['clients', 'contracts']],
+                ['name' => 'محاسب رواتب', 'allowed_modules' => ['payroll', 'cash', 'reports']],
+                ['name' => 'مشرف', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves']]
             ];
 
             foreach ($defaultRoles as $def) {
