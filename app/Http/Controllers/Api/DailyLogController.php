@@ -150,11 +150,20 @@ class DailyLogController extends Controller
             return response()->json(['message' => 'تم اعتماد رواتب هذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
         }
 
-        // Auto-update existing record if log already exists for same employee, contract, and date
+        // Auto-update existing record if log already exists for same employee and date (matching vehicle, contract, or employee+date)
         $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
-            ->where('contract_id', $validated['contract_id'])
             ->where('log_date', $validated['log_date'])
+            ->where(function ($q) use ($validated) {
+                $q->where('vehicle_id', $validated['vehicle_id'])
+                  ->orWhere('contract_id', $validated['contract_id']);
+            })
             ->first();
+
+        if (!$existingLog) {
+            $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
+                ->where('log_date', $validated['log_date'])
+                ->first();
+        }
 
         // Fetch contract to snapshot rate and auto-calculate income
         $contract = Contract::findOrFail($validated['contract_id']);
@@ -207,20 +216,40 @@ class DailyLogController extends Controller
             return response()->json($existingLog->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
         }
 
-        $log = DailyLog::create(array_merge($validated, [
-            'created_by'      => $request->user()?->id ?? 1,
-            'rate_per_order'  => $rate,
-            'income_amount'   => $income,
-            'orders_online'   => $validated['orders_online'] ?? 0,
-            'orders_cash'     => $validated['orders_cash'] ?? 0,
-            'cash_collected'  => $cashCollected,
-            'cash_settled'    => 0,
-            'cash_pending'    => $cashCollected,
-            'is_valid'        => $isValid,
-            'driver_status'  => $driverStatus,
-        ]));
-
-        return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
+        try {
+            $log = DailyLog::create(array_merge($validated, [
+                'created_by'      => $request->user()?->id ?? 1,
+                'rate_per_order'  => $rate,
+                'income_amount'   => $income,
+                'orders_online'   => $validated['orders_online'] ?? 0,
+                'orders_cash'     => $validated['orders_cash'] ?? 0,
+                'cash_collected'  => $cashCollected,
+                'cash_settled'    => 0,
+                'cash_pending'    => $cashCollected,
+                'is_valid'        => $isValid,
+                'driver_status'  => $driverStatus,
+            ]));
+            return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
+        } catch (\Illuminate\Database\QueryException $e) {
+            $fallback = DailyLog::where('employee_id', $validated['employee_id'])
+                ->where('log_date', $validated['log_date'])
+                ->first();
+            if ($fallback) {
+                $settled = $fallback->cash_settled ?? 0;
+                $fallback->update(array_merge($validated, [
+                    'rate_per_order' => $rate,
+                    'income_amount'  => $income,
+                    'orders_online'  => $validated['orders_online'] ?? $ordersCount,
+                    'orders_cash'    => $validated['orders_cash'] ?? 0,
+                    'cash_collected' => $cashCollected,
+                    'cash_pending'   => max(0, $cashCollected - $settled),
+                    'is_valid'       => $isValid,
+                    'driver_status'  => $driverStatus,
+                ]));
+                return response()->json($fallback->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -276,9 +305,18 @@ class DailyLogController extends Controller
                 $income = $rate * $ordersCount;
 
                 $existing = DailyLog::where('employee_id', $employeeId)
-                    ->where('contract_id', $contractId)
                     ->where('log_date', $logDate)
+                    ->where(function ($q) use ($vehicleId, $contractId) {
+                        $q->where('vehicle_id', $vehicleId)
+                          ->orWhere('contract_id', $contractId);
+                    })
                     ->first();
+
+                if (!$existing) {
+                    $existing = DailyLog::where('employee_id', $employeeId)
+                        ->where('log_date', $logDate)
+                        ->first();
+                }
 
                 if ($existing) {
                     $settled = $existing->cash_settled ?? 0;
@@ -302,30 +340,60 @@ class DailyLogController extends Controller
                     ]);
                     $savedLogs[] = $existing;
                 } else {
-                    $newLog = DailyLog::create([
-                        'company_id'     => app('current_company_id') ?? 1,
-                        'employee_id'    => $employeeId,
-                        'vehicle_id'     => $vehicleId,
-                        'contract_id'    => $contractId,
-                        'log_date'       => $logDate,
-                        'orders_count'   => $ordersCount,
-                        'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
-                        'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
-                        'cash_collected' => $cashCollected,
-                        'cash_settled'   => 0,
-                        'cash_pending'   => $cashCollected,
-                        'online_hours'   => $onlineHours,
-                        'zone'           => $zone,
-                        'is_valid'       => $isValid,
-                        'shift_valid'    => $isValid,
-                        'late_login'     => $lateLogin,
-                        'early_logout'   => $earlyLogout,
-                        'created_by'     => $request->user()?->id ?? 1,
-                        'rate_per_order' => $rate,
-                        'income_amount'  => $income,
-                        'driver_status'  => $driverStatus,
-                    ]);
-                    $savedLogs[] = $newLog;
+                    try {
+                        $newLog = DailyLog::create([
+                            'company_id'     => app('current_company_id') ?? 1,
+                            'employee_id'    => $employeeId,
+                            'vehicle_id'     => $vehicleId,
+                            'contract_id'    => $contractId,
+                            'log_date'       => $logDate,
+                            'orders_count'   => $ordersCount,
+                            'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
+                            'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                            'cash_collected' => $cashCollected,
+                            'cash_settled'   => 0,
+                            'cash_pending'   => $cashCollected,
+                            'online_hours'   => $onlineHours,
+                            'zone'           => $zone,
+                            'is_valid'       => $isValid,
+                            'shift_valid'    => $isValid,
+                            'late_login'     => $lateLogin,
+                            'early_logout'   => $earlyLogout,
+                            'created_by'     => $request->user()?->id ?? 1,
+                            'rate_per_order' => $rate,
+                            'income_amount'  => $income,
+                            'driver_status'  => $driverStatus,
+                        ]);
+                        $savedLogs[] = $newLog;
+                    } catch (\Illuminate\Database\QueryException $e) {
+                        $fallback = DailyLog::where('employee_id', $employeeId)
+                            ->where('log_date', $logDate)
+                            ->first();
+                        if ($fallback) {
+                            $settled = $fallback->cash_settled ?? 0;
+                            $fallback->update([
+                                'vehicle_id'     => $vehicleId,
+                                'contract_id'    => $contractId,
+                                'orders_count'   => $ordersCount,
+                                'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
+                                'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                                'cash_collected' => $cashCollected,
+                                'cash_pending'   => max(0, $cashCollected - $settled),
+                                'online_hours'   => $onlineHours,
+                                'zone'           => $zone,
+                                'is_valid'       => $isValid,
+                                'shift_valid'    => $isValid,
+                                'late_login'     => $lateLogin,
+                                'early_logout'   => $earlyLogout,
+                                'rate_per_order' => $rate,
+                                'income_amount'  => $income,
+                                'driver_status'  => $driverStatus,
+                            ]);
+                            $savedLogs[] = $fallback;
+                        } else {
+                            throw $e;
+                        }
+                    }
                 }
             }
         });
