@@ -11,8 +11,28 @@ class RoleController extends Controller
 {
     public function index(): JsonResponse
     {
-        $companyId = app('current_company_id');
+        $companyId = app('current_company_id') ?? 1;
         $roles = Role::where('company_id', $companyId)->get();
+
+        if ($roles->isEmpty()) {
+            $defaultRoles = [
+                ['name' => 'مدير النظام (Admin)', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves', 'custody', 'payroll', 'cash', 'reports', 'clients', 'contracts', 'settings']],
+                ['name' => 'مشرف عمليات (Operations Supervisor)', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves']],
+                ['name' => 'محاسب (Accountant)', 'allowed_modules' => ['payroll', 'cash', 'reports', 'custody', 'clients']],
+                ['name' => 'مسؤول حركة وأسطول (Fleet Dispatcher)', 'allowed_modules' => ['vehicles', 'maintenance', 'violations']]
+            ];
+
+            foreach ($defaultRoles as $def) {
+                Role::create([
+                    'company_id' => $companyId,
+                    'name' => $def['name'],
+                    'allowed_modules' => $def['allowed_modules']
+                ]);
+            }
+
+            $roles = Role::where('company_id', $companyId)->get();
+        }
+
         return response()->json($roles);
     }
 
