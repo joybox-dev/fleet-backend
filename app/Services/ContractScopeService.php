@@ -34,6 +34,17 @@ class ContractScopeService
             return null;
         }
 
+        // Check if the employee's assigned role is main admin
+        if ($employee->role_category === 'admin') {
+            if (!$employee->admin_role_id) {
+                return null;
+            }
+            $roleModel = \App\Models\Role::find($employee->admin_role_id);
+            if ($roleModel && ($roleModel->id === 'role_admin' || str_contains(mb_strtolower($roleModel->name), 'أدمن رئيسي') || str_contains(mb_strtolower($roleModel->name), 'أدمن') || str_contains(mb_strtolower($roleModel->name), 'super admin'))) {
+                return null;
+            }
+        }
+
         $contractIds = [];
 
         // Source A: Supervisor cost allocations table
@@ -74,7 +85,7 @@ class ContractScopeService
             return $contractIds;
         }
 
-        // If no specific contract allocations or assignments exist, return null (unrestricted access)
-        return null;
+        // If employee has no contract allocations, restrict access (sees 0 contracts until assigned)
+        return [0];
     }
 }
