@@ -34,13 +34,10 @@ class ContractScopeService
             return null;
         }
 
-        // Check if the employee's assigned role is main admin
-        if ($employee->role_category === 'admin') {
-            if (!$employee->admin_role_id) {
-                return null;
-            }
+        // 3. Only Main Admin role (أدمن رئيسي / Super Admin) has unrestricted access to all contracts
+        if ($employee->admin_role_id) {
             $roleModel = \App\Models\Role::find($employee->admin_role_id);
-            if ($roleModel && ($roleModel->id === 'role_admin' || str_contains(mb_strtolower($roleModel->name), 'أدمن رئيسي') || str_contains(mb_strtolower($roleModel->name), 'أدمن') || str_contains(mb_strtolower($roleModel->name), 'super admin'))) {
+            if ($roleModel && ($roleModel->id == 1 || $roleModel->id === 'role_admin' || $roleModel->name === 'أدمن رئيسي' || $roleModel->name === 'Main Admin')) {
                 return null;
             }
         }
