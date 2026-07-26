@@ -45,11 +45,21 @@ class Employee extends Model
         'salary_allocations'    => 'array',
     ];
 
-    protected $appends = ['active_assignments'];
+    protected $appends = ['active_assignments', 'email', 'assigned_role_id'];
 
     public function getActiveAssignmentsAttribute()
     {
         return $this->vehicleAssignments->where('is_active', true)->values();
+    }
+
+    public function getEmailAttribute(): ?string
+    {
+        return $this->user?->email;
+    }
+
+    public function getAssignedRoleIdAttribute()
+    {
+        return $this->admin_role_id;
     }
 
     public function vehicleAssignments(): HasMany

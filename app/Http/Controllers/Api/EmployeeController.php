@@ -18,7 +18,7 @@ class EmployeeController extends Controller
     public function index(Request $request): JsonResponse
     {
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
-        $employees = Employee::with(['activeAssignment.vehicle:id,plate_number,vehicle_type_id'])
+        $employees = Employee::with(['user:id,name,email', 'adminRole:id,name', 'activeAssignment.vehicle:id,plate_number,vehicle_type_id'])
             ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn($q) => $q->where('pay_type', $request->pay_type))
@@ -141,6 +141,8 @@ class EmployeeController extends Controller
     public function show(Employee $employee): JsonResponse
     {
         return response()->json($employee->load([
+            'user:id,name,email',
+            'adminRole:id,name',
             'vehicleAssignments.vehicle:id,plate_number,make,model,vehicle_type_id',
             'vehicleAssignments.contract:id,name,target_orders_monthly,base_commission_rate,premium_commission_rate',
         ]));
