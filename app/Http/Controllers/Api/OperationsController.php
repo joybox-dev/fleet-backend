@@ -22,28 +22,51 @@ class OperationsController extends Controller
         $month = now()->month;
         $year  = now()->year;
 
-        $contracts = Contract::with('client:id,name')
-            ->where('is_active', true)
-            ->get(['id', 'client_id', 'name', 'required_drivers', 'daily_target', 'monthly_target']);
+        // 1. Contract Scoping for non-super-admins
+        $allowedIds = \App\Services\ContractScopeService::getAllocatedContractIds();
 
+        $query = Contract::with('client:id,name')->where('is_active', true);
+        if ($allowedIds !== null) {
+            $query->whereIn('id', $allowedIds);
+        }
+
+        $contracts = $query->get();
         $contractIds = $contracts->pluck('id');
 
-        // Batch: active assignments grouped by contract
-        $assignmentCounts = VehicleAssignment::whereIn('contract_id', $contractIds)
-            ->whereNull('unassigned_date')
-            ->selectRaw('contract_id, COUNT(*) as cnt')
-            ->groupBy('contract_id')
-            ->pluck('cnt', 'contract_id');
+        // Batch: active driver contract assignments
+        $contractAssignments = \App\Models\ContractAssignment::whereIn('contract_id', $contractIds)
+            ->where('status', 'active')
+            ->select('contract_id', 'employee_id')
+            ->get()
+            ->groupBy('contract_id');
 
-        // Batch: employee IDs per contract (for leave lookup)
-        $employeesByContract = VehicleAssignment::whereIn('contract_id', $contractIds)
+        // Batch: active vehicle assignments
+        $vehicleAssignments = VehicleAssignment::whereIn('contract_id', $contractIds)
             ->whereNull('unassigned_date')
             ->select('contract_id', 'employee_id')
             ->get()
             ->groupBy('contract_id');
 
-        // Batch: all employees on leave today
-        $allAssignedEmployeeIds = $employeesByContract->flatten()->pluck('employee_id')->unique();
+        // Collect all assigned employee IDs per contract
+        $allAssignedEmployeeIds = collect();
+        $assignedCountsPerContract = [];
+        $employeesByContract = [];
+
+        foreach ($contractIds as $cId) {
+            $cEmps = ($contractAssignments[$cId] ?? collect())->pluck('employee_id')
+                ->merge(($vehicleAssignments[$cId] ?? collect())->pluck('employee_id'))
+                ->filter()
+                ->unique()
+                ->values();
+            
+            $assignedCountsPerContract[$cId] = $cEmps->count();
+            $employeesByContract[$cId] = $cEmps;
+            $allAssignedEmployeeIds = $allAssignedEmployeeIds->merge($cEmps);
+        }
+
+        $allAssignedEmployeeIds = $allAssignedEmployeeIds->unique();
+
+        // Batch: all assigned employees on approved leave today
         $onLeaveIds = EmployeeLeave::where('status', 'approved')
             ->whereIn('employee_id', $allAssignedEmployeeIds)
             ->where('start_date', '<=', $today)
@@ -66,15 +89,15 @@ class OperationsController extends Controller
             ->groupBy('contract_id')
             ->pluck('total', 'contract_id');
 
-        // Assemble per-contract data (zero queries in loop)
-        $result = $contracts->map(function ($c) use ($assignmentCounts, $employeesByContract, $onLeaveIds, $ordersToday, $ordersMonth) {
-            $assigned = $assignmentCounts[$c->id] ?? 0;
+        // Assemble per-contract data
+        $result = $contracts->map(function ($c) use ($assignedCountsPerContract, $employeesByContract, $onLeaveIds, $ordersToday, $ordersMonth) {
+            $assigned = $assignedCountsPerContract[$c->id] ?? 0;
 
-            $contractEmployeeIds = ($employeesByContract[$c->id] ?? collect())->pluck('employee_id');
+            $contractEmployeeIds = $employeesByContract[$c->id] ?? collect();
             $onLeave = $contractEmployeeIds->intersect($onLeaveIds)->count();
 
-            $available = $assigned - $onLeave;
-            $required  = $c->required_drivers ?? 0;
+            $available = max(0, $assigned - $onLeave);
+            $required  = $c->required_vehicles_count ?? $c->required_drivers ?? 0;
             $deficit   = $required > 0 ? max(0, $required - $available) : 0;
 
             return [
@@ -88,9 +111,9 @@ class OperationsController extends Controller
                 'deficit'           => $deficit,
                 'has_deficit'       => $deficit > 0,
                 'orders_today'      => (int) ($ordersToday[$c->id] ?? 0),
-                'daily_target'      => $c->daily_target ?? 0,
+                'daily_target'      => $c->default_daily_target ?? $c->daily_target ?? 0,
                 'orders_month'      => (int) ($ordersMonth[$c->id] ?? 0),
-                'monthly_target'    => $c->monthly_target ?? 0,
+                'monthly_target'    => $c->default_monthly_target ?? $c->monthly_target ?? 0,
             ];
         });
 
