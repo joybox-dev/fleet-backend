@@ -14,7 +14,7 @@ class VehicleController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $perPage = min(max($request->integer('per_page', 50), 5), 100);
+        $perPage = $request->boolean('all') ? 5000 : min(max($request->integer('per_page', 50), 5), 1000);
         $vehicles = Vehicle::query()
             ->with(['vehicleType:id,name,name_ar', 'activeAssignment.employee:id,name', 'activeAssignment.contract:id,name'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
