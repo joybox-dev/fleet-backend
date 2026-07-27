@@ -21,11 +21,8 @@ class VehicleController extends Controller
             ->when($request->vehicle_type_id, fn($q) => $q->where('vehicle_type_id', $request->vehicle_type_id))
             ->when($request->contract_id, function ($q) use ($request) {
                 $contractId = $request->contract_id;
-                $q->where(function ($subQuery) use ($contractId) {
-                    $subQuery->whereHas('activeAssignment', fn($a) => $a->where('contract_id', $contractId))
-                        ->orWhereHas('activeAssignment.employee.contractAssignments', function ($ca) use ($contractId) {
-                            $ca->where('contract_id', $contractId)->where('status', 'active');
-                        });
+                $q->whereHas('activeAssignment.employee.contractAssignments', function ($ca) use ($contractId) {
+                    $ca->where('contract_id', $contractId)->where('status', 'active');
                 });
             })
             ->when($request->search, fn($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
