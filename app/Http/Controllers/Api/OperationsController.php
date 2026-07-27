@@ -33,28 +33,20 @@ class OperationsController extends Controller
         $contracts = $query->get();
         $contractIds = $contracts->pluck('id');
 
-        // Batch: active driver contract assignments
+        // Batch: active driver contract assignments (The single source of truth for driver contract assignment)
         $contractAssignments = \App\Models\ContractAssignment::whereIn('contract_id', $contractIds)
             ->where('status', 'active')
             ->select('contract_id', 'employee_id')
             ->get()
             ->groupBy('contract_id');
 
-        // Batch: active vehicle assignments
-        $vehicleAssignments = VehicleAssignment::whereIn('contract_id', $contractIds)
-            ->whereNull('unassigned_date')
-            ->select('contract_id', 'employee_id')
-            ->get()
-            ->groupBy('contract_id');
-
-        // Collect all assigned employee IDs per contract
+        // Collect assigned employee IDs per contract
         $allAssignedEmployeeIds = collect();
         $assignedCountsPerContract = [];
         $employeesByContract = [];
 
         foreach ($contractIds as $cId) {
             $cEmps = ($contractAssignments[$cId] ?? collect())->pluck('employee_id')
-                ->merge(($vehicleAssignments[$cId] ?? collect())->pluck('employee_id'))
                 ->filter()
                 ->unique()
                 ->values();
