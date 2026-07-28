@@ -13,26 +13,6 @@ class RoleController extends Controller
     {
         $companyId = app('current_company_id') ?? 1;
         $roles = Role::where('company_id', $companyId)->get();
-
-        if ($roles->isEmpty()) {
-            $defaultRoles = [
-                ['name' => 'أدمن رئيسي', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves', 'custody', 'payroll', 'cash', 'reports', 'clients', 'contracts', 'settings']],
-                ['name' => 'موظف عقود', 'allowed_modules' => ['clients', 'contracts']],
-                ['name' => 'محاسب رواتب', 'allowed_modules' => ['payroll', 'cash', 'reports']],
-                ['name' => 'مشرف', 'allowed_modules' => ['daily_logs', 'vehicles', 'maintenance', 'violations', 'employees', 'leaves']]
-            ];
-
-            foreach ($defaultRoles as $def) {
-                Role::create([
-                    'company_id' => $companyId,
-                    'name' => $def['name'],
-                    'allowed_modules' => $def['allowed_modules']
-                ]);
-            }
-
-            $roles = Role::where('company_id', $companyId)->get();
-        }
-
         return response()->json($roles);
     }
 
