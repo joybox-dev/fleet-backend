@@ -105,16 +105,11 @@ class EmployeeController extends Controller
             $roleName = 'admin';
             $numericAdminRoleId = is_numeric($roleId) ? (int)$roleId : null;
             if (!empty($roleId)) {
-                $roleModel = \App\Models\Role::where('id', $roleId)->orWhere('name', $roleId)->first();
-                if (!$roleModel && !is_numeric($roleId)) {
-                    if (str_contains(strtolower($roleId), 'contract')) {
-                        $roleModel = \App\Models\Role::where('company_id', $companyId)
-                            ->where(function($q) {
-                                $q->where('name', 'like', '%عقود%')
-                                  ->orWhere('name', 'like', '%مشرف%');
-                            })->first();
-                    }
-                }
+                $roleModel = \App\Models\Role::where('company_id', $companyId)
+                    ->where(function($q) use ($roleId) {
+                        $q->where('id', $roleId)->orWhere('name', $roleId);
+                    })->first();
+
                 if ($roleModel) {
                     $roleName = $roleModel->name;
                     $numericAdminRoleId = $roleModel->id;
@@ -225,16 +220,11 @@ class EmployeeController extends Controller
             $roleName = 'admin';
             $numericAdminRoleId = is_numeric($roleId) ? (int)$roleId : null;
             if (!empty($roleId)) {
-                $roleModel = \App\Models\Role::where('id', $roleId)->orWhere('name', $roleId)->first();
-                if (!$roleModel && !is_numeric($roleId)) {
-                    if (str_contains(strtolower($roleId), 'contract')) {
-                        $roleModel = \App\Models\Role::where('company_id', $companyId)
-                            ->where(function($q) {
-                                $q->where('name', 'like', '%عقود%')
-                                  ->orWhere('name', 'like', '%مشرف%');
-                            })->first();
-                    }
-                }
+                $roleModel = \App\Models\Role::where('company_id', $companyId)
+                    ->where(function($q) use ($roleId) {
+                        $q->where('id', $roleId)->orWhere('name', $roleId);
+                    })->first();
+
                 if ($roleModel) {
                     $roleName = $roleModel->name;
                     $numericAdminRoleId = $roleModel->id;
