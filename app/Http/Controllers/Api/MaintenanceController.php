@@ -45,6 +45,8 @@ class MaintenanceController extends Controller
 
         $validated['reported_by'] = $request->user()->id;
         $validated['status']      = 'pending';
+        $validated['estimated_cost'] = $validated['estimated_cost'] ?? 0.00;
+        $validated['driver_deduction'] = $validated['driver_deduction'] ?? 0.00;
 
         // Auto-calculate driver deduction and company bearing percentage for accidents
         if ($validated['maintenance_type'] === 'accident') {
