@@ -126,7 +126,7 @@ class EmployeeController extends Controller
                 'name' => $employee->name,
                 'email' => $validated['email'],
                 'password' => bcrypt($validated['password'] ?? 'password123'),
-                'role' => $roleName,
+                'role' => mb_substr($roleName ?? 'admin', 0, 20),
                 'company_id' => $companyId,
             ]);
             $employee->update([
@@ -249,7 +249,7 @@ class EmployeeController extends Controller
                     $updateData = [
                         'name' => $employee->name,
                         'email' => $validated['email'],
-                        'role' => mb_substr($roleName, 0, 45),
+                        'role' => mb_substr($roleName ?? 'admin', 0, 20),
                     ];
                     if (!empty($validated['password'])) {
                         $updateData['password'] = bcrypt($validated['password']);
@@ -262,7 +262,7 @@ class EmployeeController extends Controller
                     'name' => $employee->name,
                     'email' => $validated['email'],
                     'password' => bcrypt($validated['password'] ?? 'password123'),
-                    'role' => mb_substr($roleName, 0, 45),
+                    'role' => mb_substr($roleName ?? 'admin', 0, 20),
                     'company_id' => $companyId,
                 ]);
                 $employee->update([
