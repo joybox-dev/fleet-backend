@@ -138,15 +138,14 @@ class PermissionService
         if ($roleModel && !empty($roleModel->allowed_modules)) {
             $effective = ['dashboard.view' => true];
             $modules = (array) $roleModel->allowed_modules;
-            foreach (self::ALL_PERMISSIONS as $perm) {
-                $mod = explode('.', $perm)[0];
-                if (in_array($mod, $modules)) {
-                    $effective[$perm] = true;
-                }
-            }
-        } else if ($role === 'role_contracts' || str_contains(strtolower($role), 'contract') || str_contains($role, 'عقود')) {
-            $effective = ['dashboard.view' => true];
-            $modules = ['clients', 'contracts'];
+
+            // Auto-map sub-modules
+            if (in_array('daily_logs', $modules)) $modules[] = 'operations';
+            if (in_array('employees', $modules)) $modules[] = 'evaluations';
+            if (in_array('custody', $modules)) $modules[] = 'guarantees';
+            if (in_array('payroll', $modules)) $modules[] = 'salary_advances';
+            if (in_array('vehicles', $modules)) $modules[] = 'vehicle_expenses';
+
             foreach (self::ALL_PERMISSIONS as $perm) {
                 $mod = explode('.', $perm)[0];
                 if (in_array($mod, $modules)) {
