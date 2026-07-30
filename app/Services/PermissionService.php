@@ -112,7 +112,7 @@ class PermissionService
     public static function resolve(string $role, ?array $overrides = null, bool $isSuperAdmin = false, ?User $user = null): array
     {
         // Super admin gets everything
-        if ($isSuperAdmin) {
+        if ($isSuperAdmin || ($user && $user->isSuperAdmin())) {
             return array_fill_keys(self::ALL_PERMISSIONS, true);
         }
 
@@ -128,10 +128,13 @@ class PermissionService
         }
 
         // 2. Try finding by name or ID in roles table
-        if (!$roleModel) {
-            $roleModel = \App\Models\Role::where('name', $role)
-                ->orWhere('id', $role)
-                ->orWhere('name', 'like', "%{$role}%")
+        if (!$roleModel && $user) {
+            $companyId = $user->company_id ?? app('current_company_id');
+            $roleModel = \App\Models\Role::where('company_id', $companyId)
+                ->where(function($q) use ($role) {
+                    $q->where('name', $role)
+                      ->orWhere('id', $role);
+                })
                 ->first();
         }
 
@@ -152,11 +155,11 @@ class PermissionService
                     $effective[$perm] = true;
                 }
             }
-        } else if (isset(self::ROLE_DEFAULTS[$role])) {
+        } else if (isset(self::ROLE_DEFAULTS[$role]) && $role !== 'admin') {
             $effective = self::ROLE_DEFAULTS[$role];
         } else {
-            // Fallback to full admin permissions
-            $effective = self::ROLE_DEFAULTS['admin'];
+            // Default minimal permissions for non-superadmin assigned employee
+            $effective = ['dashboard.view' => true];
         }
 
         // Merge user-level overrides (they win over role defaults)
