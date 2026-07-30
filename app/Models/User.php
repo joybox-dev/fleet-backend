@@ -61,7 +61,8 @@ class User extends Authenticatable
         return PermissionService::resolve(
             $this->role ?? 'admin',
             $this->permissions,
-            $this->isSuperAdmin()
+            $this->isSuperAdmin(),
+            $this
         );
     }
 
@@ -76,7 +77,8 @@ class User extends Authenticatable
                 $this->role ?? 'admin',
                 $ability,
                 $this->permissions,
-                $this->isSuperAdmin()
+                $this->isSuperAdmin(),
+                $this
             );
         }
 

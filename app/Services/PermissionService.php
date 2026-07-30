@@ -124,25 +124,22 @@ class PermissionService
         $roleModel = null;
 
         if ($user) {
-            // 1. Try finding role model directly from Employee assignment (by user_id or email)
-            $employee = Employee::where(function($q) use ($user) {
-                $q->where('user_id', $user->id);
-                if (!empty($user->email)) {
-                    $q->orWhere('email', $user->email);
-                }
-            })
-            ->whereNotNull('admin_role_id')
-            ->first();
+            // 1. Try finding role model directly from Employee assignment (by user_id)
+            $employee = Employee::withoutGlobalScopes()
+                ->where('user_id', $user->id)
+                ->whereNotNull('admin_role_id')
+                ->first();
 
             if ($employee && $employee->admin_role_id) {
-                $roleModel = Role::find($employee->admin_role_id);
+                $roleModel = Role::withoutGlobalScopes()->find($employee->admin_role_id);
             }
         }
 
         // 2. Try finding by custom role ID or custom name in roles table (ignoring system role key 'admin')
         if (!$roleModel && $user && !in_array($role, ['admin', 'super_admin', 'operator', 'accountant', 'driver'])) {
             $companyId = $user->company_id ?? app('current_company_id');
-            $roleModel = Role::where('company_id', $companyId)
+            $roleModel = Role::withoutGlobalScopes()
+                ->where('company_id', $companyId)
                 ->where(function($q) use ($role) {
                     $q->where('name', $role)
                       ->orWhere('id', $role);
@@ -187,18 +184,13 @@ class PermissionService
     /**
      * Check a single permission for a user.
      */
-    public static function can(string $role, string $permission, ?array $overrides = null, bool $isSuperAdmin = false): bool
+    public static function can(string $role, string $permission, ?array $overrides = null, bool $isSuperAdmin = false, ?User $user = null): bool
     {
         if ($isSuperAdmin) {
             return true;
         }
 
-        // Check override first
-        if ($overrides && array_key_exists($permission, $overrides)) {
-            return (bool) $overrides[$permission];
-        }
-
-        // Fall back to role default
-        return (bool) (self::ROLE_DEFAULTS[$role][$permission] ?? false);
+        $resolved = self::resolve($role, $overrides, $isSuperAdmin, $user);
+        return !empty($resolved[$permission]);
     }
 }
