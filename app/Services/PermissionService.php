@@ -2,6 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\User;
+use App\Models\Employee;
+use App\Models\Role;
+
 /**
  * Resolves effective permissions for a user.
  *
@@ -119,18 +123,26 @@ class PermissionService
         $user = $user ?? auth()->user();
         $roleModel = null;
 
-        // 1. Try finding role model directly from Employee assignment
         if ($user) {
-            $employee = \App\Models\Employee::where('user_id', $user->id)->first();
+            // 1. Try finding role model directly from Employee assignment (by user_id or email)
+            $employee = Employee::where(function($q) use ($user) {
+                $q->where('user_id', $user->id);
+                if (!empty($user->email)) {
+                    $q->orWhere('email', $user->email);
+                }
+            })
+            ->whereNotNull('admin_role_id')
+            ->first();
+
             if ($employee && $employee->admin_role_id) {
-                $roleModel = \App\Models\Role::find($employee->admin_role_id);
+                $roleModel = Role::find($employee->admin_role_id);
             }
         }
 
-        // 2. Try finding by name or ID in roles table
-        if (!$roleModel && $user) {
+        // 2. Try finding by custom role ID or custom name in roles table (ignoring system role key 'admin')
+        if (!$roleModel && $user && !in_array($role, ['admin', 'super_admin', 'operator', 'accountant', 'driver'])) {
             $companyId = $user->company_id ?? app('current_company_id');
-            $roleModel = \App\Models\Role::where('company_id', $companyId)
+            $roleModel = Role::where('company_id', $companyId)
                 ->where(function($q) use ($role) {
                     $q->where('name', $role)
                       ->orWhere('id', $role);
@@ -155,11 +167,11 @@ class PermissionService
                     $effective[$perm] = true;
                 }
             }
-        } else if (isset(self::ROLE_DEFAULTS[$role]) && $role !== 'admin') {
+        } else if (isset(self::ROLE_DEFAULTS[$role])) {
             $effective = self::ROLE_DEFAULTS[$role];
         } else {
-            // Default minimal permissions for non-superadmin assigned employee
-            $effective = ['dashboard.view' => true];
+            // Fallback for company admin users with no custom role assigned
+            $effective = self::ROLE_DEFAULTS['admin'];
         }
 
         // Merge user-level overrides (they win over role defaults)
