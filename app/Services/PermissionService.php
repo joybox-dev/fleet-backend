@@ -140,8 +140,8 @@ class PermissionService
             }
         }
 
-        // 2. Try finding by custom role ID or custom name in roles table (ignoring system role key 'admin')
-        if (!$roleModel && $user && !in_array($role, ['admin', 'super_admin', 'operator', 'accountant', 'driver'])) {
+        // 2. Try finding by custom role ID or custom name in roles table
+        if (!$roleModel && $user && !in_array($role, ['super_admin', 'driver'])) {
             $companyId = $user->company_id ?? app('current_company_id');
             $roleModel = Role::withoutGlobalScopes()
                 ->where('company_id', $companyId)

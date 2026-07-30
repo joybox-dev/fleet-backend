@@ -24,6 +24,10 @@ class MaintenanceController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('maintenance.create')) {
+            return response()->json(['message' => 'غير مصرح لك بتقديم طلب صيانة.'], 403);
+        }
+
         $validated = $request->validate([
             'vehicle_id'        => 'required|exists:vehicles,id',
             'garage_name'       => 'nullable|string|max:255',
@@ -85,6 +89,10 @@ class MaintenanceController extends Controller
 
     public function update(Request $request, MaintenanceRecord $maintenance): JsonResponse
     {
+        if (!$request->user()->can('maintenance.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل سجلات الصيانة.'], 403);
+        }
+
         if (in_array($maintenance->status, ['approved', 'completed'])) {
             return response()->json(['message' => 'Cannot edit an approved or completed record.'], 403);
         }
@@ -128,8 +136,12 @@ class MaintenanceController extends Controller
         return response()->json($maintenance->fresh());
     }
 
-    public function destroy(MaintenanceRecord $maintenance): JsonResponse
+    public function destroy(Request $request, MaintenanceRecord $maintenance): JsonResponse
     {
+        if (!$request->user()->can('maintenance.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف سجلات الصيانة.'], 403);
+        }
+
         $maintenance->delete();
         return response()->json(['message' => 'Record deleted.']);
     }
@@ -140,6 +152,10 @@ class MaintenanceController extends Controller
      */
     public function approve(Request $request, MaintenanceRecord $maintenance): JsonResponse
     {
+        if (!$request->user()->can('maintenance.edit')) {
+            return response()->json(['message' => 'غير مصرح لك واعتماد طلبات الصيانة.'], 403);
+        }
+
         if ($maintenance->status !== 'pending') {
             return response()->json(['message' => 'Only pending records can be approved.'], 422);
         }

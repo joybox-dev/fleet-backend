@@ -160,6 +160,7 @@ class BugFixesTest extends TestCase
             'pay_type' => 'fixed',
             'official_salary' => 300,
             'actual_salary' => 300,
+            'role_category' => 'driver',
         ]);
 
         $vehicle = Vehicle::create([

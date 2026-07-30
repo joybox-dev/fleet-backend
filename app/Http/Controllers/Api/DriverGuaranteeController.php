@@ -33,6 +33,10 @@ class DriverGuaranteeController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('guarantees.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة ضمانة جديدة.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id'     => 'required|exists:employees,id',
             'guarantee_type'  => 'required|in:passport,civil_id_copy,contract_copy,bank_guarantee,other',
@@ -64,6 +68,10 @@ class DriverGuaranteeController extends Controller
      */
     public function returnItem(Request $request, DriverGuarantee $guarantee): JsonResponse
     {
+        if (!$request->user()->can('guarantees.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتسجيل استرجاع الضمانة.'], 403);
+        }
+
         if ($guarantee->status === 'returned') {
             return response()->json(['message' => 'هذه الضمانة مرتجعة بالفعل.'], 422);
         }
@@ -87,8 +95,12 @@ class DriverGuaranteeController extends Controller
     /**
      * DELETE /api/guarantees/{guarantee}
      */
-    public function destroy(DriverGuarantee $guarantee): JsonResponse
+    public function destroy(Request $request, DriverGuarantee $guarantee): JsonResponse
     {
+        if (!$request->user()->can('guarantees.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف الضمانات.'], 403);
+        }
+
         $guarantee->delete();
         return response()->json(['message' => 'تم الحذف.']);
     }

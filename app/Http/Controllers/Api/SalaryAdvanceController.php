@@ -34,6 +34,10 @@ class SalaryAdvanceController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('salary_advances.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة سلفة جـديدة.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id'         => 'required|exists:employees,id',
             'amount'              => 'required|numeric|min:1',
@@ -88,8 +92,12 @@ class SalaryAdvanceController extends Controller
     /**
      * POST /api/salary-advances/{salaryAdvance}/cancel
      */
-    public function cancel(SalaryAdvance $salaryAdvance): JsonResponse
+    public function cancel(Request $request, SalaryAdvance $salaryAdvance): JsonResponse
     {
+        if (!$request->user()->can('salary_advances.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بإلغاء السلف.'], 403);
+        }
+
         if ($salaryAdvance->status !== 'active') {
             return response()->json([
                 'message' => 'لا يمكن إلغاء سلفة غير فعّالة.',

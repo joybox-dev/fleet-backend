@@ -37,6 +37,10 @@ class EmployeeController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('employees.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة موظف جديد.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         if ($request->filled('email')) {
@@ -145,6 +149,10 @@ class EmployeeController extends Controller
 
     public function update(Request $request, Employee $employee): JsonResponse
     {
+        if (!$request->user()->can('employees.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات الموظفين.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         if ($request->filled('email')) {
@@ -274,8 +282,12 @@ class EmployeeController extends Controller
         ]);
     }
 
-    public function destroy(Employee $employee): JsonResponse
+    public function destroy(Request $request, Employee $employee): JsonResponse
     {
+        if (!$request->user()->can('employees.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف الموظفين.'], 403);
+        }
+
         $blocks = $employee->getDeletionBlocks();
         if (!empty($blocks)) {
             return response()->json([
@@ -378,6 +390,10 @@ class EmployeeController extends Controller
 
     public function bulkDestroy(Request $request): JsonResponse
     {
+        if (!$request->user()->can('employees.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف الموظفين.'], 403);
+        }
+
         $validated = $request->validate([
             'ids' => 'required|array',
             'ids.*' => 'integer|exists:employees,id',

@@ -42,6 +42,10 @@ class VehicleController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('vehicles.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة مركبة جديدة.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -97,6 +101,10 @@ class VehicleController extends Controller
 
     public function update(Request $request, Vehicle $vehicle): JsonResponse
     {
+        if (!$request->user()->can('vehicles.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات المركبات.'], 403);
+        }
+
         $validated = $request->validate([
             'status'                            => 'sometimes|in:available,working,maintenance,idle',
             'ownership_type'                    => 'sometimes|string|in:rented,installment,owned',
@@ -125,8 +133,12 @@ class VehicleController extends Controller
         ]);
     }
 
-    public function destroy(Vehicle $vehicle): JsonResponse
+    public function destroy(Request $request, Vehicle $vehicle): JsonResponse
     {
+        if (!$request->user()->can('vehicles.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف المركبات.'], 403);
+        }
+
         $blocks = $vehicle->getDeletionBlocks();
         if (!empty($blocks)) {
             return response()->json([
@@ -251,6 +263,10 @@ class VehicleController extends Controller
 
     public function bulkDestroy(Request $request): JsonResponse
     {
+        if (!$request->user()->can('vehicles.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف المركبات.'], 403);
+        }
+
         $validated = $request->validate([
             'ids' => 'required|array',
             'ids.*' => 'integer|exists:vehicles,id',

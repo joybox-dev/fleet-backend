@@ -24,6 +24,10 @@ class ClientController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('clients.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة عميل جديد.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -67,6 +71,10 @@ class ClientController extends Controller
 
     public function update(Request $request, Client $client): JsonResponse
     {
+        if (!$request->user()->can('clients.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات العملاء.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -107,8 +115,12 @@ class ClientController extends Controller
         ]);
     }
 
-    public function destroy(Client $client): JsonResponse
+    public function destroy(Request $request, Client $client): JsonResponse
     {
+        if (!$request->user()->can('clients.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف العملاء.'], 403);
+        }
+
         $blocks = $client->getDeletionBlocks();
         if (!empty($blocks)) {
             return response()->json([

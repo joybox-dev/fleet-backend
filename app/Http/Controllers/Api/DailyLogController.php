@@ -51,6 +51,10 @@ class DailyLogController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('daily_logs.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة سجلات تشغيل.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
@@ -258,6 +262,10 @@ class DailyLogController extends Controller
      */
     public function bulkStore(Request $request): JsonResponse
     {
+        if (!$request->user()->can('daily_logs.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة سجلات تشغيل.'], 403);
+        }
+
         $logs = $request->input('logs', []);
         if (!is_array($logs) || empty($logs)) {
             return response()->json(['message' => 'قائمة السجلات فارغة.'], 422);
@@ -418,6 +426,10 @@ class DailyLogController extends Controller
      */
     public function update(Request $request, DailyLog $dailyLog): JsonResponse
     {
+        if (!$request->user()->can('daily_logs.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل سجلات التشغيل.'], 403);
+        }
+
         // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
         $total = $request->has('orders_count') ? (int) $request->input('orders_count') : (int) $dailyLog->orders_count;
 
@@ -446,13 +458,19 @@ class DailyLogController extends Controller
                     'orders_cash' => 0
                 ]);
             } else {
-                $online = $request->input('orders_online');
-                $cash = $request->input('orders_cash');
-                if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
-                    $request->merge([
-                        'orders_online' => $total,
-                        'orders_cash' => 0
-                    ]);
+                $hasOnline = $request->has('orders_online');
+                $hasCash   = $request->has('orders_cash');
+                if (!$hasOnline && !$hasCash && ($dailyLog->orders_online > 0 || $dailyLog->orders_cash > 0)) {
+                    // Do not auto-merge when updating orders_count if dailyLog already has orders breakdown
+                } else {
+                    $online = $request->input('orders_online');
+                    $cash   = $request->input('orders_cash');
+                    if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
+                        $request->merge([
+                            'orders_online' => $total,
+                            'orders_cash'   => 0
+                        ]);
+                    }
                 }
             }
         }
@@ -540,8 +558,12 @@ class DailyLogController extends Controller
     /**
      * DELETE /api/daily-logs/{id}
      */
-    public function destroy(DailyLog $dailyLog): JsonResponse
+    public function destroy(Request $request, DailyLog $dailyLog): JsonResponse
     {
+        if (!$request->user()->can('daily_logs.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف سجلات التشغيل.'], 403);
+        }
+
         $dailyLog->delete();
         return response()->json(['message' => 'Log deleted.']);
     }

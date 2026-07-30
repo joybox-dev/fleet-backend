@@ -39,6 +39,10 @@ class PayrollController extends Controller
      */
     public function run(Request $request): JsonResponse
     {
+        if (!$request->user()->can('payroll.create')) {
+            return response()->json(['message' => 'غير مصرح لك باحتساب الرواتب.'], 403);
+        }
+
         $validated = $request->validate([
             'year' => 'required|integer|min:2020|max:2030',
             'month' => 'required|integer|min:1|max:12',
@@ -385,6 +389,10 @@ class PayrollController extends Controller
      */
     public function approve(Request $request, int $year, int $month): JsonResponse
     {
+        if (!$request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك باكتفاء أو اعتماد مسير الرواتب.'], 403);
+        }
+
         $run = PayrollRun::where('year', $year)->where('month', $month)->firstOrFail();
 
         if ($run->status !== 'draft') {

@@ -60,6 +60,10 @@ class LeaveController extends Controller
      * ══════════════════════════════════════════════════════════════════ */
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('leaves.create')) {
+            return response()->json(['message' => 'غير مصرح لك بتقديم طلب إجازة.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id'   => 'required|exists:employees,id',
             'leave_type_id' => 'required|exists:leave_types,id',
@@ -156,6 +160,10 @@ class LeaveController extends Controller
      * ══════════════════════════════════════════════════════════════════ */
     public function update(Request $request, EmployeeLeave $leave): JsonResponse
     {
+        if (!$request->user()->can('leaves.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل طلبات الإجازة.'], 403);
+        }
+
         if ($leave->status !== 'pending') {
             return response()->json(['message' => 'لا يمكن تعديل إجازة غير معلقة.'], 422);
         }
@@ -192,6 +200,10 @@ class LeaveController extends Controller
      * ══════════════════════════════════════════════════════════════════ */
     public function approve(Request $request, EmployeeLeave $leave): JsonResponse
     {
+        if (!$request->user()->can('leaves.edit')) {
+            return response()->json(['message' => 'غير مصرح لك باكتفاء أو اعتماد الإجازات.'], 403);
+        }
+
         if ($leave->status !== 'pending') {
             return response()->json(['message' => 'هذه الإجازة ليست في حالة انتظار.'], 422);
         }
@@ -218,6 +230,10 @@ class LeaveController extends Controller
      * ══════════════════════════════════════════════════════════════════ */
     public function reject(Request $request, EmployeeLeave $leave): JsonResponse
     {
+        if (!$request->user()->can('leaves.edit')) {
+            return response()->json(['message' => 'غير مصرح لك برفض طلبات الإجازة.'], 403);
+        }
+
         if ($leave->status !== 'pending') {
             return response()->json(['message' => 'هذه الإجازة ليست في حالة انتظار.'], 422);
         }
@@ -241,8 +257,12 @@ class LeaveController extends Controller
      * DELETE /api/leaves/{leave}
      * Cancel/delete a pending leave.
      * ══════════════════════════════════════════════════════════════════ */
-    public function destroy(EmployeeLeave $leave): JsonResponse
+    public function destroy(Request $request, EmployeeLeave $leave): JsonResponse
     {
+        if (!$request->user()->can('leaves.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بإلغاء الإجازات.'], 403);
+        }
+
         if (!in_array($leave->status, ['pending', 'approved'])) {
             return response()->json(['message' => 'لا يمكن إلغاء هذه الإجازة.'], 422);
         }

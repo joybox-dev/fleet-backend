@@ -40,6 +40,10 @@ class VehicleExpenseController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('vehicle_expenses.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة مصاريف مركبـة.'], 403);
+        }
+
         $validated = $request->validate([
             'vehicle_id'   => 'required|exists:vehicles,id',
             'expense_type' => 'required|in:fuel,insurance,tires,registration,fine,repair,other',
@@ -71,6 +75,10 @@ class VehicleExpenseController extends Controller
      */
     public function update(Request $request, VehicleExpense $vehicleExpense): JsonResponse
     {
+        if (!$request->user()->can('vehicle_expenses.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل مصاريف المركبة.'], 403);
+        }
+
         $validated = $request->validate([
             'vehicle_id'   => 'sometimes|exists:vehicles,id',
             'expense_type' => 'sometimes|in:fuel,insurance,tires,registration,fine,repair,other',
@@ -91,8 +99,12 @@ class VehicleExpenseController extends Controller
     /**
      * DELETE /api/vehicle-expenses/{vehicleExpense}
      */
-    public function destroy(VehicleExpense $vehicleExpense): JsonResponse
+    public function destroy(Request $request, VehicleExpense $vehicleExpense): JsonResponse
     {
+        if (!$request->user()->can('vehicle_expenses.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف مصاريف المركبة.'], 403);
+        }
+
         $vehicleExpense->delete();
         return response()->json(['message' => 'تم الحذف.']);
     }

@@ -33,6 +33,10 @@ class ContractController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('contracts.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة عقد جديد.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -123,6 +127,10 @@ class ContractController extends Controller
 
     public function update(Request $request, Contract $contract): JsonResponse
     {
+        if (!$request->user()->can('contracts.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل العقود.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
@@ -199,8 +207,12 @@ class ContractController extends Controller
         ]);
     }
 
-    public function destroy(Contract $contract): JsonResponse
+    public function destroy(Request $request, Contract $contract): JsonResponse
     {
+        if (!$request->user()->can('contracts.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف العقود.'], 403);
+        }
+
         $blocks = $contract->getDeletionBlocks();
         if (!empty($blocks)) {
             return response()->json([

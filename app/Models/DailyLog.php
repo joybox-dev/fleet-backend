@@ -16,7 +16,7 @@ class DailyLog extends Model
         'orders_count', 'orders_online', 'orders_cash',
         'cash_collected', 'cash_settled', 'cash_pending',
         'rate_per_order', 'income_amount',
-        'odometer_start', 'odometer_end', 'notes',
+        'odometer_start', 'odometer_end', 'odometer_photo_path', 'notes',
         'erp_id', 'erp_synced_at', 'erp_sync_status',
         'driver_commission',
         

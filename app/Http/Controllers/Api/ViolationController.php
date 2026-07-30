@@ -62,6 +62,10 @@ class ViolationController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('violations.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة مخالفات.'], 403);
+        }
+
         $companyId = app('current_company_id');
 
         $request->validate([
@@ -219,6 +223,10 @@ class ViolationController extends Controller
 
     public function update(Request $request, Violation $violation): JsonResponse
     {
+        if (!$request->user()->can('violations.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل المخالفات.'], 403);
+        }
+
         if ($violation->is_deducted) {
             return response()->json(['message' => 'Cannot edit a violation that has been deducted from payroll.'], 403);
         }
@@ -309,8 +317,12 @@ class ViolationController extends Controller
         return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract']));
     }
 
-    public function destroy(Violation $violation): JsonResponse
+    public function destroy(Request $request, Violation $violation): JsonResponse
     {
+        if (!$request->user()->can('violations.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف المخالفات.'], 403);
+        }
+
         if ($violation->is_deducted) {
             return response()->json(['message' => 'Cannot delete a deducted violation.'], 403);
         }

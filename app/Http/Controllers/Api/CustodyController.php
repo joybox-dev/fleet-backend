@@ -26,6 +26,10 @@ class CustodyController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('custody.create')) {
+            return response()->json(['message' => 'غير مصرح لك بتسليم عُهدة جديدة.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id'     => 'required|exists:employees,id',
             'item_type'       => 'nullable|in:phone,sim,clothing,cash,other',
@@ -54,6 +58,10 @@ class CustodyController extends Controller
 
     public function update(Request $request, CustodyItem $custody): JsonResponse
     {
+        if (!$request->user()->can('custody.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات العُهدة.'], 403);
+        }
+
         if ($custody->status === 'returned') {
             return response()->json(['message' => 'لا يمكن تعديل عُهدة تم إرجاعها.'], 422);
         }
@@ -68,8 +76,12 @@ class CustodyController extends Controller
         return response()->json($custody->fresh());
     }
 
-    public function destroy(CustodyItem $custody): JsonResponse
+    public function destroy(Request $request, CustodyItem $custody): JsonResponse
     {
+        if (!$request->user()->can('custody.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف العُهد.'], 403);
+        }
+
         $custody->delete();
         return response()->json(['message' => 'Custody item deleted.']);
     }
@@ -79,6 +91,10 @@ class CustodyController extends Controller
      */
     public function returnItem(Request $request, CustodyItem $custody): JsonResponse
     {
+        if (!$request->user()->can('custody.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتسجيل استرجاع العُهد.'], 403);
+        }
+
         if ($custody->status === 'returned') {
             return response()->json(['message' => 'تم إرجاع العُهدة مسبقاً.'], 422);
         }
