@@ -157,15 +157,26 @@ class PermissionService
             $modules = (array) $roleModel->allowed_modules;
 
             // Auto-map sub-modules
-            if (in_array('daily_logs', $modules)) $modules[] = 'operations';
+            if (in_array('daily_logs', $modules) || in_array('daily_logs.view', $modules)) $modules[] = 'operations.view';
             if (in_array('employees', $modules)) $modules[] = 'evaluations';
             if (in_array('custody', $modules)) $modules[] = 'guarantees';
             if (in_array('payroll', $modules)) $modules[] = 'salary_advances';
             if (in_array('vehicles', $modules)) $modules[] = 'vehicle_expenses';
 
+            // Handle granular permission mapping for sub-modules if present
+            foreach ($modules as $m) {
+                if (str_contains($m, '.')) {
+                    [$modName, $actName] = explode('.', $m);
+                    if ($modName === 'employees') $modules[] = "evaluations.{$actName}";
+                    if ($modName === 'custody') $modules[] = "guarantees.{$actName}";
+                    if ($modName === 'payroll' && in_array($actName, ['view', 'create', 'edit'])) $modules[] = "salary_advances.{$actName}";
+                    if ($modName === 'vehicles' && in_array($actName, ['view', 'create', 'edit'])) $modules[] = "vehicle_expenses.{$actName}";
+                }
+            }
+
             foreach (self::ALL_PERMISSIONS as $perm) {
                 $mod = explode('.', $perm)[0];
-                if (in_array($mod, $modules)) {
+                if (in_array($perm, $modules) || in_array($mod, $modules)) {
                     $effective[$perm] = true;
                 }
             }
