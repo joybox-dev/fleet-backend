@@ -126,7 +126,12 @@ class PermissionService
         if ($user) {
             // 1. Try finding role model directly from Employee assignment (by user_id)
             $employee = Employee::withoutGlobalScopes()
-                ->where('user_id', $user->id)
+                ->where(function($q) use ($user) {
+                    $q->where('user_id', $user->id);
+                    if (!empty($user->email)) {
+                        $q->orWhere('email', $user->email);
+                    }
+                })
                 ->whereNotNull('admin_role_id')
                 ->first();
 
