@@ -129,7 +129,9 @@ class PermissionService
                 ->where(function($q) use ($user) {
                     $q->where('user_id', $user->id);
                     if (!empty($user->email)) {
-                        $q->orWhere('email', $user->email);
+                        $q->orWhereHas('user', function($uq) use ($user) {
+                            $uq->where('email', $user->email);
+                        });
                     }
                 })
                 ->whereNotNull('admin_role_id')
