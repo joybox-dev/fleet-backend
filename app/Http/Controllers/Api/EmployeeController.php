@@ -83,10 +83,10 @@ class EmployeeController extends Controller
             'premium_commission_rate'=> 'nullable|numeric|min:0',
             
             'role_category'         => 'nullable|in:driver,admin',
-            'admin_role_id'         => 'nullable|exists:roles,id',
+            'admin_role_id'         => 'required_if:role_category,admin|nullable|exists:roles,id',
             'salary_allocations'    => 'nullable|array',
-            'email'                 => 'nullable|email|max:255|unique:users,email',
-            'password'              => 'nullable|string|min:6',
+            'email'                 => 'required_if:role_category,admin|nullable|email|max:255|unique:users,email',
+            'password'              => 'required_if:role_category,admin|nullable|string|min:6',
         ]);
 
         // ── Auto-generate employee number: EMP-0001, EMP-0002, ... ──
