@@ -32,7 +32,7 @@ class Company extends Model
         'dashboard', 'clients', 'contracts', 'employees', 'vehicles',
         'daily_logs', 'violations', 'maintenance', 'cash',
         'custody', 'leaves', 'payroll', 'reports', 'settings',
-        'guarantees', 'vehicle_expenses', 'salary_advances',
+        'guarantees', 'vehicle_expenses', 'salary_advances', 'op_advances',
     ];
 
     /**
@@ -42,7 +42,7 @@ class Company extends Model
         'dashboard', 'clients', 'contracts', 'employees', 'vehicles',
         'daily_logs', 'violations', 'maintenance', 'cash',
         'custody', 'leaves', 'payroll', 'reports', 'settings',
-        'guarantees', 'vehicle_expenses', 'salary_advances',
+        'guarantees', 'vehicle_expenses', 'salary_advances', 'op_advances',
         'operations', 'hr_documents', 'evaluations',
         'excel_import', 'accounting',
     ];
