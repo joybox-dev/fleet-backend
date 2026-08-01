@@ -19,6 +19,7 @@ class OperationalAdvanceController extends Controller
         // Check if user has permission to manage all operational advances
         $canManageAll = $user && (
             $user->isSuperAdmin() || 
+            $user->role === 'admin' ||
             $user->can('op_advances.create') || 
             $user->can('op_advances.edit') || 
             $user->can('op_advances.delete')
@@ -55,7 +56,7 @@ class OperationalAdvanceController extends Controller
         $companyId = app('current_company_id');
         $user = $request->user();
 
-        if ($user && !$user->isSuperAdmin() && !$user->can('op_advances.create') && !$user->can('op_advances.edit')) {
+        if ($user && !$user->isSuperAdmin() && $user->role !== 'admin' && !$user->can('op_advances.create') && !$user->can('op_advances.edit')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة عهدة تشغيلية جديدة.'], 403);
         }
 
