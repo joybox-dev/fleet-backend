@@ -16,20 +16,26 @@ class OperationalAdvanceController extends Controller
         $companyId = app('current_company_id');
         $user = $request->user();
 
-        // Check if user has permission to manage all operational advances
+        // Check if user has permission to manage all operational advances (requires explicit op_advances.create or super admin)
         $canManageAll = $user && (
             $user->isSuperAdmin() || 
-            $user->role === 'admin' ||
-            $user->can('op_advances.create') || 
-            $user->can('op_advances.edit') || 
-            $user->can('op_advances.delete')
+            $user->can('op_advances.create')
         );
 
         $employeeId = $request->employee_id;
 
         if (!$canManageAll) {
             // Scope to logged-in user's employee ID only
-            $userEmployee = \App\Models\Employee::where('user_id', $user?->id)->first();
+            $userEmployee = \App\Models\Employee::withoutGlobalScopes()
+                ->where(function($q) use ($user) {
+                    $q->where('user_id', $user?->id);
+                    if (!empty($user?->email)) {
+                        $q->orWhereHas('user', function($uq) use ($user) {
+                            $uq->where('email', $user->email);
+                        });
+                    }
+                })->first();
+
             if (!$userEmployee) {
                 return response()->json([]);
             }
