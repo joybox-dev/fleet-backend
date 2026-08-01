@@ -52,6 +52,7 @@ class PermissionService
         // Finance
         'payroll.view',       'payroll.create',    'payroll.edit',
         'salary_advances.view','salary_advances.create','salary_advances.edit',
+        'op_advances.view',   'op_advances.create', 'op_advances.edit', 'op_advances.delete',
         'reports.view',
 
         // Admin
@@ -81,6 +82,7 @@ class PermissionService
             'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true,
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
+            'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true,
             'reports.view' => true,
             'settings.view' => true,   'settings.edit' => true,
         ],

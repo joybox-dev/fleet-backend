@@ -14,9 +14,30 @@ class OperationalAdvanceController extends Controller
     public function index(Request $request): JsonResponse
     {
         $companyId = app('current_company_id');
+        $user = $request->user();
+
+        // Check if user has permission to manage all operational advances
+        $canManageAll = $user && (
+            $user->isSuperAdmin() || 
+            $user->can('op_advances.create') || 
+            $user->can('op_advances.edit') || 
+            $user->can('op_advances.delete')
+        );
+
+        $employeeId = $request->employee_id;
+
+        if (!$canManageAll) {
+            // Scope to logged-in user's employee ID only
+            $userEmployee = \App\Models\Employee::where('user_id', $user?->id)->first();
+            if (!$userEmployee) {
+                return response()->json([]);
+            }
+            $employeeId = $userEmployee->id;
+        }
+
         $advances = OperationalAdvance::with(['employee:id,name', 'approver:id,name', 'expenses.contract:id,name', 'returns'])
             ->where('company_id', $companyId)
-            ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
+            ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
             ->orderByDesc('date')
             ->get()
             ->map(function ($advance) {
@@ -34,6 +55,10 @@ class OperationalAdvanceController extends Controller
         $companyId = app('current_company_id');
         $user = $request->user();
 
+        if ($user && !$user->isSuperAdmin() && !$user->can('op_advances.create') && !$user->can('op_advances.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة عهدة تشغيلية جديدة.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id' => 'required|exists:employees,id',
             'amount' => 'required|numeric|min:0.001',
@@ -43,13 +68,9 @@ class OperationalAdvanceController extends Controller
 
         $validated['company_id'] = $companyId;
 
-        // Auto-approve if user is company admin
-        if ($user && ($user->role === 'admin' || $user->isSuperAdmin())) {
-            $validated['status'] = 'active';
-            $validated['approved_by'] = $user->id;
-        } else {
-            $validated['status'] = 'pending';
-        }
+        // Auto-approve if user has create/edit permission
+        $validated['status'] = 'active';
+        $validated['approved_by'] = $user->id;
 
         $advance = OperationalAdvance::create($validated);
 
