@@ -56,7 +56,10 @@ class OperationalAdvanceController extends Controller
         $companyId = app('current_company_id');
         $user = $request->user();
 
-        if ($user && !$user->isSuperAdmin() && $user->role !== 'admin' && !$user->can('op_advances.create') && !$user->can('op_advances.edit')) {
+        $canCreateActive = $user && ($user->isSuperAdmin() || $user->role === 'admin' || $user->can('op_advances.create') || $user->can('op_advances.edit'));
+        $canRequestPending = $user && ($user->role === 'operator' || $user->can('op_advances.view'));
+
+        if (!$canCreateActive && !$canRequestPending) {
             return response()->json(['message' => 'غير مصرح لك بإضافة عهدة تشغيلية جديدة.'], 403);
         }
 
@@ -69,9 +72,12 @@ class OperationalAdvanceController extends Controller
 
         $validated['company_id'] = $companyId;
 
-        // Auto-approve if user has create/edit permission
-        $validated['status'] = 'active';
-        $validated['approved_by'] = $user->id;
+        if ($canCreateActive) {
+            $validated['status'] = 'active';
+            $validated['approved_by'] = $user->id;
+        } else {
+            $validated['status'] = 'pending';
+        }
 
         $advance = OperationalAdvance::create($validated);
 
