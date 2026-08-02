@@ -166,8 +166,6 @@ class PermissionService
 
             // Auto-map sub-modules
             if (in_array('daily_logs', $modules) || in_array('daily_logs.view', $modules)) $modules[] = 'operations.view';
-            if (in_array('employees', $modules)) { $modules[] = 'evaluations'; $modules[] = 'driver_expenses'; }
-            if (in_array('payroll', $modules)) { $modules[] = 'driver_expenses'; }
             if (in_array('custody', $modules)) $modules[] = 'guarantees';
             if (in_array('vehicles', $modules)) $modules[] = 'vehicle_expenses';
 
@@ -175,8 +173,6 @@ class PermissionService
             foreach ($modules as $m) {
                 if (str_contains($m, '.')) {
                     [$modName, $actName] = explode('.', $m);
-                    if ($modName === 'employees') { $modules[] = "evaluations.{$actName}"; $modules[] = "driver_expenses.{$actName}"; }
-                    if ($modName === 'payroll') { $modules[] = "driver_expenses.{$actName}"; }
                     if ($modName === 'custody') $modules[] = "guarantees.{$actName}";
                     if ($modName === 'vehicles' && in_array($actName, ['view', 'create', 'edit'])) $modules[] = "vehicle_expenses.{$actName}";
                 }
