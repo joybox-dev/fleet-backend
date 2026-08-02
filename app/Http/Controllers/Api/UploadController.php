@@ -18,7 +18,7 @@ class UploadController extends Controller
     {
         $validated = $request->validate([
             'file'     => 'required|file|mimes:jpg,jpeg,png,webp,pdf|max:10240', // 10MB max
-            'category' => 'required|in:violations,maintenance,receipts,custody,documents,handovers',
+            'category' => 'required|in:violations,maintenance,receipts,expenses,custody,documents,handovers',
         ]);
 
         $file     = $request->file('file');
@@ -45,7 +45,7 @@ class UploadController extends Controller
         $validated = $request->validate([
             'files'    => 'required|array|min:1|max:10',
             'files.*'  => 'file|mimes:jpg,jpeg,png,webp,pdf|max:10240',
-            'category' => 'required|in:violations,maintenance,receipts,custody,documents,handovers',
+            'category' => 'required|in:violations,maintenance,receipts,expenses,custody,documents,handovers',
         ]);
 
         $category = $validated['category'];
