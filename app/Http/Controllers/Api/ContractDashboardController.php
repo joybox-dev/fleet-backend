@@ -148,7 +148,7 @@ class ContractDashboardController extends Controller
                     collect(), collect(), collect(), collect(), collect(), $allAssignmentsForEmp
                 );
 
-                $driverPaymentMethod = $contract->driver_payment_method ?? 'per_order';
+                $driverPaymentMethod = $contract->driver_payment_method ?: ($contract->payment_type ?: 'per_order');
                 if ($driverPaymentMethod === 'fixed') {
                     $driverSalariesAllocated += (float) ($emp->actual_salary ?? $emp->official_salary ?? 0) * $ratio;
                     $calculatedCommissions += (float) $slipData['orders_bonus'] * $ratio;
