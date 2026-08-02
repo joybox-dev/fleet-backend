@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\UploadController;
 use App\Http\Controllers\Api\CompanyController;
 use App\Http\Controllers\Api\SuperAdminCompanyController;
 use App\Http\Controllers\Api\DriverGuaranteeController;
+use App\Http\Controllers\Api\DriverExpenseController;
 use App\Http\Controllers\Api\VehicleExpenseController;
 use App\Http\Controllers\Api\VehicleExpenseTypeController;
 use App\Http\Controllers\Api\SalaryAdvanceController;
@@ -202,6 +203,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Custody Types — manage types
         Route::apiResource('custody-types', \App\Http\Controllers\Api\CustodyTypeController::class)->except(['show']);
+
+        // Driver Expenses
+        Route::apiResource('driver-expenses', DriverExpenseController::class);
 
         // ── Import/Export ─────────────────────────────────────
         Route::prefix('import')->group(function () {

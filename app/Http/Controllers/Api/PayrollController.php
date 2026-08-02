@@ -225,6 +225,7 @@ class PayrollController extends Controller
                     'violations_deduction' => $data['violations_deduction'],
                     'maintenance_deduction' => $data['maintenance_deduction'],
                     'custody_deduction' => $data['custody_deduction'],
+                    'driver_expense_deduction' => $data['driver_expense_deduction'] ?? 0,
                     'advance_deduction' => $data['advance_deduction'],
                     'leave_deduction' => $data['leave_deduction'],
                     'unpaid_leave_days' => $data['unpaid_leave_days'],
@@ -243,6 +244,15 @@ class PayrollController extends Controller
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
                         ->whereDate('violation_date', '<=', $endDate)
+                        ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
+                }
+
+                // Mark driver expenses as deducted
+                if (($data['driver_expense_deduction'] ?? 0) > 0) {
+                    \App\Models\DriverExpense::where('employee_id', $employee->id)
+                        ->where('driver_amount', '>', 0)
+                        ->where('is_deducted', false)
+                        ->whereDate('expense_date', '<=', $endDate)
                         ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
                 }
 
@@ -489,6 +499,12 @@ class PayrollController extends Controller
                 'payroll_slip_id' => null,
             ]);
 
+            // Uncheck driver expenses previously deducted in this run
+            \App\Models\DriverExpense::whereIn('payroll_slip_id', $slipIds)->update([
+                'is_deducted' => false,
+                'payroll_slip_id' => null,
+            ]);
+
             $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
             if (empty($employeeIds)) {
                 $employeeIds = Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
@@ -533,6 +549,18 @@ class PayrollController extends Controller
                 ->whereDate('returned_date', '<=', $endDate)
                 ->groupBy('employee_id')
                 ->selectRaw('employee_id, SUM(deduction_amount) as total')
+                ->pluck('total', 'employee_id');
+
+            // 4b. Driver expense deductions
+            $driverExpenseSums = \App\Models\DriverExpense::whereIn('employee_id', $employeeIds)
+                ->where('driver_amount', '>', 0)
+                ->where(function ($q) use ($slipIds) {
+                    $q->where('is_deducted', false)
+                      ->orWhereIn('payroll_slip_id', $slipIds);
+                })
+                ->whereDate('expense_date', '<=', $endDate)
+                ->groupBy('employee_id')
+                ->selectRaw('employee_id, SUM(driver_amount) as total')
                 ->pluck('total', 'employee_id');
 
             // 5. Leave deductions
@@ -590,12 +618,13 @@ class PayrollController extends Controller
                     $leaveData,
                     $allAdvances,
                     $allAssignments,
-                    $existingSlip
+                    $existingSlip,
+                    $driverExpenseSums
                 );
 
                 $totalBonuses = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_contract_bonuses'];
                 $totalGrossActual = $data['base_actual'] + $totalBonuses;
-                $totalDeductions = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + $data['leave_deduction'] + $data['advance_deduction'];
+                $totalDeductions = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + ($data['driver_expense_deduction'] ?? 0) + $data['leave_deduction'] + $data['advance_deduction'];
 
                 $netActual = $totalGrossActual - $totalDeductions;
 
@@ -642,6 +671,7 @@ class PayrollController extends Controller
                     'violations_deduction' => $data['violations_deduction'],
                     'maintenance_deduction' => $data['maintenance_deduction'],
                     'custody_deduction' => $data['custody_deduction'],
+                    'driver_expense_deduction' => $data['driver_expense_deduction'] ?? 0,
                     'advance_deduction' => $data['advance_deduction'],
                     'leave_deduction' => $data['leave_deduction'],
                     'unpaid_leave_days' => $data['unpaid_leave_days'],
@@ -660,6 +690,18 @@ class PayrollController extends Controller
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
                         ->whereDate('violation_date', '<=', $endDate)
+                        ->update([
+                            'is_deducted' => true,
+                            'payroll_slip_id' => $slip->id,
+                        ]);
+                }
+
+                // Re-mark driver expenses as deducted
+                if (($data['driver_expense_deduction'] ?? 0) > 0) {
+                    \App\Models\DriverExpense::where('employee_id', $employee->id)
+                        ->where('driver_amount', '>', 0)
+                        ->where('is_deducted', false)
+                        ->whereDate('expense_date', '<=', $endDate)
                         ->update([
                             'is_deducted' => true,
                             'payroll_slip_id' => $slip->id,
@@ -869,7 +911,8 @@ class PayrollController extends Controller
         $leaveData,
         $allAdvances,
         $allAssignments,
-        $existingSlip = null
+        $existingSlip = null,
+        $driverExpenseSums = null
     ): array {
         $employeeId = $employee->id;
         $empLogs = $allDailyLogs->get($employeeId, collect());
@@ -1495,6 +1538,7 @@ class PayrollController extends Controller
         $violationsDeduction = (float) ($violationSums[$employeeId] ?? 0);
         $maintenanceDeduction = (float) ($maintenanceSums[$employeeId] ?? 0);
         $custodyDeduction = (float) ($custodySums[$employeeId] ?? 0);
+        $driverExpenseDeduction = (float) ($driverExpenseSums[$employeeId] ?? 0);
 
         $leaveInfo = $leaveData[$employeeId] ?? null;
         $leaveDeduction = (float) ($leaveInfo?->total_deduction ?? 0);
@@ -1524,6 +1568,7 @@ class PayrollController extends Controller
             'violations_deduction' => $violationsDeduction,
             'maintenance_deduction' => $maintenanceDeduction,
             'custody_deduction' => $custodyDeduction,
+            'driver_expense_deduction' => $driverExpenseDeduction,
             'advance_deduction' => $advanceDeduction,
             'leave_deduction' => $leaveDeduction,
             'unpaid_leave_days' => $unpaidLeaveDays,
