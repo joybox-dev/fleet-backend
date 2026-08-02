@@ -1131,8 +1131,8 @@ class PayrollController extends Controller
                     if ($l->contract_id && ! $hasRecalculated) {
                         $lContract = Contract::find($l->contract_id);
                         if ($lContract) {
-                            $recalc = self::recalculateEmployeeCommissions($employee, $lContract, $year, $month, $segLogs);
-                            $segCommissions = $recalc['orders_bonus'];
+                            $recalc = self::recalculateEmployeeCommissions($employee, $year, $month, $segLogs);
+                            $segCommissions = is_array($recalc) ? ($recalc['orders_bonus'] ?? 0) : (float) $recalc->sum('driver_commission');
                             $hasRecalculated = true;
                         }
                     }
