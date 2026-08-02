@@ -86,16 +86,22 @@ class ContractDashboardController extends Controller
         $actualRevenue = $logsRevenue + $fixedRevenue;
 
         // 5. Direct Expenses
-        // 5a. Driver Commissions
+        // 5a. Driver Commissions & 5b. Allocated Driver Base Salaries
         $driverCommissions = (float) DailyLog::where('contract_id', $contract->id)
             ->whereBetween('log_date', [$startDateStr, $endDateStr])
             ->sum('driver_commission');
 
-        // 5b. Allocated Driver Base Salaries
-        // Calculate the proportion of days each driver logged on this contract vs total logged days
-        $driverSalariesAllocated = 0;
-        $driverIds = $activeAssignments->pluck('employee_id')->unique()->toArray();
+        $driverSalariesAllocated = 0.0;
         
+        $contractLogsGrouped = DailyLog::where('contract_id', $contract->id)
+            ->whereBetween('log_date', [$startDateStr, $endDateStr])
+            ->get()
+            ->groupBy('employee_id');
+
+        $loggedDriverIds = $contractLogsGrouped->keys()->toArray();
+        $assignedDriverIds = $activeAssignments->pluck('employee_id')->unique()->toArray();
+        $driverIds = array_unique(array_merge($loggedDriverIds, $assignedDriverIds));
+
         if (!empty($driverIds)) {
             $driverLogs = DailyLog::whereBetween('log_date', [$startDateStr, $endDateStr])
                 ->whereIn('employee_id', $driverIds)
@@ -113,19 +119,50 @@ class ContractDashboardController extends Controller
 
             $employees = Employee::whereIn('id', $driverIds)->get();
 
+            $allDailyLogsForEmp = DailyLog::whereIn('employee_id', $driverIds)
+                ->whereBetween('log_date', [$startDateStr, $endDateStr])
+                ->get()
+                ->groupBy('employee_id');
+
+            $allAssignmentsForEmp = \DB::table('vehicle_assignments')
+                ->whereIn('employee_id', $driverIds)
+                ->get()
+                ->groupBy('employee_id');
+
+            $calculatedCommissions = 0.0;
+
             foreach ($employees as $emp) {
                 $totalDays = $driverTotalDays[$emp->id] ?? 0;
-                if ($totalDays <= 0) continue;
-
                 $empLogs = $driverLogs->get($emp->id);
-                if (!$empLogs) continue;
+                $contractLog = $empLogs ? $empLogs->firstWhere('contract_id', $contract->id) : null;
+                $daysOnContract = $contractLog ? $contractLog->days : 0;
 
-                $contractLog = $empLogs->firstWhere('contract_id', $contract->id);
-                if ($contractLog) {
-                    $daysOnContract = $contractLog->days;
-                    $salary = (float)($emp->actual_salary ?? 0);
-                    $driverSalariesAllocated += $salary * ($daysOnContract / $totalDays);
+                if ($daysOnContract <= 0 && $totalDays > 0) continue;
+
+                $ratio = ($totalDays > 0 && $daysOnContract > 0) ? ($daysOnContract / $totalDays) : ($daysOnContract > 0 ? 1.0 : 0.0);
+                if ($ratio <= 0) continue;
+
+                // Calculate dynamic slip data for driver
+                $slipData = PayrollController::calculateDriverSlipData(
+                    $emp, $year, $month, $startDateStr, $endDateStr, $allDailyLogsForEmp,
+                    collect(), collect(), collect(), collect(), collect(), $allAssignmentsForEmp
+                );
+
+                $driverPaymentMethod = $contract->driver_payment_method ?? 'per_order';
+                if ($driverPaymentMethod === 'fixed') {
+                    $driverSalariesAllocated += (float) ($emp->actual_salary ?? $emp->official_salary ?? 0) * $ratio;
+                    $calculatedCommissions += (float) $slipData['orders_bonus'] * $ratio;
+                } elseif ($driverPaymentMethod === 'hybrid') {
+                    $driverSalariesAllocated += (float) ($slipData['base_actual']) * $ratio;
+                    $calculatedCommissions += (float) $slipData['orders_bonus'] * $ratio;
+                } else {
+                    // Commission-based: per_order, zones, zones_tiers, tiers
+                    $calculatedCommissions += (float) ($slipData['base_actual'] + $slipData['orders_bonus']) * $ratio;
                 }
+            }
+
+            if ($driverCommissions == 0) {
+                $driverCommissions = $calculatedCommissions;
             }
         }
 
