@@ -11,6 +11,10 @@ class DriverExpenseController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        if (!$request->user()->can('driver_expenses.view') && !$request->user()->can('employees.view') && !$request->user()->can('payroll.view')) {
+            return response()->json(['message' => 'غير مصرح لك باستعراض مصاريف السائقين.'], 403);
+        }
+
         $companyId = app('current_company_id');
         $query = DriverExpense::with(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
             ->where('company_id', $companyId);
@@ -80,6 +84,10 @@ class DriverExpenseController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (!$request->user()->can('driver_expenses.create') && !$request->user()->can('employees.create') && !$request->user()->can('payroll.create')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة مصاريف السائقين.'], 403);
+        }
+
         $companyId = app('current_company_id');
         $validated = $request->validate([
             'employee_id'     => 'required|exists:employees,id',
@@ -129,6 +137,10 @@ class DriverExpenseController extends Controller
 
     public function update(Request $request, DriverExpense $driverExpense): JsonResponse
     {
+        if (!$request->user()->can('driver_expenses.edit') && !$request->user()->can('employees.edit') && !$request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل مصاريف السائقين.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id'     => 'required|exists:employees,id',
             'vehicle_id'      => 'nullable|exists:vehicles,id',
@@ -168,8 +180,12 @@ class DriverExpenseController extends Controller
         return response()->json($driverExpense);
     }
 
-    public function destroy(DriverExpense $driverExpense): JsonResponse
+    public function destroy(Request $request, DriverExpense $driverExpense): JsonResponse
     {
+        if (!$request->user()->can('driver_expenses.delete') && !$request->user()->can('employees.delete') && !$request->user()->can('payroll.delete')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف مصاريف السائقين.'], 403);
+        }
+
         if ($driverExpense->is_deducted) {
             return response()->json(['message' => 'لا يمكن حذف المصروف لأنه تم خصمه مسبقاً من كشف الرواتب.'], 422);
         }

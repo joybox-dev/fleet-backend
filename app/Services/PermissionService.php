@@ -33,6 +33,7 @@ class PermissionService
 
         // HR
         'employees.view',     'employees.create',  'employees.edit',  'employees.delete',
+        'driver_expenses.view','driver_expenses.create','driver_expenses.edit','driver_expenses.delete',
         'leaves.view',        'leaves.create',     'leaves.edit',     'leaves.delete',
         'evaluations.view',   'evaluations.create','evaluations.edit','evaluations.delete',
         'custody.view',       'custody.create',    'custody.edit',    'custody.delete',
@@ -69,6 +70,7 @@ class PermissionService
             'clients.view' => true,    'clients.create' => true,    'clients.edit' => true,    'clients.delete' => true,
             'contracts.view' => true,  'contracts.create' => true,  'contracts.edit' => true,  'contracts.delete' => true,
             'employees.view' => true,  'employees.create' => true,  'employees.edit' => true,  'employees.delete' => true,
+            'driver_expenses.view' => true, 'driver_expenses.create' => true, 'driver_expenses.edit' => true, 'driver_expenses.delete' => true,
             'leaves.view' => true,     'leaves.create' => true,     'leaves.edit' => true,     'leaves.delete' => true,
             'evaluations.view' => true,'evaluations.create' => true,'evaluations.edit' => true,'evaluations.delete' => true,
             'custody.view' => true,    'custody.create' => true,    'custody.edit' => true,    'custody.delete' => true,
@@ -96,11 +98,13 @@ class PermissionService
             'vehicles.view' => true,
             'maintenance.view' => true,'maintenance.create' => true,
             'leaves.view' => true,     'leaves.create' => true,
+            'driver_expenses.view' => true, 'driver_expenses.create' => true,
         ],
 
         'accountant' => [
             'dashboard.view' => true,
             'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true,
+            'driver_expenses.view' => true, 'driver_expenses.create' => true, 'driver_expenses.edit' => true,
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true,
             'reports.view' => true,
@@ -162,7 +166,8 @@ class PermissionService
 
             // Auto-map sub-modules
             if (in_array('daily_logs', $modules) || in_array('daily_logs.view', $modules)) $modules[] = 'operations.view';
-            if (in_array('employees', $modules)) $modules[] = 'evaluations';
+            if (in_array('employees', $modules)) { $modules[] = 'evaluations'; $modules[] = 'driver_expenses'; }
+            if (in_array('payroll', $modules)) { $modules[] = 'driver_expenses'; }
             if (in_array('custody', $modules)) $modules[] = 'guarantees';
             if (in_array('vehicles', $modules)) $modules[] = 'vehicle_expenses';
 
@@ -170,7 +175,8 @@ class PermissionService
             foreach ($modules as $m) {
                 if (str_contains($m, '.')) {
                     [$modName, $actName] = explode('.', $m);
-                    if ($modName === 'employees') $modules[] = "evaluations.{$actName}";
+                    if ($modName === 'employees') { $modules[] = "evaluations.{$actName}"; $modules[] = "driver_expenses.{$actName}"; }
+                    if ($modName === 'payroll') { $modules[] = "driver_expenses.{$actName}"; }
                     if ($modName === 'custody') $modules[] = "guarantees.{$actName}";
                     if ($modName === 'vehicles' && in_array($actName, ['view', 'create', 'edit'])) $modules[] = "vehicle_expenses.{$actName}";
                 }
