@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\CompanyController;
 use App\Http\Controllers\Api\SuperAdminCompanyController;
 use App\Http\Controllers\Api\DriverGuaranteeController;
 use App\Http\Controllers\Api\VehicleExpenseController;
+use App\Http\Controllers\Api\VehicleExpenseTypeController;
 use App\Http\Controllers\Api\SalaryAdvanceController;
 use App\Http\Controllers\Api\OperationsController;
 use App\Http\Controllers\Api\EmployeeDocumentController;
@@ -89,6 +90,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('vehicles/{vehicle}/unassign', [VehicleController::class, 'unassign']);
         Route::patch('vehicles/{vehicle}/odometer', [VehicleController::class, 'updateOdometer']);
         Route::get('vehicle-types', [VehicleTypeController::class, 'index']);
+        Route::get('vehicle-expense-types', [VehicleExpenseTypeController::class, 'index']);
+        Route::apiResource('vehicle-expense-types', VehicleExpenseTypeController::class)->except(['index', 'show']);
 
         // Violations — record traffic fines
         Route::get('violations/resolve-driver', [ViolationController::class, 'resolveDriver']);
