@@ -984,7 +984,7 @@ class PayrollController extends Controller
 
             $contractIdVal = ($dayLog && $dayLog->contract_id) 
                 ? $dayLog->contract_id 
-                : ($activeContractAssign ? $activeContractAssign->contract_id : $fallbackContractId);
+                : ($activeContractAssign ? $activeContractAssign->contract_id : null);
 
             if ($contractIdVal) {
                 $hasAnyContractAssignment = true;
@@ -1063,15 +1063,22 @@ class PayrollController extends Controller
                 $primarySegment = $seg;
             }
         }
-        if ($primarySegment === null) {
-            $primarySegment = $segments[0] ?? [
-                'contract_id' => null,
-                'contract_assignment' => null,
-                'vehicle_type_id' => null,
-                'start_date' => $startDate,
-                'end_date' => $endDate,
-                'days' => $daysInMonth,
-            ];
+        if ($primarySegment === null || $primarySegment['contract_id'] === null) {
+            $fallbackContractId = $empContractAssignments->first()?->contract_id
+                ?? $empLogs->pluck('contract_id')->filter()->first();
+
+            if ($primarySegment === null) {
+                $primarySegment = $segments[0] ?? [
+                    'contract_id' => $fallbackContractId,
+                    'contract_assignment' => null,
+                    'vehicle_type_id' => null,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'days' => $daysInMonth,
+                ];
+            } else {
+                $primarySegment['contract_id'] = $fallbackContractId;
+            }
         }
 
         $contractId = $primarySegment['contract_id'];
