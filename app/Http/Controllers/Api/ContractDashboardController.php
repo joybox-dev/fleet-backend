@@ -79,6 +79,53 @@ class ContractDashboardController extends Controller
             ->whereBetween('log_date', [$startDateStr, $endDateStr])
             ->sum('income_amount');
 
+        if ($logsRevenue == 0) {
+            $contractLogsForRevenue = DailyLog::where('contract_id', $contract->id)
+                ->whereBetween('log_date', [$startDateStr, $endDateStr])
+                ->with('vehicle')
+                ->get();
+
+            $clientPricing = is_string($contract->client_pricing_rules)
+                ? json_decode($contract->client_pricing_rules, true)
+                : $contract->client_pricing_rules;
+
+            foreach ($contractLogsForRevenue as $log) {
+                $orders = (int) $log->orders_count;
+                if ($orders <= 0) continue;
+
+                $vTypeId = $log->vehicle?->vehicle_type_id ?? $contract->vehicle_type_id ?? 1;
+                $zoneName = $log->zone;
+
+                $rate = null;
+                if (is_array($clientPricing) && isset($clientPricing[$vTypeId])) {
+                    $rules = $clientPricing[$vTypeId];
+                    $zones = $rules['zones'] ?? [];
+                    if (is_array($zones) && !empty($zones)) {
+                        if ($zoneName) {
+                            foreach ($zones as $z) {
+                                if (($z['name'] ?? $z['zone'] ?? '') == $zoneName) {
+                                    $rate = (float) ($z['price'] ?? $z['rate'] ?? 0);
+                                    break;
+                                }
+                            }
+                        }
+                        if ($rate === null && isset($zones[0])) {
+                            $prices = array_filter(array_map(fn($z) => (float)($z['price'] ?? $z['rate'] ?? 0), $zones));
+                            if (!empty($prices)) {
+                                $rate = array_sum($prices) / count($prices);
+                            }
+                        }
+                    }
+                }
+
+                if ($rate === null || $rate == 0) {
+                    $rate = (float) ($contract->rate_per_order ?: ($contract->default_order_commission ?: 0));
+                }
+
+                $logsRevenue += $orders * $rate;
+            }
+        }
+
         $fixedRevenue = 0;
         if ($contract->payment_type === 'fixed' || $contract->payment_type === 'hybrid') {
             $fixedRevenue = (float)($contract->fixed_monthly ?? 0);
