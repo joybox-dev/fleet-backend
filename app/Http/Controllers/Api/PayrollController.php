@@ -1193,7 +1193,7 @@ class PayrollController extends Controller
             }
 
             // Recalculate daily log commissions for this segment logs
-            $segLogsRecalculated = self::recalculateEmployeeCommissions($employee, $year, $month, $segLogs);
+            $segLogsRecalculated = self::recalculateEmployeeCommissions($employee, $segContract, $year, $month, $segLogs);
 
             // Resolve fixed salary and absence divisor
             $fixedSalary = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'fixed_salary');
