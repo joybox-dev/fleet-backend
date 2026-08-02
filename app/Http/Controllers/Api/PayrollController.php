@@ -987,11 +987,7 @@ class PayrollController extends Controller
 
             $contractIdVal = ($dayLog && $dayLog->contract_id) 
                 ? $dayLog->contract_id 
-                : ($activeContractAssign ? $activeContractAssign->contract_id : $singleLogContractId);
-
-            if ($contractIdVal) {
-                $hasAnyContractAssignment = true;
-            }
+                : ($activeContractAssign ? $activeContractAssign->contract_id : null);
 
             // Find vehicle type id
             $vehicleTypeIdVal = null;
@@ -1008,6 +1004,14 @@ class PayrollController extends Controller
                 'contract_assignment' => $activeContractAssign,
                 'vehicle_type_id' => $vehicleTypeIdVal,
             ];
+        }
+
+        $hasAnyContractAssignment = $empContractAssignments->isNotEmpty();
+        foreach ($dayMap as $info) {
+            if ($info['contract_id'] !== null) {
+                $hasAnyContractAssignment = true;
+                break;
+            }
         }
 
         // Group consecutive days into segments
