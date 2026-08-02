@@ -1007,12 +1007,6 @@ class PayrollController extends Controller
         }
 
         $hasAnyContractAssignment = $empContractAssignments->isNotEmpty();
-        foreach ($dayMap as $info) {
-            if ($info['contract_id'] !== null) {
-                $hasAnyContractAssignment = true;
-                break;
-            }
-        }
 
         // Group consecutive days into segments
         $segments = [];
