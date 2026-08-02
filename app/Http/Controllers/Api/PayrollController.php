@@ -751,7 +751,7 @@ class PayrollController extends Controller
         }
     }
 
-    public static function recalculateEmployeeCommissions($employeeId, $year, $month, $preFetchedLogs = null)
+    public static function recalculateEmployeeCommissions($employeeId, $yearOrContract, $monthOrYear = null, $preFetchedLogsOrMonth = null, $extraLogs = null)
     {
         if ($employeeId instanceof Employee) {
             $employee = $employeeId;
@@ -762,6 +762,18 @@ class PayrollController extends Controller
 
         if (! $employee) {
             return collect();
+        }
+
+        if ($yearOrContract instanceof Contract || (is_object($yearOrContract) && isset($yearOrContract->id))) {
+            // Called with ($employee, $contract, $year, $month, $logs)
+            $year = (int) $monthOrYear;
+            $month = (int) $preFetchedLogsOrMonth;
+            $preFetchedLogs = $extraLogs;
+        } else {
+            // Called with ($employee, $year, $month, $logs)
+            $year = (int) $yearOrContract;
+            $month = (int) $monthOrYear;
+            $preFetchedLogs = $preFetchedLogsOrMonth;
         }
 
         $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
