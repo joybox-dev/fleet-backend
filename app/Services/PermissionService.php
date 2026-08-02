@@ -164,18 +164,9 @@ class PermissionService
             $effective = ['dashboard.view' => true];
             $modules = (array) $roleModel->allowed_modules;
 
-            // Auto-map sub-modules
-            if (in_array('daily_logs', $modules) || in_array('daily_logs.view', $modules)) $modules[] = 'operations.view';
-            if (in_array('custody', $modules)) $modules[] = 'guarantees';
-            if (in_array('vehicles', $modules)) $modules[] = 'vehicle_expenses';
-
-            // Handle granular permission mapping for sub-modules if present
-            foreach ($modules as $m) {
-                if (str_contains($m, '.')) {
-                    [$modName, $actName] = explode('.', $m);
-                    if ($modName === 'custody') $modules[] = "guarantees.{$actName}";
-                    if ($modName === 'vehicles' && in_array($actName, ['view', 'create', 'edit'])) $modules[] = "vehicle_expenses.{$actName}";
-                }
+            // Basic operations tab access if daily_logs or operations is granted
+            if (in_array('daily_logs', $modules) || in_array('daily_logs.view', $modules) || in_array('operations', $modules) || in_array('operations.view', $modules)) {
+                $effective['operations.view'] = true;
             }
 
             foreach (self::ALL_PERMISSIONS as $perm) {
