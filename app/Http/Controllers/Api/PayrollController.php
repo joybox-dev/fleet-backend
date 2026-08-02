@@ -932,6 +932,11 @@ class PayrollController extends Controller
             ->with('contract')
             ->get();
 
+        $hasExplicitContractAssignments = $empContractAssignments->isNotEmpty();
+        $fallbackContractId = $hasExplicitContractAssignments 
+            ? null 
+            : $empLogs->pluck('contract_id')->filter()->first();
+
         // Fetch vehicle assignments active in this month
         $empVehicleAssignments = VehicleAssignment::where('employee_id', $employeeId)
             ->where('assigned_date', '<=', $endDate)
@@ -977,7 +982,10 @@ class PayrollController extends Controller
 
             $dayLog = $empLogs->firstWhere('log_date', $date);
 
-            $contractIdVal = ($dayLog && $dayLog->contract_id) ? $dayLog->contract_id : ($activeContractAssign ? $activeContractAssign->contract_id : null);
+            $contractIdVal = ($dayLog && $dayLog->contract_id) 
+                ? $dayLog->contract_id 
+                : ($activeContractAssign ? $activeContractAssign->contract_id : $fallbackContractId);
+
             if ($contractIdVal) {
                 $hasAnyContractAssignment = true;
             }
