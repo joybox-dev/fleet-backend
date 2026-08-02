@@ -32,7 +32,7 @@ class PermissionService
         'contracts.view',     'contracts.create',  'contracts.edit',  'contracts.delete',
 
         // HR
-        'employees.view',     'employees.create',  'employees.edit',  'employees.delete',
+        'employees.view',     'employees.create',  'employees.edit',  'employees.delete', 'employees.scope_contracts',
         'driver_expenses.view','driver_expenses.create','driver_expenses.edit','driver_expenses.delete',
         'leaves.view',        'leaves.create',     'leaves.edit',     'leaves.delete',
         'evaluations.view',   'evaluations.create','evaluations.edit','evaluations.delete',

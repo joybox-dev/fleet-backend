@@ -17,8 +17,10 @@ class EmployeeController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $allowedDriverIds = \App\Services\ContractScopeService::getAllocatedDriverIds($request->user());
         $perPage = $request->boolean('all') ? 5000 : min(max($request->integer('per_page', 50), 5), 1000);
         $employees = Employee::with(['user:id,name,email', 'adminRole:id,name', 'activeAssignment.vehicle:id,plate_number,vehicle_type_id'])
+            ->when($allowedDriverIds !== null, fn($q) => $q->whereIn('id', $allowedDriverIds))
             ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn($q) => $q->where('pay_type', $request->pay_type))

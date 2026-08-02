@@ -16,8 +16,11 @@ class DriverExpenseController extends Controller
         }
 
         $companyId = app('current_company_id');
+        $allowedDriverIds = \App\Services\ContractScopeService::getAllocatedDriverIds($request->user());
+
         $query = DriverExpense::with(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
-            ->where('company_id', $companyId);
+            ->where('company_id', $companyId)
+            ->when($allowedDriverIds !== null, fn($q) => $q->whereIn('employee_id', $allowedDriverIds));
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->employee_id);

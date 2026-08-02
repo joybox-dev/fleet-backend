@@ -21,25 +21,21 @@ class ContractScopeService
             return null;
         }
 
-        // 1. Super Admins always see all contracts
+        // Super Admins always see all contracts
         if ($user->isSuperAdmin()) {
             return null;
         }
 
-        // 2. Find associated employee record by user_id
-        $employee = Employee::where('user_id', $user->id)->first();
-
-        if (!$employee) {
-            // Full Company Admin without employee restrictions sees all contracts
+        // If user does NOT have the scope_contracts restriction checked, they see all contracts
+        if (!$user->can('employees.scope_contracts')) {
             return null;
         }
 
-        // 3. Only Main Admin role (أدمن رئيسي / Super Admin) has unrestricted access to all contracts
-        if ($employee->admin_role_id) {
-            $roleModel = \App\Models\Role::find($employee->admin_role_id);
-            if ($roleModel && ($roleModel->id == 1 || $roleModel->id === 'role_admin' || $roleModel->name === 'أدمن رئيسي' || $roleModel->name === 'Main Admin')) {
-                return null;
-            }
+        // Find associated employee record by user_id
+        $employee = Employee::where('user_id', $user->id)->first();
+
+        if (!$employee) {
+            return null;
         }
 
         $contractIds = [];
@@ -77,12 +73,49 @@ class ContractScopeService
 
         $contractIds = array_values(array_unique(array_filter($contractIds)));
 
-        // If employee has specific contract allocations or assignments, return those IDs
         if (count($contractIds) > 0) {
             return $contractIds;
         }
 
-        // If employee has no contract allocations, restrict access (sees 0 contracts until assigned)
+        // Restricted employee with no contract allocations assigned yet -> sees 0 contracts
+        return [0];
+    }
+
+    /**
+     * Get the array of driver employee IDs that the user is allowed to access.
+     * Returns null if the user has unrestricted access (sees all drivers).
+     * Returns array of integer IDs if the user is restricted to specific drivers on their allocated contracts.
+     */
+    public static function getAllocatedDriverIds(?User $user = null): ?array
+    {
+        $contractIds = self::getAllocatedContractIds($user);
+
+        if ($contractIds === null) {
+            return null;
+        }
+
+        if (empty($contractIds) || $contractIds === [0]) {
+            return [0];
+        }
+
+        // Fetch driver employee IDs assigned to these contract IDs
+        $driverIds = ContractAssignment::whereIn('contract_id', $contractIds)
+            ->where('status', 'active')
+            ->pluck('employee_id')
+            ->toArray();
+
+        // Also check vehicle assignments linked to these contracts
+        $vehicleDriverIds = \App\Models\VehicleAssignment::whereIn('contract_id', $contractIds)
+            ->where('is_active', true)
+            ->pluck('employee_id')
+            ->toArray();
+
+        $allDriverIds = array_values(array_unique(array_filter(array_merge($driverIds, $vehicleDriverIds))));
+
+        if (count($allDriverIds) > 0) {
+            return $allDriverIds;
+        }
+
         return [0];
     }
 }
