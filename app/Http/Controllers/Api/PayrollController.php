@@ -932,10 +932,13 @@ class PayrollController extends Controller
             ->with('contract')
             ->get();
 
-        $hasExplicitContractAssignments = $empContractAssignments->isNotEmpty();
-        $fallbackContractId = $hasExplicitContractAssignments 
-            ? null 
-            : $empLogs->pluck('contract_id')->filter()->first();
+        $singleLogContractId = null;
+        if ($empContractAssignments->isEmpty()) {
+            $uniqueLogContracts = $empLogs->pluck('contract_id')->filter()->unique();
+            if ($uniqueLogContracts->count() === 1) {
+                $singleLogContractId = $uniqueLogContracts->first();
+            }
+        }
 
         // Fetch vehicle assignments active in this month
         $empVehicleAssignments = VehicleAssignment::where('employee_id', $employeeId)
@@ -984,7 +987,7 @@ class PayrollController extends Controller
 
             $contractIdVal = ($dayLog && $dayLog->contract_id) 
                 ? $dayLog->contract_id 
-                : ($activeContractAssign ? $activeContractAssign->contract_id : null);
+                : ($activeContractAssign ? $activeContractAssign->contract_id : $singleLogContractId);
 
             if ($contractIdVal) {
                 $hasAnyContractAssignment = true;
