@@ -1050,7 +1050,14 @@ class PayrollController extends Controller
             }
         }
         if ($primarySegment === null) {
-            $primarySegment = $segments[0];
+            $primarySegment = $segments[0] ?? [
+                'contract_id' => null,
+                'contract_assignment' => null,
+                'vehicle_type_id' => null,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'days' => $daysInMonth,
+            ];
         }
 
         $contractId = $primarySegment['contract_id'];
