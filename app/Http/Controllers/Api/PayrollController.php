@@ -975,14 +975,20 @@ class PayrollController extends Controller
                     && ($eDate === null || $eDate >= $date);
             });
 
-            $contractIdVal = $activeContractAssign ? $activeContractAssign->contract_id : null;
+            $dayLog = $empLogs->firstWhere('log_date', $date);
+
+            $contractIdVal = $dayLog?->contract_id ?? ($activeContractAssign ? $activeContractAssign->contract_id : null);
             if ($contractIdVal) {
                 $hasAnyContractAssignment = true;
             }
 
             // Find vehicle type id
             $vehicleTypeIdVal = null;
-            if ($activeVehicleAssign && $activeVehicleAssign->vehicle) {
+            if ($dayLog && $dayLog->vehicle_id) {
+                $v = \App\Models\Vehicle::find($dayLog->vehicle_id);
+                $vehicleTypeIdVal = $v?->vehicle_type_id;
+            }
+            if (!$vehicleTypeIdVal && $activeVehicleAssign && $activeVehicleAssign->vehicle) {
                 $vehicleTypeIdVal = $activeVehicleAssign->vehicle->vehicle_type_id;
             }
 
