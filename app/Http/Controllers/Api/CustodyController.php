@@ -12,7 +12,7 @@ class CustodyController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $items = CustodyItem::with(['employee:id,name', 'issuedBy:id,name', 'custodyType:id,name,icon'])
+        $items = CustodyItem::with(['employee:id,name,name_ar,employee_number', 'issuedBy:id,name', 'custodyType:id,name,icon'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->item_type, fn($q) => $q->where('item_type', $request->item_type))
             ->when($request->custody_type_id, fn($q) => $q->where('custody_type_id', $request->custody_type_id))

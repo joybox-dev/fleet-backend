@@ -15,7 +15,7 @@ class SalaryAdvanceController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = SalaryAdvance::with(['employee:id,name', 'approver:id,name']);
+        $query = SalaryAdvance::with(['employee:id,name,name_ar,employee_number', 'approver:id,name']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);

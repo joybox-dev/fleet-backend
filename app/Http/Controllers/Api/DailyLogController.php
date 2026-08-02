@@ -22,7 +22,7 @@ class DailyLogController extends Controller
         $allowedIds = ContractScopeService::getAllocatedContractIds();
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
 
-        $logs = DailyLog::with(['employee:id,name', 'vehicle:id,plate_number', 'contract:id,name,payment_type'])
+        $logs = DailyLog::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'contract:id,name,payment_type'])
             ->when($allowedIds !== null, fn($q) => $q->whereIn('contract_id', $allowedIds))
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))

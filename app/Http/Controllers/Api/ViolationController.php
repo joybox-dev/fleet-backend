@@ -13,7 +13,7 @@ class ViolationController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $violations = Violation::with(['employee:id,name', 'vehicle:id,plate_number'])
+        $violations = Violation::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'chargeContract:id,name'])
             ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
             ->when($request->date_from, fn($q) => $q->whereDate('violation_date', '>=', $request->date_from))
