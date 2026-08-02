@@ -977,7 +977,7 @@ class PayrollController extends Controller
 
             $dayLog = $empLogs->firstWhere('log_date', $date);
 
-            $contractIdVal = $dayLog?->contract_id ?? ($activeContractAssign ? $activeContractAssign->contract_id : null);
+            $contractIdVal = ($dayLog && $dayLog->contract_id) ? $dayLog->contract_id : ($activeContractAssign ? $activeContractAssign->contract_id : null);
             if ($contractIdVal) {
                 $hasAnyContractAssignment = true;
             }
