@@ -1065,8 +1065,15 @@ class PayrollController extends Controller
             }
         }
         if ($primarySegment === null || $primarySegment['contract_id'] === null) {
-            $fallbackContractId = $empContractAssignments->first()?->contract_id
-                ?? $empLogs->pluck('contract_id')->filter()->first();
+            $firstAssign = $empContractAssignments->first();
+            $fallbackId = is_object($firstAssign) ? ($firstAssign->contract_id ?? null) : null;
+            if (! $fallbackId) {
+                $fallbackId = $empLogs->pluck('contract_id')->filter()->first();
+            }
+            if (is_object($fallbackId)) {
+                $fallbackId = $fallbackId->id ?? null;
+            }
+            $fallbackContractId = $fallbackId ? (int) $fallbackId : null;
 
             if ($primarySegment === null) {
                 $primarySegment = $segments[0] ?? [
