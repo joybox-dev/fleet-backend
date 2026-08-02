@@ -12,7 +12,7 @@ class DriverExpenseController extends Controller
     public function index(Request $request): JsonResponse
     {
         $companyId = app('current_company_id');
-        $query = DriverExpense::with(['employee:id,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
+        $query = DriverExpense::with(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
             ->where('company_id', $companyId);
 
         if ($request->filled('employee_id')) {
@@ -116,14 +116,14 @@ class DriverExpenseController extends Controller
         $validated['driver_amount'] = $driverAmount;
 
         $expense = DriverExpense::create($validated);
-        $expense->load(['employee:id,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $expense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
 
         return response()->json($expense, 201);
     }
 
     public function show(DriverExpense $driverExpense): JsonResponse
     {
-        $driverExpense->load(['employee:id,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
         return response()->json($driverExpense);
     }
 
@@ -163,7 +163,7 @@ class DriverExpenseController extends Controller
         $validated['driver_amount'] = $driverAmount;
 
         $driverExpense->update($validated);
-        $driverExpense->load(['employee:id,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
 
         return response()->json($driverExpense);
     }
