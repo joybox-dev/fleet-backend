@@ -1124,7 +1124,22 @@ class PayrollController extends Controller
 
             if ($segContractId === null) {
                 // Legacy segment
-                $segCommissions = $segLogs->sum('driver_commission');
+                $segCommissions = 0;
+                $hasRecalculated = false;
+                foreach ($segLogs as $l) {
+                    if ($l->contract_id && ! $hasRecalculated) {
+                        $lContract = Contract::find($l->contract_id);
+                        if ($lContract) {
+                            $recalc = self::recalculateEmployeeCommissions($employee, $lContract, $year, $month, $segLogs);
+                            $segCommissions = $recalc['orders_bonus'];
+                            $hasRecalculated = true;
+                        }
+                    }
+                }
+                if (! $hasRecalculated) {
+                    $segCommissions = $segLogs->sum('driver_commission');
+                }
+
                 if ($employee->pay_type === 'per_order') {
                     $baseActual += $segCommissions;
                 } else {
