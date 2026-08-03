@@ -199,58 +199,62 @@ class KetaImportService
         $failedCount = 0;
         $errors = [];
 
-        DB::beginTransaction();
+        $errors = [];
+
         try {
-            foreach ($rows as $index => $row) {
-                // If not matched or invalid, skip
-                if (empty($row['employee_id']) || empty($row['contract_id'])) {
-                    $failedCount++;
-                    $errors[] = "السطر " . ($row['row_number'] ?? ($index + 1)) . ": لم يتم ربطه بموظف أو عقد تشغيل.";
-                    continue;
-                }
+            foreach (array_chunk($rows, 50) as $chunk) {
+                DB::transaction(function () use ($chunk, $companyId, $userId, &$importedCount, &$failedCount, &$errors) {
+                    foreach ($chunk as $index => $row) {
+                        // If not matched or invalid, skip
+                        if (empty($row['employee_id']) || empty($row['contract_id'])) {
+                            $failedCount++;
+                            $errors[] = "السطر " . ($row['row_number'] ?? ($index + 1)) . ": لم يتم ربطه بموظف أو عقد تشغيل.";
+                            continue;
+                        }
 
-                $employeeId = $row['employee_id'];
-                $contractId = $row['contract_id'];
-                $date = $row['date'];
+                        $employeeId = $row['employee_id'];
+                        $contractId = $row['contract_id'];
+                        $date = $row['date'];
 
-                // Retrieve active vehicle assignment for this employee on that date
-                $vehicleAssignment = VehicleAssignment::where('employee_id', $employeeId)
-                    ->where('assigned_date', '<=', $date)
-                    ->where(function ($query) use ($date) {
-                        $query->whereNull('unassigned_date')
-                              ->orWhere('unassigned_date', '>=', $date);
-                    })
-                    ->first();
+                        // Retrieve active vehicle assignment for this employee on that date
+                        $vehicleAssignment = VehicleAssignment::where('employee_id', $employeeId)
+                            ->where('assigned_date', '<=', $date)
+                            ->where(function ($query) use ($date) {
+                                $query->whereNull('unassigned_date')
+                                      ->orWhere('unassigned_date', '>=', $date);
+                            })
+                            ->first();
 
-                $vehicleId = $vehicleAssignment ? $vehicleAssignment->vehicle_id : null;
+                        $vehicleId = $vehicleAssignment ? $vehicleAssignment->vehicle_id : null;
 
-                // Create or update DailyLog
-                DailyLog::updateOrCreate(
-                    [
-                        'company_id'  => $companyId,
-                        'employee_id' => $employeeId,
-                        'log_date'    => $date
-                    ],
-                    [
-                        'contract_id'       => $contractId,
-                        'vehicle_id'        => $vehicleId,
-                        'created_by'        => $userId,
-                        'orders_count'      => $row['orders_count'] ?? 0,
-                        'orders_online'     => $row['orders_count'] ?? 0,
-                        'orders_cash'       => 0,
-                        'cash_collected'    => 0,
-                        'cash_settled'      => 0,
-                        'cash_pending'      => 0,
-                        'shift_valid'       => $row['shift_valid'] ?? true,
-                        'online_hours'      => $row['online_hours'] ?? 0.00,
-                        'ontime_rate'       => $row['ontime_rate'] ?? null,
-                        'avg_delivery_time' => $row['avg_delivery_time'] ?? null,
-                    ]
-                );
+                        // Create or update DailyLog
+                        DailyLog::updateOrCreate(
+                            [
+                                'company_id'  => $companyId,
+                                'employee_id' => $employeeId,
+                                'log_date'    => $date
+                            ],
+                            [
+                                'contract_id'       => $contractId,
+                                'vehicle_id'        => $vehicleId,
+                                'created_by'        => $userId,
+                                'orders_count'      => $row['orders_count'] ?? 0,
+                                'orders_online'     => $row['orders_count'] ?? 0,
+                                'orders_cash'       => 0,
+                                'cash_collected'    => 0,
+                                'cash_settled'      => 0,
+                                'cash_pending'      => 0,
+                                'shift_valid'       => $row['shift_valid'] ?? true,
+                                'online_hours'      => $row['online_hours'] ?? 0.00,
+                                'ontime_rate'       => $row['ontime_rate'] ?? null,
+                                'avg_delivery_time' => $row['avg_delivery_time'] ?? null,
+                            ]
+                        );
 
-                $importedCount++;
+                        $importedCount++;
+                    }
+                });
             }
-            DB::commit();
             
             return [
                 'success' => true,
@@ -259,13 +263,12 @@ class KetaImportService
                 'errors' => $errors
             ];
         } catch (\Throwable $e) {
-            DB::rollBack();
             return [
                 'success' => false,
                 'message' => 'حدث خطأ أثناء حفظ السجلات: ' . $e->getMessage(),
-                'imported' => 0,
-                'failed' => count($rows),
-                'errors' => [$e->getMessage()]
+                'imported' => $importedCount,
+                'failed' => count($rows) - $importedCount,
+                'errors' => array_merge($errors, [$e->getMessage()])
             ];
         }
     }
