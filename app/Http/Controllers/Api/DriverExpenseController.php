@@ -18,7 +18,7 @@ class DriverExpenseController extends Controller
         $companyId = app('current_company_id');
         $allowedDriverIds = \App\Services\ContractScopeService::getAllocatedDriverIds($request->user());
 
-        $query = DriverExpense::with(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
+        $query = DriverExpense::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
             ->where('company_id', $companyId)
             ->when($allowedDriverIds !== null, fn($q) => $q->whereIn('employee_id', $allowedDriverIds));
 
@@ -56,9 +56,9 @@ class DriverExpenseController extends Controller
                   ->orWhere('notes', 'like', "%{$search}%")
                   ->orWhere('vendor', 'like', "%{$search}%")
                   ->orWhereHas('employee', function ($eq) use ($search) {
-                      $eq->where('first_name_ar', 'like', "%{$search}%")
-                         ->orWhere('last_name_ar', 'like', "%{$search}%")
-                         ->orWhere('code', 'like', "%{$search}%");
+                      $eq->where('name', 'like', "%{$search}%")
+                         ->orWhere('name_ar', 'like', "%{$search}%")
+                         ->orWhere('employee_number', 'like', "%{$search}%");
                   });
             });
         }
@@ -127,14 +127,14 @@ class DriverExpenseController extends Controller
         $validated['driver_amount'] = $driverAmount;
 
         $expense = DriverExpense::create($validated);
-        $expense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $expense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
 
         return response()->json($expense, 201);
     }
 
     public function show(DriverExpense $driverExpense): JsonResponse
     {
-        $driverExpense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
         return response()->json($driverExpense);
     }
 
@@ -178,7 +178,7 @@ class DriverExpenseController extends Controller
         $validated['driver_amount'] = $driverAmount;
 
         $driverExpense->update($validated);
-        $driverExpense->load(['employee:id,name,name_ar,employee_number,first_name_ar,last_name_ar,first_name,last_name,code', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
 
         return response()->json($driverExpense);
     }
