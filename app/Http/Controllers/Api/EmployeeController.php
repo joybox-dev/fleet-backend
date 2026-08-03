@@ -45,6 +45,16 @@ class EmployeeController extends Controller
 
         $companyId = app('current_company_id');
 
+        if ($request->has('assigned_role_id') && !$request->has('admin_role_id')) {
+            $request->merge(['admin_role_id' => $request->input('assigned_role_id')]);
+        }
+
+        foreach (['civil_id', 'phone', 'email', 'date_of_birth', 'health_card_expiry', 'residence_expiry', 'driving_license_expiry', 'work_permit_expiry'] as $nullableField) {
+            if ($request->has($nullableField) && $request->input($nullableField) === '') {
+                $request->merge([$nullableField => null]);
+            }
+        }
+
         if ($request->filled('email')) {
             $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
         }
@@ -156,6 +166,16 @@ class EmployeeController extends Controller
         }
 
         $companyId = app('current_company_id');
+
+        if ($request->has('assigned_role_id') && !$request->has('admin_role_id')) {
+            $request->merge(['admin_role_id' => $request->input('assigned_role_id')]);
+        }
+
+        foreach (['civil_id', 'phone', 'email', 'date_of_birth', 'health_card_expiry', 'residence_expiry', 'driving_license_expiry', 'work_permit_expiry'] as $nullableField) {
+            if ($request->has($nullableField) && $request->input($nullableField) === '') {
+                $request->merge([$nullableField => null]);
+            }
+        }
 
         if ($request->filled('email')) {
             $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
