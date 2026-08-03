@@ -49,12 +49,18 @@ class Employee extends Model
 
     public function getActiveAssignmentsAttribute()
     {
-        return $this->vehicleAssignments->where('is_active', true)->values();
+        if ($this->relationLoaded('vehicleAssignments')) {
+            return $this->vehicleAssignments->where('is_active', true)->values();
+        }
+        return collect();
     }
 
     public function getEmailAttribute(): ?string
     {
-        return $this->user?->email;
+        if ($this->relationLoaded('user')) {
+            return $this->user?->email;
+        }
+        return $this->attributes['email'] ?? null;
     }
 
     public function getAssignedRoleIdAttribute()

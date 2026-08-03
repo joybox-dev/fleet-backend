@@ -53,16 +53,12 @@ class ContractDashboardController extends Controller
 
         $dailyLogs = DailyLog::where('contract_id', $contract->id)
             ->whereBetween('log_date', [$startDateStr, $endDateStr])
+            ->with('vehicle')
             ->get();
 
         // 2. Vehicles Count and Deficit
         // Get vehicles that logged activity on this contract this month
-        $loggedVehicles = DailyLog::where('contract_id', $contract->id)
-            ->whereBetween('log_date', [$startDateStr, $endDateStr])
-            ->whereNotNull('vehicle_id')
-            ->distinct()
-            ->pluck('vehicle_id')
-            ->toArray();
+        $loggedVehicles = $dailyLogs->pluck('vehicle_id')->filter()->unique()->toArray();
             
         $activeVehiclesCount = count($loggedVehicles);
         $requiredVehiclesCount = $contract->required_vehicles_count ?? 0;
@@ -75,15 +71,10 @@ class ContractDashboardController extends Controller
         $expectedProfit = $expectedRevenue - $expectedExpenses;
 
         // 4. Actual Revenue
-        $logsRevenue = (float) DailyLog::where('contract_id', $contract->id)
-            ->whereBetween('log_date', [$startDateStr, $endDateStr])
-            ->sum('income_amount');
+        $logsRevenue = (float) $dailyLogs->sum('income_amount');
 
         if ($logsRevenue == 0) {
-            $contractLogsForRevenue = DailyLog::where('contract_id', $contract->id)
-                ->whereBetween('log_date', [$startDateStr, $endDateStr])
-                ->with('vehicle')
-                ->get();
+            $contractLogsForRevenue = $dailyLogs;
 
             $clientPricing = is_string($contract->client_pricing_rules)
                 ? json_decode($contract->client_pricing_rules, true)
