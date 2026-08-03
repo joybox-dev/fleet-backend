@@ -56,7 +56,20 @@ class EmployeeController extends Controller
         }
 
         if ($request->filled('email')) {
-            $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
+            $emailVal = str_replace(',', '.', trim($request->input('email')));
+            $request->merge(['email' => $emailVal]);
+
+            // Clean up orphan User record if email belongs to a deleted/unattached employee
+            $orphanUser = \App\Models\User::where('email', $emailVal)->first();
+            if ($orphanUser) {
+                $hasActiveEmp = Employee::withoutGlobalScopes()
+                    ->where('user_id', $orphanUser->id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+                if (! $hasActiveEmp) {
+                    $orphanUser->delete();
+                }
+            }
         }
 
         $validated = $request->validate([
@@ -178,7 +191,22 @@ class EmployeeController extends Controller
         }
 
         if ($request->filled('email')) {
-            $request->merge(['email' => str_replace(',', '.', trim($request->input('email')))]);
+            $emailVal = str_replace(',', '.', trim($request->input('email')));
+            $request->merge(['email' => $emailVal]);
+
+            // Clean up orphan User record if email belongs to a deleted/unattached employee (other than current)
+            $orphanUser = \App\Models\User::where('email', $emailVal)
+                ->where('id', '!=', $employee->user_id)
+                ->first();
+            if ($orphanUser) {
+                $hasActiveEmp = Employee::withoutGlobalScopes()
+                    ->where('user_id', $orphanUser->id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+                if (! $hasActiveEmp) {
+                    $orphanUser->delete();
+                }
+            }
         }
 
         $validated = $request->validate([
@@ -450,6 +478,9 @@ class EmployeeController extends Controller
 
         $count = 0;
         foreach ($employees as $employee) {
+            if ($employee->user_id) {
+                \App\Models\User::where('id', $employee->user_id)->delete();
+            }
             $employee->delete();
             $count++;
         }
