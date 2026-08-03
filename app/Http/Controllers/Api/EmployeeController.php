@@ -59,7 +59,7 @@ class EmployeeController extends Controller
             $emailVal = str_replace(',', '.', trim($request->input('email')));
             $request->merge(['email' => $emailVal]);
 
-            // Clean up orphan User record if email belongs to a deleted/unattached employee
+            // Release email if an orphan User record exists with this email
             $orphanUser = \App\Models\User::where('email', $emailVal)->first();
             if ($orphanUser) {
                 $hasActiveEmp = Employee::withoutGlobalScopes()
@@ -67,7 +67,7 @@ class EmployeeController extends Controller
                     ->whereNull('deleted_at')
                     ->exists();
                 if (! $hasActiveEmp) {
-                    $orphanUser->delete();
+                    $orphanUser->update(['email' => $emailVal . '_old_' . time() . '@deleted.local']);
                 }
             }
         }
@@ -194,7 +194,7 @@ class EmployeeController extends Controller
             $emailVal = str_replace(',', '.', trim($request->input('email')));
             $request->merge(['email' => $emailVal]);
 
-            // Clean up orphan User record if email belongs to a deleted/unattached employee (other than current)
+            // Release email if an orphan User record exists with this email (other than current)
             $orphanUser = \App\Models\User::where('email', $emailVal)
                 ->where('id', '!=', $employee->user_id)
                 ->first();
@@ -204,7 +204,7 @@ class EmployeeController extends Controller
                     ->whereNull('deleted_at')
                     ->exists();
                 if (! $hasActiveEmp) {
-                    $orphanUser->delete();
+                    $orphanUser->update(['email' => $emailVal . '_old_' . time() . '@deleted.local']);
                 }
             }
         }
@@ -347,7 +347,10 @@ class EmployeeController extends Controller
         }
 
         if ($employee->user_id) {
-            \App\Models\User::where('id', $employee->user_id)->delete();
+            $u = \App\Models\User::find($employee->user_id);
+            if ($u) {
+                $u->update(['email' => $u->email . '_deleted_' . time() . '@deleted.local']);
+            }
         }
 
         $employee->delete();
@@ -479,7 +482,10 @@ class EmployeeController extends Controller
         $count = 0;
         foreach ($employees as $employee) {
             if ($employee->user_id) {
-                \App\Models\User::where('id', $employee->user_id)->delete();
+                $u = \App\Models\User::find($employee->user_id);
+                if ($u) {
+                    $u->update(['email' => $u->email . '_deleted_' . time() . '@deleted.local']);
+                }
             }
             $employee->delete();
             $count++;
