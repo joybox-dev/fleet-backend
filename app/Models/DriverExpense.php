@@ -58,4 +58,14 @@ class DriverExpense extends Model
     {
         return $this->belongsTo(PayrollSlip::class, 'payroll_slip_id');
     }
+
+    public function toArray(): array
+    {
+        $array = parent::toArray();
+        if (isset($array['expense_type']) && is_array($array['expense_type'])) {
+            $array['expense_type_details'] = $array['expense_type'];
+            $array['expense_type'] = $this->attributes['expense_type'] ?? ($array['expense_type']['name_ar'] ?? $array['expense_type']['name'] ?? '');
+        }
+        return $array;
+    }
 }
