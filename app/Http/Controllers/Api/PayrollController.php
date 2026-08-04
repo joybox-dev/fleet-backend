@@ -1125,8 +1125,12 @@ class PayrollController extends Controller
 
             // Find contract assignment active on this day
             $activeContractAssign = $empContractAssignments->first(function ($a) use ($date) {
-                $sDate = $a->start_date instanceof Carbon ? $a->start_date->toDateString() : substr($a->start_date, 0, 10);
-                $eDate = $a->end_date ? ($a->end_date instanceof Carbon ? $a->end_date->toDateString() : substr($a->end_date, 0, 10)) : null;
+                $rawStart = is_array($a) ? ($a['start_date'] ?? $a['assigned_date'] ?? null) : ($a->start_date ?? $a->assigned_date ?? null);
+                $rawEnd = is_array($a) ? ($a['end_date'] ?? $a['unassigned_date'] ?? null) : ($a->end_date ?? $a->unassigned_date ?? null);
+                if (!$rawStart) return false;
+
+                $sDate = $rawStart instanceof Carbon ? $rawStart->toDateString() : substr((string)$rawStart, 0, 10);
+                $eDate = $rawEnd ? ($rawEnd instanceof Carbon ? $rawEnd->toDateString() : substr((string)$rawEnd, 0, 10)) : null;
 
                 return $sDate <= $date
                     && ($eDate === null || $eDate >= $date);
@@ -1134,8 +1138,12 @@ class PayrollController extends Controller
 
             // Find vehicle assignment active on this day
             $activeVehicleAssign = $empVehicleAssignments->first(function ($va) use ($date) {
-                $sDate = $va->assigned_date instanceof Carbon ? $va->assigned_date->toDateString() : substr($va->assigned_date, 0, 10);
-                $eDate = $va->unassigned_date ? ($va->unassigned_date instanceof Carbon ? $va->unassigned_date->toDateString() : substr($va->unassigned_date, 0, 10)) : null;
+                $rawStart = is_array($va) ? ($va['assigned_date'] ?? $va['start_date'] ?? null) : ($va->assigned_date ?? $va->start_date ?? null);
+                $rawEnd = is_array($va) ? ($va['unassigned_date'] ?? $va['end_date'] ?? null) : ($va->unassigned_date ?? $va->end_date ?? null);
+                if (!$rawStart) return false;
+
+                $sDate = $rawStart instanceof Carbon ? $rawStart->toDateString() : substr((string)$rawStart, 0, 10);
+                $eDate = $rawEnd ? ($rawEnd instanceof Carbon ? $rawEnd->toDateString() : substr((string)$rawEnd, 0, 10)) : null;
 
                 return $sDate <= $date
                     && ($eDate === null || $eDate >= $date);
