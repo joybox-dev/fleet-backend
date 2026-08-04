@@ -590,7 +590,7 @@ class PayrollController extends Controller
                 ->groupBy('employee_id');
 
             // 7. Vehicle assignments for fuel allowance
-            $allAssignments = \DB::table('vehicle_assignments')
+            $allFuelAssignments = \DB::table('vehicle_assignments')
                 ->join('vehicles', 'vehicles.id', '=', 'vehicle_assignments.vehicle_id')
                 ->whereIn('vehicle_assignments.employee_id', $employeeIds)
                 ->where('vehicle_assignments.assigned_date', '<=', $endDate)
@@ -599,6 +599,16 @@ class PayrollController extends Controller
                         ->orWhere('vehicle_assignments.unassigned_date', '>=', $startDate);
                 })
                 ->select('vehicle_assignments.employee_id', 'vehicles.monthly_fuel_allowance')
+                ->get()
+                ->groupBy('employee_id');
+
+            // 8. Contract assignments for drivers
+            $allContractAssignments = ContractAssignment::whereIn('employee_id', $employeeIds)
+                ->where('start_date', '<=', $endDate)
+                ->where(function ($q) use ($startDate) {
+                    $q->whereNull('end_date')
+                        ->orWhere('end_date', '>=', $startDate);
+                })
                 ->get()
                 ->groupBy('employee_id');
 
@@ -619,7 +629,7 @@ class PayrollController extends Controller
                     $custodySums,
                     $leaveData,
                     $allAdvances,
-                    $allAssignments,
+                    $allContractAssignments,
                     $existingSlip,
                     $driverExpenseSums
                 );
