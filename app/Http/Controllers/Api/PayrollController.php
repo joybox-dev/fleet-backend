@@ -1010,6 +1010,12 @@ class PayrollController extends Controller
             if (!$vehicleTypeIdVal && $activeVehicleAssign && $activeVehicleAssign->vehicle) {
                 $vehicleTypeIdVal = $activeVehicleAssign->vehicle->vehicle_type_id;
             }
+            if (!$vehicleTypeIdVal && $employee->vehicle_type_id) {
+                $vehicleTypeIdVal = $employee->vehicle_type_id;
+            }
+            if (!$vehicleTypeIdVal && $employee->vehicle?->vehicle_type_id) {
+                $vehicleTypeIdVal = $employee->vehicle->vehicle_type_id;
+            }
 
             $dayMap[$date] = [
                 'contract_id' => $contractIdVal,
@@ -1331,8 +1337,12 @@ class PayrollController extends Controller
                         $pricingRules = is_string($segContract->driver_pricing_rules)
                             ? json_decode($segContract->driver_pricing_rules, true)
                             : $segContract->driver_pricing_rules;
-                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
-                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        if (is_array($pricingRules)) {
+                            if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                                $pricingRules = $pricingRules[$vehicleTypeId];
+                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
+                                $pricingRules = reset($pricingRules);
+                            }
                         }
                     }
                     if (is_array($pricingRules) && isset($pricingRules['zones'])) {
@@ -1349,8 +1359,8 @@ class PayrollController extends Controller
                                 $rate = (float) $pricingRules[$zoneName];
                             } else {
                                 foreach ($pricingRules as $rule) {
-                                    if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
-                                        $rate = (float) ($rule['rate'] ?? 0.0);
+                                    if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
+                                        $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
                                         break;
                                     }
                                 }
@@ -1388,8 +1398,12 @@ class PayrollController extends Controller
                         $pricingRules = is_string($segContract->driver_pricing_rules)
                             ? json_decode($segContract->driver_pricing_rules, true)
                             : $segContract->driver_pricing_rules;
-                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
-                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        if (is_array($pricingRules)) {
+                            if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                                $pricingRules = $pricingRules[$vehicleTypeId];
+                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
+                                $pricingRules = reset($pricingRules);
+                            }
                         }
                     }
                     if (is_array($pricingRules) && isset($pricingRules['zones_tiers'])) {
@@ -1439,8 +1453,12 @@ class PayrollController extends Controller
                         $pricingRules = is_string($segContract->driver_pricing_rules)
                             ? json_decode($segContract->driver_pricing_rules, true)
                             : $segContract->driver_pricing_rules;
-                        if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
-                            $pricingRules = $pricingRules[$vehicleTypeId];
+                        if (is_array($pricingRules)) {
+                            if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                                $pricingRules = $pricingRules[$vehicleTypeId];
+                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
+                                $pricingRules = reset($pricingRules);
+                            }
                         }
                     }
                     if (is_array($pricingRules) && isset($pricingRules['tiers'])) {
