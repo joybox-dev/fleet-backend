@@ -488,15 +488,20 @@ class PayrollController extends Controller
      */
     public static function recalculateRun(PayrollRun $run): void
     {
-        \App\Services\Contracts\SmartValueFallbackService::clearCache();
-        $year = $run->year;
-        $month = $run->month;
-        $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
-        $endDate = Carbon::parse($startDate)->endOfMonth()->toDateString();
+        $lock = \Illuminate\Support\Facades\Cache::lock("payroll_recalc_{$run->id}", 30);
+        if (!$lock->get()) {
+            return;
+        }
 
-        $slipIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('id')->toArray();
+        try {
+            \App\Services\Contracts\SmartValueFallbackService::clearCache();
+            $year = $run->year;
+            $month = $run->month;
+            $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
+            $endDate = Carbon::parse($startDate)->endOfMonth()->toDateString();
 
-        DB::transaction(function () use ($slipIds) {
+            $slipIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('id')->toArray();
+
             // Revert previous advance deductions first to avoid double counting
             $previousDeductions = AdvanceDeduction::whereIn('payroll_slip_id', $slipIds)->get();
             foreach ($previousDeductions as $ded) {
@@ -512,36 +517,39 @@ class PayrollController extends Controller
                 $ded->delete();
             }
 
-            // Uncheck violations previously deducted in this run by primary key to prevent lock wait timeouts
-            $violationIdsToUncheck = Violation::withoutGlobalScopes()
+            // Uncheck violations previously deducted in this run by primary key (autocommit)
+            $violationIdsToUncheck = \DB::table('violations')
                 ->whereIn('payroll_slip_id', $slipIds)
+                ->whereNull('deleted_at')
                 ->pluck('id')
                 ->toArray();
 
             if (!empty($violationIdsToUncheck)) {
-                Violation::withoutGlobalScopes()
+                \DB::table('violations')
                     ->whereIn('id', $violationIdsToUncheck)
                     ->update([
                         'is_deducted' => false,
                         'payroll_slip_id' => null,
+                        'updated_at' => now(),
                     ]);
             }
 
-            // Uncheck driver expenses previously deducted in this run by primary key
-            $expenseIdsToUncheck = \App\Models\DriverExpense::withoutGlobalScopes()
+            // Uncheck driver expenses previously deducted in this run by primary key (autocommit)
+            $expenseIdsToUncheck = \DB::table('driver_expenses')
                 ->whereIn('payroll_slip_id', $slipIds)
+                ->whereNull('deleted_at')
                 ->pluck('id')
                 ->toArray();
 
             if (!empty($expenseIdsToUncheck)) {
-                \App\Models\DriverExpense::withoutGlobalScopes()
+                \DB::table('driver_expenses')
                     ->whereIn('id', $expenseIdsToUncheck)
                     ->update([
                         'is_deducted' => false,
                         'payroll_slip_id' => null,
+                        'updated_at' => now(),
                     ]);
             }
-        });
 
         try {
 
@@ -819,6 +827,8 @@ class PayrollController extends Controller
 
         } catch (\Throwable $e) {
             \Log::error('Recalculate Run failed: '.$e->getMessage());
+        } finally {
+            optional($lock)->release();
         }
     }
 
