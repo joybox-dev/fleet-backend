@@ -1260,8 +1260,15 @@ class PayrollController extends Controller
             }
         }
 
-        $contractId = $primarySegment['contract_id'];
-        $contract = $primarySegment['contract_assignment'] ? $primarySegment['contract_assignment']->contract : null;
+        $contractId = $primarySegment['contract_id'] ?? null;
+        $contractAssignment = $primarySegment['contract_assignment'] ?? null;
+        $contract = null;
+        if (is_object($contractAssignment) && isset($contractAssignment->contract)) {
+            $contract = $contractAssignment->contract;
+        }
+        if (!$contract && $contractId) {
+            $contract = Contract::withoutGlobalScopes()->find($contractId);
+        }
         $paymentType = $employee->pay_type;
         if ($contract) {
             $paymentType = $contract->payment_type;
@@ -1343,8 +1350,10 @@ class PayrollController extends Controller
             }
 
             $activeOverride = null;
-            if (isset($segment['contract_assignment']) && $segment['contract_assignment']) {
-                $activeOverride = DriverContractOverride::where('contract_assignment_id', $segment['contract_assignment']->id)
+            $assignObj = $segment['contract_assignment'] ?? null;
+            $assignId = is_array($assignObj) ? ($assignObj['id'] ?? null) : ($assignObj->id ?? null);
+            if ($assignId) {
+                $activeOverride = DriverContractOverride::where('contract_assignment_id', $assignId)
                     ->whereDate('effective_from', '<=', $segment['end_date'])
                     ->where(function ($q) use ($segment) {
                         $q->whereNull('effective_to')
