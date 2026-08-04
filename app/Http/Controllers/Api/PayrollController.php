@@ -819,6 +819,21 @@ class PayrollController extends Controller
             ->orderBy('id')
             ->get(['id', 'employee_id', 'vehicle_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'zone', 'shift_valid', 'is_valid', 'online_hours', 'created_by']);
 
+        $assignments = ContractAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employeeId)
+            ->where('start_date', '<=', $endDate)
+            ->where(function ($q) use ($startDate) {
+                $q->whereNull('end_date')
+                    ->orWhere('end_date', '>=', $startDate);
+            })
+            ->get();
+
+        $contractIds = $logs->pluck('contract_id')->concat($assignments->pluck('contract_id'))->filter()->unique();
+        $contracts = Contract::withoutGlobalScopes()->whereIn('id', $contractIds)->get()->keyBy('id');
+
+        $vehicleIds = $logs->pluck('vehicle_id')->filter()->unique();
+        $vehicles = \App\Models\Vehicle::withoutGlobalScopes()->whereIn('id', $vehicleIds)->get()->keyBy('id');
+
         $target = (int) ($employee->target_orders_monthly ?? 0);
         $baseRate = (float) (($target > 0 && $employee->base_commission_rate !== null) ? $employee->base_commission_rate : ($employee->rate_per_order ?? 0.000));
         $premiumRate = (float) ($employee->premium_commission_rate ?? 0.000);
@@ -828,43 +843,38 @@ class PayrollController extends Controller
         foreach ($logs as $log) {
             $cOrders = (int) $log->orders_count;
             $logCommission = 0;
+            $logDate = $log->log_date instanceof Carbon ? $log->log_date->toDateString() : substr((string)$log->log_date, 0, 10);
 
             // Check if log has contract or driver has active assignment on log_date
             $contractId = $log->contract_id;
             if (! $contractId) {
-                $assignment = ContractAssignment::where('employee_id', $employeeId)
-                    ->whereDate('start_date', '<=', $log->log_date)
-                    ->where(function ($q) use ($log) {
-                        $q->whereNull('end_date')
-                            ->orWhereDate('end_date', '>=', $log->log_date);
-                    })
-                    ->first();
-                if ($assignment) {
-                    $contractId = $assignment->contract_id;
+                $activeAssign = $assignments->first(function ($a) use ($logDate) {
+                    $st = $a->start_date instanceof Carbon ? $a->start_date->toDateString() : substr((string)$a->start_date, 0, 10);
+                    $et = $a->end_date ? ($a->end_date instanceof Carbon ? $a->end_date->toDateString() : substr((string)$a->end_date, 0, 10)) : null;
+                    return $st <= $logDate && (!$et || $et >= $logDate);
+                });
+                if ($activeAssign) {
+                    $contractId = $activeAssign->contract_id;
                 }
             }
 
             $rate = null;
             if ($contractId) {
                 // Check if there is an active ContractAssignment
-                $assignment = ContractAssignment::where('employee_id', $employeeId)
-                    ->where('contract_id', $contractId)
-                    ->whereDate('start_date', '<=', $log->log_date)
-                    ->where(function ($q) use ($log) {
-                        $q->whereNull('end_date')
-                            ->orWhereDate('end_date', '>=', $log->log_date);
-                    })
-                    ->first();
-                if ($assignment) {
-                    $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $log->log_date, 'order_commission');
+                $activeAssignForContract = $assignments->first(function ($a) use ($contractId, $logDate) {
+                    $st = $a->start_date instanceof Carbon ? $a->start_date->toDateString() : substr((string)$a->start_date, 0, 10);
+                    $et = $a->end_date ? ($a->end_date instanceof Carbon ? $a->end_date->toDateString() : substr((string)$a->end_date, 0, 10)) : null;
+                    return $a->contract_id == $contractId && $st <= $logDate && (!$et || $et >= $logDate);
+                });
+
+                if ($activeAssignForContract) {
+                    $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $logDate, 'order_commission');
                     if ($rate === null) {
-                        $contractObj = Contract::withoutGlobalScopes()->find($contractId);
+                        $contractObj = $contracts->get($contractId);
                         if ($contractObj) {
-                            $vehicleId = $log->vehicle_id;
                             $vehicleTypeId = null;
-                            if ($vehicleId) {
-                                $v = \App\Models\Vehicle::withoutGlobalScopes()->find($vehicleId);
-                                $vehicleTypeId = $v?->vehicle_type_id;
+                            if ($log->vehicle_id && isset($vehicles[$log->vehicle_id])) {
+                                $vehicleTypeId = $vehicles[$log->vehicle_id]->vehicle_type_id;
                             }
                             if (!$vehicleTypeId && $employee->vehicle_type_id) {
                                 $vehicleTypeId = $employee->vehicle_type_id;
