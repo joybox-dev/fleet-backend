@@ -551,8 +551,6 @@ class PayrollController extends Controller
                     ]);
             }
 
-        try {
-
             $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
             if (empty($employeeIds)) {
                 $employeeIds = Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
