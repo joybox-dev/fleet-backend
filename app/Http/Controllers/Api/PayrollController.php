@@ -512,17 +512,21 @@ class PayrollController extends Controller
                 $ded->delete();
             }
 
-            // Uncheck violations previously deducted in this run
-            Violation::whereIn('payroll_slip_id', $slipIds)->update([
-                'is_deducted' => false,
-                'payroll_slip_id' => null,
-            ]);
+            // Uncheck violations previously deducted in this run (only if any exist)
+            if (Violation::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->exists()) {
+                Violation::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->update([
+                    'is_deducted' => false,
+                    'payroll_slip_id' => null,
+                ]);
+            }
 
-            // Uncheck driver expenses previously deducted in this run
-            \App\Models\DriverExpense::whereIn('payroll_slip_id', $slipIds)->update([
-                'is_deducted' => false,
-                'payroll_slip_id' => null,
-            ]);
+            // Uncheck driver expenses previously deducted in this run (only if any exist)
+            if (\App\Models\DriverExpense::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->exists()) {
+                \App\Models\DriverExpense::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->update([
+                    'is_deducted' => false,
+                    'payroll_slip_id' => null,
+                ]);
+            }
         });
 
         try {
@@ -725,7 +729,8 @@ class PayrollController extends Controller
 
                 // Re-mark violations as deducted
                 if ($data['violations_deduction'] > 0) {
-                    Violation::where('employee_id', $employee->id)
+                    Violation::withoutGlobalScopes()
+                        ->where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
                         ->whereDate('violation_date', '<=', $endDate)
