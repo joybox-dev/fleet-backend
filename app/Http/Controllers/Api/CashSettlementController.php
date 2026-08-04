@@ -80,61 +80,61 @@ class CashSettlementController extends Controller
             'notes'             => 'nullable|string',
         ]);
 
-        if ($validated['daily_log_id'] ?? null) {
-            $log = DailyLog::find($validated['daily_log_id']);
-            if ($validated['amount'] > $log->cash_pending) {
-                return response()->json([
-                    'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.',
-                    'errors' => [
-                        'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.']
-                    ]
-                ], 422);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $validated) {
+            if ($validated['daily_log_id'] ?? null) {
+                $log = DailyLog::find($validated['daily_log_id']);
+                if ($validated['amount'] > $log->cash_pending) {
+                    return response()->json([
+                        'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.',
+                        'errors' => [
+                            'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق لهذا السجل اليومي.']
+                        ]
+                    ], 422);
+                }
+            } else {
+                $pendingCash = DailyLog::where('employee_id', $validated['employee_id'])->sum('cash_pending');
+                if ($validated['amount'] > $pendingCash) {
+                    return response()->json([
+                        'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.',
+                        'errors' => [
+                            'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.']
+                        ]
+                    ], 422);
+                }
             }
-        } else {
-            $pendingCash = DailyLog::where('employee_id', $validated['employee_id'])->sum('cash_pending');
-            if ($validated['amount'] > $pendingCash) {
-                return response()->json([
-                    'message' => 'المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.',
-                    'errors' => [
-                        'amount' => ['المبلغ المدخل للتسوية أكبر من الكاش المعلق الحالي للسائق.']
-                    ]
-                ], 422);
-            }
-        }
 
-        $validated['received_by'] = $request->user()->id;
+            $validated['received_by'] = $request->user()->id;
+            $validated['company_id'] = app('current_company_id');
 
-        $settlement = CashSettlement::create($validated);
+            $settlement = CashSettlement::create($validated);
 
-        // Reduce cash_pending on linked logs or spread across oldest unpaid
-        $remaining = $validated['amount'];
+            $remaining = (float) $validated['amount'];
 
-        if ($validated['daily_log_id'] ?? null) {
-            // Settle specific log
-            $log = DailyLog::find($validated['daily_log_id']);
-            $reduce = min($remaining, $log->cash_pending);
-            $log->update([
-                'cash_settled' => $log->cash_settled + $reduce,
-                'cash_pending' => max(0, $log->cash_pending - $reduce),
-            ]);
-        } else {
-            // Spread across oldest logs for this employee (FIFO)
-            DailyLog::where('employee_id', $validated['employee_id'])
-                ->where('cash_pending', '>', 0)
-                ->orderBy('log_date')
-                ->each(function ($log) use (&$remaining) {
-                    if ($remaining <= 0) return false;
-                    $reduce = min($remaining, $log->cash_pending);
+            if ($validated['daily_log_id'] ?? null) {
+                $log = DailyLog::find($validated['daily_log_id']);
+                $reduce = min($remaining, (float) $log->cash_pending);
+                $log->update([
+                    'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
+                    'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
+                ]);
+            } else {
+                $logs = DailyLog::where('employee_id', $validated['employee_id'])
+                    ->where('cash_pending', '>', 0)
+                    ->orderBy('log_date')
+                    ->get();
+
+                foreach ($logs as $log) {
+                    if ($remaining <= 0) break;
+                    $reduce = min($remaining, (float) $log->cash_pending);
                     $log->update([
-                        'cash_settled' => $log->cash_settled + $reduce,
-                        'cash_pending' => max(0, $log->cash_pending - $reduce),
+                        'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
+                        'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
                     ]);
                     $remaining -= $reduce;
-                });
-        }
+                }
+            }
 
-
-
-        return response()->json($settlement->load(['employee:id,name', 'receivedBy:id,name']), 201);
+            return response()->json($settlement->load(['employee:id,name', 'receivedBy:id,name']), 201);
+        });
     }
 }
