@@ -474,10 +474,9 @@ class PayrollController extends Controller
         $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
         $endDate = Carbon::parse($startDate)->endOfMonth()->toDateString();
 
-        DB::beginTransaction();
-        try {
-            $slipIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('id')->toArray();
+        $slipIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('id')->toArray();
 
+        DB::transaction(function () use ($slipIds) {
             // Revert previous advance deductions first to avoid double counting
             $previousDeductions = AdvanceDeduction::whereIn('payroll_slip_id', $slipIds)->get();
             foreach ($previousDeductions as $ded) {
@@ -504,6 +503,9 @@ class PayrollController extends Controller
                 'is_deducted' => false,
                 'payroll_slip_id' => null,
             ]);
+        });
+
+        try {
 
             $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
             if (empty($employeeIds)) {
@@ -744,9 +746,7 @@ class PayrollController extends Controller
                 'total_cash_diff' => $totalActual - $totalOfficial,
             ]);
 
-            DB::commit();
         } catch (\Throwable $e) {
-            DB::rollBack();
             \Log::error('Recalculate Run failed: '.$e->getMessage());
         }
     }
