@@ -90,14 +90,16 @@ class PayrollController extends Controller
             $totalActual = 0;
 
             // 1. Daily logs pre-fetched
-            $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
+            $allDailyLogs = DailyLog::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
                 ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout', 'zone'])
                 ->groupBy('employee_id');
 
-            $violationSums = Violation::whereIn('employee_id', $employeeIds)
+            $violationSums = Violation::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where('is_deducted', false)
                 ->whereDate('violation_date', '<=', $endDate)
@@ -106,7 +108,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'employee_id');
 
             // 3. Maintenance deductions
-            $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
+            $maintenanceSums = MaintenanceRecord::withoutGlobalScopes()
+                ->whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->whereDate('maintenance_date', '<=', $endDate)
                 ->groupBy('liable_employee_id')
@@ -114,7 +117,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'liable_employee_id');
 
             // 4. Custody deductions
-            $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
+            $custodySums = CustodyItem::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
                 ->where('deduction_amount', '>', 0)
@@ -124,7 +128,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'employee_id');
 
             // 5. Leave deductions
-            $leaveData = EmployeeLeave::whereIn('employee_id', $employeeIds)
+            $leaveData = EmployeeLeave::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->where('is_paid', false)
                 ->where(function ($q) use ($startDate, $endDate) {
@@ -141,14 +146,15 @@ class PayrollController extends Controller
                 ->keyBy('employee_id');
 
             // 6. Active salary advances
-            $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
+            $allAdvances = SalaryAdvance::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
                 ->whereDate('advance_date', '<=', $endDate)
                 ->get()
                 ->groupBy('employee_id');
 
             // 7. Vehicle assignments for fuel allowance
-            $allAssignments = \DB::table('vehicle_assignments')
+            $allFuelAssignments = \DB::table('vehicle_assignments')
                 ->join('vehicles', 'vehicles.id', '=', 'vehicle_assignments.vehicle_id')
                 ->whereIn('vehicle_assignments.employee_id', $employeeIds)
                 ->where('vehicle_assignments.assigned_date', '<=', $endDate)
@@ -157,6 +163,17 @@ class PayrollController extends Controller
                         ->orWhere('vehicle_assignments.unassigned_date', '>=', $startDate);
                 })
                 ->select('vehicle_assignments.employee_id', 'vehicles.monthly_fuel_allowance')
+                ->get()
+                ->groupBy('employee_id');
+
+            // 8. Contract assignments for drivers
+            $allContractAssignments = ContractAssignment::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
+                ->where('start_date', '<=', $endDate)
+                ->where(function ($q) use ($startDate) {
+                    $q->whereNull('end_date')
+                        ->orWhere('end_date', '>=', $startDate);
+                })
                 ->get()
                 ->groupBy('employee_id');
 
@@ -175,7 +192,7 @@ class PayrollController extends Controller
                     $custodySums,
                     $leaveData,
                     $allAdvances,
-                    $allAssignments
+                    $allContractAssignments
                 );
 
                 $totalBonuses = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_contract_bonuses'];
@@ -517,14 +534,16 @@ class PayrollController extends Controller
             $totalActual = 0;
 
             // 1. Daily logs
-            $allDailyLogs = DailyLog::whereIn('employee_id', $employeeIds)
+            $allDailyLogs = DailyLog::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->whereBetween('log_date', [$startDate, $endDate])
                 ->orderBy('log_date')
                 ->orderBy('id')
                 ->get(['id', 'employee_id', 'orders_count', 'driver_commission', 'income_amount', 'log_date', 'contract_id', 'vehicle_id', 'shift_valid', 'online_hours', 'ontime_rate', 'avg_delivery_time', 'is_valid', 'late_login', 'early_logout', 'zone'])
                 ->groupBy('employee_id');
 
-            $violationSums = Violation::whereIn('employee_id', $employeeIds)
+            $violationSums = Violation::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('is_driver_liable', true)
                 ->where(function ($q) use ($slipIds) {
                     $q->where('is_deducted', false)
@@ -536,7 +555,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'employee_id');
 
             // 3. Maintenance deductions
-            $maintenanceSums = MaintenanceRecord::whereIn('liable_employee_id', $employeeIds)
+            $maintenanceSums = MaintenanceRecord::withoutGlobalScopes()
+                ->whereIn('liable_employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->whereDate('maintenance_date', '<=', $endDate)
                 ->groupBy('liable_employee_id')
@@ -544,7 +564,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'liable_employee_id');
 
             // 4. Custody deductions
-            $custodySums = CustodyItem::whereIn('employee_id', $employeeIds)
+            $custodySums = CustodyItem::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'returned')
                 ->whereIn('return_condition', ['damaged', 'lost'])
                 ->where('deduction_amount', '>', 0)
@@ -554,7 +575,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'employee_id');
 
             // 4b. Driver expense deductions
-            $driverExpenseSums = \App\Models\DriverExpense::whereIn('employee_id', $employeeIds)
+            $driverExpenseSums = \App\Models\DriverExpense::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('driver_amount', '>', 0)
                 ->where(function ($q) use ($slipIds) {
                     $q->where('is_deducted', false)
@@ -566,7 +588,8 @@ class PayrollController extends Controller
                 ->pluck('total', 'employee_id');
 
             // 5. Leave deductions
-            $leaveData = EmployeeLeave::whereIn('employee_id', $employeeIds)
+            $leaveData = EmployeeLeave::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'approved')
                 ->where('is_paid', false)
                 ->where(function ($q) use ($startDate, $endDate) {
@@ -583,7 +606,8 @@ class PayrollController extends Controller
                 ->keyBy('employee_id');
 
             // 6. Active salary advances
-            $allAdvances = SalaryAdvance::whereIn('employee_id', $employeeIds)
+            $allAdvances = SalaryAdvance::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('status', 'active')
                 ->whereDate('advance_date', '<=', $endDate)
                 ->get()
@@ -603,7 +627,8 @@ class PayrollController extends Controller
                 ->groupBy('employee_id');
 
             // 8. Contract assignments for drivers
-            $allContractAssignments = ContractAssignment::whereIn('employee_id', $employeeIds)
+            $allContractAssignments = ContractAssignment::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
                 ->where('start_date', '<=', $endDate)
                 ->where(function ($q) use ($startDate) {
                     $q->whereNull('end_date')
@@ -633,7 +658,6 @@ class PayrollController extends Controller
                     $existingSlip,
                     $driverExpenseSums
                 );
-
                 $totalBonuses = $data['orders_bonus'] + $data['fuel_allowance'] + $data['total_contract_bonuses'];
                 $totalGrossActual = $data['base_actual'] + $totalBonuses;
                 $totalDeductions = $data['violations_deduction'] + $data['maintenance_deduction'] + $data['custody_deduction'] + ($data['driver_expense_deduction'] ?? 0) + $data['leave_deduction'] + $data['advance_deduction'];
@@ -978,7 +1002,8 @@ class PayrollController extends Controller
         $daysInMonth = Carbon::parse($startDate)->daysInMonth;
 
         // Fetch contract assignments for this employee
-        $empContractAssignments = ContractAssignment::where('employee_id', $employeeId)
+        $empContractAssignments = ContractAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employeeId)
             ->where('start_date', '<=', $endDate)
             ->where(function ($q) use ($startDate) {
                 $q->whereNull('end_date')
@@ -996,7 +1021,8 @@ class PayrollController extends Controller
         }
 
         // Fetch vehicle assignments active in this month
-        $empVehicleAssignments = VehicleAssignment::where('employee_id', $employeeId)
+        $empVehicleAssignments = VehicleAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employeeId)
             ->where('assigned_date', '<=', $endDate)
             ->where(function ($q) use ($startDate) {
                 $q->whereNull('unassigned_date')
@@ -1427,24 +1453,7 @@ class PayrollController extends Controller
                         $payout += $zoneOrders * $rate * $segExchangeRate;
                     }
 
-                    // Deficit/Surplus Calculation for Zones
-                    $deficitDeduction = 0.0;
-                    $surplusBonusAmt = 0.0;
-                    if ($proratedMonthlyTarget > 0) {
-                        $deficitRate = (float) (SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'order_commission') ?? 0.0);
-                        if ($segOrders < $proratedMonthlyTarget) {
-                            $deficitDeduction = ($proratedMonthlyTarget - $segOrders) * $deficitRate;
-                        } else {
-                            $surplusBonus = (float) (SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'custom_monthly_bonus') ?? 0.0);
-                            $surplusRate = (float) ($employee->premium_commission_rate ?? $segContract->premium_commission_rate ?? $deficitRate);
-                            if ($surplusBonus > 0) {
-                                $surplusBonusAmt = $surplusBonus;
-                            } else {
-                                $surplusBonusAmt = ($segOrders - $proratedMonthlyTarget) * $surplusRate;
-                            }
-                        }
-                    }
-                    $segBaseActual = $payout - $deficitDeduction + $surplusBonusAmt;
+                    $segBaseActual = $payout;
                 } elseif ($driverPaymentMethod === 'zones_tiers') {
                     $pricingRules = null;
                     if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {

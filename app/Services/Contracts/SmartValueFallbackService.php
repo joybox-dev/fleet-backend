@@ -117,9 +117,15 @@ class SmartValueFallbackService
                 return $contract->$contractField;
             }
 
-            // Database column backups (legacy columns)
-            if ($parameterName === 'order_commission' && isset($contract->rate_per_order) && (float)$contract->rate_per_order > 0) {
-                return $contract->rate_per_order;
+            // Database column backups (legacy contract columns & employee default driver commission)
+            if ($parameterName === 'order_commission') {
+                if (isset($contract->rate_per_order) && (float)$contract->rate_per_order > 0) {
+                    return $contract->rate_per_order;
+                }
+                $employee = \App\Models\Employee::withoutGlobalScopes()->find($employeeId);
+                if ($employee && isset($employee->rate_per_order) && (float)$employee->rate_per_order > 0) {
+                    return $employee->rate_per_order;
+                }
             }
         }
 
