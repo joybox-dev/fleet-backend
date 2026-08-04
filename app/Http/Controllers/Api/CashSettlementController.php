@@ -113,10 +113,13 @@ class CashSettlementController extends Controller
             if ($validated['daily_log_id'] ?? null) {
                 $log = DailyLog::find($validated['daily_log_id']);
                 $reduce = min($remaining, (float) $log->cash_pending);
-                $log->update([
-                    'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
-                    'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
-                ]);
+                \Illuminate\Support\Facades\DB::table('daily_logs')
+                    ->where('id', $log->id)
+                    ->update([
+                        'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
+                        'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
+                        'updated_at'   => now(),
+                    ]);
             } else {
                 $logs = DailyLog::where('employee_id', $validated['employee_id'])
                     ->where('cash_pending', '>', 0)
@@ -126,15 +129,18 @@ class CashSettlementController extends Controller
                 foreach ($logs as $log) {
                     if ($remaining <= 0) break;
                     $reduce = min($remaining, (float) $log->cash_pending);
-                    $log->update([
-                        'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
-                        'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
-                    ]);
+                    \Illuminate\Support\Facades\DB::table('daily_logs')
+                        ->where('id', $log->id)
+                        ->update([
+                            'cash_settled' => round((float) $log->cash_settled + $reduce, 3),
+                            'cash_pending' => max(0, round((float) $log->cash_pending - $reduce, 3)),
+                            'updated_at'   => now(),
+                        ]);
                     $remaining -= $reduce;
                 }
             }
 
             return response()->json($settlement->load(['employee:id,name', 'receivedBy:id,name']), 201);
-        });
+        }, 3);
     }
 }
