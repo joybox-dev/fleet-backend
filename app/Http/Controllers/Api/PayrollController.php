@@ -825,19 +825,52 @@ class PayrollController extends Controller
                     $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $log->log_date, 'order_commission');
                     if ($rate === null) {
                         $contractObj = Contract::find($contractId);
-                        if ($contractObj && ($contractObj->driver_payment_method === 'zones' || $contractObj->payment_type === 'zones')) {
+                        if ($contractObj) {
+                            $vehicleId = $log->vehicle_id;
+                            $vehicleTypeId = null;
+                            if ($vehicleId) {
+                                $v = \App\Models\Vehicle::find($vehicleId);
+                                $vehicleTypeId = $v?->vehicle_type_id;
+                            }
+                            if (!$vehicleTypeId && $employee->vehicle_type_id) {
+                                $vehicleTypeId = $employee->vehicle_type_id;
+                            }
+
                             $pricingRules = is_string($contractObj->driver_pricing_rules)
                                 ? json_decode($contractObj->driver_pricing_rules, true)
                                 : $contractObj->driver_pricing_rules;
-                            $zoneName = $log->zone;
+
                             if (is_array($pricingRules)) {
-                                if (isset($pricingRules[$zoneName])) {
-                                    $rate = (float) $pricingRules[$zoneName];
+                                if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                                    $pricingRules = $pricingRules[$vehicleTypeId];
                                 } else {
-                                    foreach ($pricingRules as $rule) {
-                                        if (is_array($rule) && isset($rule['zone']) && $rule['zone'] == $zoneName) {
-                                            $rate = (float) ($rule['rate'] ?? 0.0);
-                                            break;
+                                    $firstKey = array_key_first($pricingRules);
+                                    if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
+                                        $pricingRules = $pricingRules[$firstKey];
+                                    }
+                                }
+                            }
+
+                            $driverPaymentMethod = $contractObj->driver_payment_method;
+                            if (!$driverPaymentMethod && is_array($pricingRules) && isset($pricingRules['payment_method'])) {
+                                $driverPaymentMethod = $pricingRules['payment_method'];
+                            }
+                            if (!$driverPaymentMethod) {
+                                $driverPaymentMethod = $contractObj->payment_type;
+                            }
+
+                            if ($driverPaymentMethod === 'zones' || $driverPaymentMethod === 'zones_tiers') {
+                                $zoneRules = is_array($pricingRules) && isset($pricingRules['zones']) ? $pricingRules['zones'] : (is_array($pricingRules) && isset($pricingRules['zones_tiers']) ? $pricingRules['zones_tiers'] : $pricingRules);
+                                $zoneName = $log->zone;
+                                if (is_array($zoneRules)) {
+                                    if (isset($zoneRules[$zoneName])) {
+                                        $rate = (float) $zoneRules[$zoneName];
+                                    } else {
+                                        foreach ($zoneRules as $rule) {
+                                            if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
+                                                $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                                break;
+                                            }
                                         }
                                     }
                                 }
