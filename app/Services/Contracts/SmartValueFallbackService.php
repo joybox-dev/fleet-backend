@@ -10,6 +10,8 @@ use Carbon\Carbon;
 
 class SmartValueFallbackService
 {
+    protected static array $cache = [];
+
     /**
      * Resolve a contract parameter value using smart fallback logic:
      * 1. Check active DriverContractOverride for employee/contract on date.
@@ -17,6 +19,24 @@ class SmartValueFallbackService
      * 3. Check Contract default.
      */
     public static function resolve(int $employeeId, int $contractId, string $date, string $parameterName)
+    {
+        $cacheKey = "{$employeeId}_{$contractId}_{$date}_{$parameterName}";
+        if (array_key_exists($cacheKey, self::$cache)) {
+            return self::$cache[$cacheKey];
+        }
+
+        $result = self::doResolve($employeeId, $contractId, $date, $parameterName);
+        self::$cache[$cacheKey] = $result;
+
+        return $result;
+    }
+
+    public static function clearCache(): void
+    {
+        self::$cache = [];
+    }
+
+    protected static function doResolve(int $employeeId, int $contractId, string $date, string $parameterName)
     {
         $carbonDate = Carbon::parse($date);
         $year = $carbonDate->year;

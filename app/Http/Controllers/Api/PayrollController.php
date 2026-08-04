@@ -52,6 +52,8 @@ class PayrollController extends Controller
         $year = $validated['year'];
         $month = $validated['month'];
 
+        \App\Services\Contracts\SmartValueFallbackService::clearCache();
+
         // Prevent duplicate runs OR auto-recalculate if draft
         $existingRun = PayrollRun::where('year', $year)->where('month', $month)->first();
         if ($existingRun) {
@@ -486,6 +488,7 @@ class PayrollController extends Controller
      */
     public static function recalculateRun(PayrollRun $run): void
     {
+        \App\Services\Contracts\SmartValueFallbackService::clearCache();
         $year = $run->year;
         $month = $run->month;
         $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
@@ -1012,15 +1015,31 @@ class PayrollController extends Controller
         $daysInMonth = Carbon::parse($startDate)->daysInMonth;
 
         // Fetch contract assignments for this employee
-        $empContractAssignments = ContractAssignment::withoutGlobalScopes()
-            ->where('employee_id', $employeeId)
-            ->where('start_date', '<=', $endDate)
-            ->where(function ($q) use ($startDate) {
-                $q->whereNull('end_date')
-                    ->orWhere('end_date', '>=', $startDate);
-            })
-            ->with('contract')
-            ->get();
+        $empContractAssignments = null;
+        if ($allAssignments instanceof \Illuminate\Support\Collection) {
+            $first = $allAssignments->first();
+            if ($first instanceof ContractAssignment) {
+                $empContractAssignments = $allAssignments->where('employee_id', $employeeId);
+            } else {
+                $empContractAssignments = $allAssignments->get($employeeId);
+            }
+        }
+
+        if (!$empContractAssignments || ($empContractAssignments instanceof \Illuminate\Support\Collection && $empContractAssignments->isEmpty())) {
+            $empContractAssignments = ContractAssignment::withoutGlobalScopes()
+                ->where('employee_id', $employeeId)
+                ->where('start_date', '<=', $endDate)
+                ->where(function ($q) use ($startDate) {
+                    $q->whereNull('end_date')
+                        ->orWhere('end_date', '>=', $startDate);
+                })
+                ->with('contract')
+                ->get();
+        }
+
+        if (!($empContractAssignments instanceof \Illuminate\Support\Collection)) {
+            $empContractAssignments = collect($empContractAssignments ? [$empContractAssignments] : []);
+        }
 
         $singleLogContractId = null;
         if ($empContractAssignments->isEmpty()) {
@@ -1040,6 +1059,12 @@ class PayrollController extends Controller
             })
             ->with('vehicle')
             ->get();
+
+        // Pre-fetch vehicles in bulk to eliminate N+1 queries inside 31-day loop
+        $logVehicleIds = $empLogs->pluck('vehicle_id')->filter()->unique();
+        $vehiclesMap = $logVehicleIds->isNotEmpty() 
+            ? \App\Models\Vehicle::withoutGlobalScopes()->whereIn('id', $logVehicleIds)->get()->keyBy('id')
+            : collect();
 
         // Map each day of the month to its active contract and vehicle type
         $dayMap = [];
@@ -1080,11 +1105,10 @@ class PayrollController extends Controller
                 ? $dayLog->contract_id 
                 : ($activeContractAssign ? $activeContractAssign->contract_id : null);
 
-            // Find vehicle type id
+            // Find vehicle type id (in-memory lookup)
             $vehicleTypeIdVal = null;
-            if ($dayLog && $dayLog->vehicle_id) {
-                $v = \App\Models\Vehicle::withoutGlobalScopes()->find($dayLog->vehicle_id);
-                $vehicleTypeIdVal = $v?->vehicle_type_id;
+            if ($dayLog && $dayLog->vehicle_id && isset($vehiclesMap[$dayLog->vehicle_id])) {
+                $vehicleTypeIdVal = $vehiclesMap[$dayLog->vehicle_id]->vehicle_type_id;
             }
             if (!$vehicleTypeIdVal && $activeVehicleAssign && $activeVehicleAssign->vehicle) {
                 $vehicleTypeIdVal = $activeVehicleAssign->vehicle->vehicle_type_id;
@@ -1298,8 +1322,8 @@ class PayrollController extends Controller
                 $driverPaymentMethod = $segPaymentType ?? 'per_order';
             }
 
-            // Recalculate daily log commissions for this segment logs
-            $segLogsRecalculated = self::recalculateEmployeeCommissions($employee, $year, $month, $segLogs);
+            // Daily log commissions are already calculated in step 1
+            $segLogsRecalculated = $segLogs;
 
             // Resolve fixed salary and absence divisor
             $fixedSalary = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'fixed_salary');
