@@ -1202,12 +1202,21 @@ class PayrollController extends Controller
 
             $vehicleTypeId = $segment['vehicle_type_id'] ?? null;
             $segPaymentType = $segContract->payment_type;
-            $driverPaymentMethod = $segContract->driver_payment_method ?? $segPaymentType;
+            $driverPaymentMethod = $segContract->driver_payment_method;
 
             if ($activeOverride && $activeOverride->override_type !== null) {
                 $driverPaymentMethod = $activeOverride->override_type;
             } elseif ($vehicleTypeId !== null && is_array($segContract->driver_pricing_rules) && isset($segContract->driver_pricing_rules[$vehicleTypeId]['payment_method'])) {
                 $driverPaymentMethod = $segContract->driver_pricing_rules[$vehicleTypeId]['payment_method'];
+            } elseif (!$driverPaymentMethod && is_array($segContract->driver_pricing_rules)) {
+                $firstKey = array_key_first($segContract->driver_pricing_rules);
+                if ($firstKey !== null && isset($segContract->driver_pricing_rules[$firstKey]['payment_method'])) {
+                    $driverPaymentMethod = $segContract->driver_pricing_rules[$firstKey]['payment_method'];
+                }
+            }
+
+            if (!$driverPaymentMethod) {
+                $driverPaymentMethod = $segPaymentType ?? 'per_order';
             }
 
             // Recalculate daily log commissions for this segment logs
