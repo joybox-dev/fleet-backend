@@ -1340,8 +1340,11 @@ class PayrollController extends Controller
                         if (is_array($pricingRules)) {
                             if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
                                 $pricingRules = $pricingRules[$vehicleTypeId];
-                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
-                                $pricingRules = reset($pricingRules);
+                            } else {
+                                $firstKey = array_key_first($pricingRules);
+                                if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
+                                    $pricingRules = $pricingRules[$firstKey];
+                                }
                             }
                         }
                     }
@@ -1401,8 +1404,11 @@ class PayrollController extends Controller
                         if (is_array($pricingRules)) {
                             if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
                                 $pricingRules = $pricingRules[$vehicleTypeId];
-                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
-                                $pricingRules = reset($pricingRules);
+                            } else {
+                                $firstKey = array_key_first($pricingRules);
+                                if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
+                                    $pricingRules = $pricingRules[$firstKey];
+                                }
                             }
                         }
                     }
@@ -1456,8 +1462,11 @@ class PayrollController extends Controller
                         if (is_array($pricingRules)) {
                             if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
                                 $pricingRules = $pricingRules[$vehicleTypeId];
-                            } elseif (!isset($pricingRules['zones']) && !isset($pricingRules['tiers']) && !isset($pricingRules['zones_tiers']) && !isset($pricingRules['payment_method'])) {
-                                $pricingRules = reset($pricingRules);
+                            } else {
+                                $firstKey = array_key_first($pricingRules);
+                                if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
+                                    $pricingRules = $pricingRules[$firstKey];
+                                }
                             }
                         }
                     }
