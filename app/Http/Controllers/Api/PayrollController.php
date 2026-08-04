@@ -834,12 +834,12 @@ class PayrollController extends Controller
                 if ($assignment) {
                     $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $log->log_date, 'order_commission');
                     if ($rate === null) {
-                        $contractObj = Contract::find($contractId);
+                        $contractObj = Contract::withoutGlobalScopes()->find($contractId);
                         if ($contractObj) {
                             $vehicleId = $log->vehicle_id;
                             $vehicleTypeId = null;
                             if ($vehicleId) {
-                                $v = \App\Models\Vehicle::find($vehicleId);
+                                $v = \App\Models\Vehicle::withoutGlobalScopes()->find($vehicleId);
                                 $vehicleTypeId = $v?->vehicle_type_id;
                             }
                             if (!$vehicleTypeId && $employee->vehicle_type_id) {
@@ -1047,7 +1047,7 @@ class PayrollController extends Controller
             // Find vehicle type id
             $vehicleTypeIdVal = null;
             if ($dayLog && $dayLog->vehicle_id) {
-                $v = \App\Models\Vehicle::find($dayLog->vehicle_id);
+                $v = \App\Models\Vehicle::withoutGlobalScopes()->find($dayLog->vehicle_id);
                 $vehicleTypeIdVal = $v?->vehicle_type_id;
             }
             if (!$vehicleTypeIdVal && $activeVehicleAssign && $activeVehicleAssign->vehicle) {
@@ -1214,7 +1214,7 @@ class PayrollController extends Controller
                 continue;
             }
 
-            $segContract = Contract::find($segContractId);
+            $segContract = Contract::withoutGlobalScopes()->find($segContractId);
             if (! $segContract) {
                 continue;
             }
