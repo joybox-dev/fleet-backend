@@ -512,20 +512,34 @@ class PayrollController extends Controller
                 $ded->delete();
             }
 
-            // Uncheck violations previously deducted in this run (only if any exist)
-            if (Violation::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->exists()) {
-                Violation::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->update([
-                    'is_deducted' => false,
-                    'payroll_slip_id' => null,
-                ]);
+            // Uncheck violations previously deducted in this run by primary key to prevent lock wait timeouts
+            $violationIdsToUncheck = Violation::withoutGlobalScopes()
+                ->whereIn('payroll_slip_id', $slipIds)
+                ->pluck('id')
+                ->toArray();
+
+            if (!empty($violationIdsToUncheck)) {
+                Violation::withoutGlobalScopes()
+                    ->whereIn('id', $violationIdsToUncheck)
+                    ->update([
+                        'is_deducted' => false,
+                        'payroll_slip_id' => null,
+                    ]);
             }
 
-            // Uncheck driver expenses previously deducted in this run (only if any exist)
-            if (\App\Models\DriverExpense::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->exists()) {
-                \App\Models\DriverExpense::withoutGlobalScopes()->whereIn('payroll_slip_id', $slipIds)->update([
-                    'is_deducted' => false,
-                    'payroll_slip_id' => null,
-                ]);
+            // Uncheck driver expenses previously deducted in this run by primary key
+            $expenseIdsToUncheck = \App\Models\DriverExpense::withoutGlobalScopes()
+                ->whereIn('payroll_slip_id', $slipIds)
+                ->pluck('id')
+                ->toArray();
+
+            if (!empty($expenseIdsToUncheck)) {
+                \App\Models\DriverExpense::withoutGlobalScopes()
+                    ->whereIn('id', $expenseIdsToUncheck)
+                    ->update([
+                        'is_deducted' => false,
+                        'payroll_slip_id' => null,
+                    ]);
             }
         });
 
@@ -727,29 +741,44 @@ class PayrollController extends Controller
                     'total_contract_bonuses' => $data['total_contract_bonuses'],
                 ]);
 
-                // Re-mark violations as deducted
+                // Re-mark violations as deducted by primary key
                 if ($data['violations_deduction'] > 0) {
-                    Violation::withoutGlobalScopes()
+                    $vIds = Violation::withoutGlobalScopes()
                         ->where('employee_id', $employee->id)
                         ->where('is_driver_liable', true)
                         ->where('is_deducted', false)
                         ->whereDate('violation_date', '<=', $endDate)
-                        ->update([
-                            'is_deducted' => true,
-                            'payroll_slip_id' => $slip->id,
-                        ]);
+                        ->pluck('id')
+                        ->toArray();
+
+                    if (!empty($vIds)) {
+                        Violation::withoutGlobalScopes()
+                            ->whereIn('id', $vIds)
+                            ->update([
+                                'is_deducted' => true,
+                                'payroll_slip_id' => $slip->id,
+                            ]);
+                    }
                 }
 
-                // Re-mark driver expenses as deducted
+                // Re-mark driver expenses as deducted by primary key
                 if (($data['driver_expense_deduction'] ?? 0) > 0) {
-                    \App\Models\DriverExpense::where('employee_id', $employee->id)
+                    $expIds = \App\Models\DriverExpense::withoutGlobalScopes()
+                        ->where('employee_id', $employee->id)
                         ->where('driver_amount', '>', 0)
                         ->where('is_deducted', false)
                         ->whereDate('expense_date', '<=', $endDate)
-                        ->update([
-                            'is_deducted' => true,
-                            'payroll_slip_id' => $slip->id,
-                        ]);
+                        ->pluck('id')
+                        ->toArray();
+
+                    if (!empty($expIds)) {
+                        \App\Models\DriverExpense::withoutGlobalScopes()
+                            ->whereIn('id', $expIds)
+                            ->update([
+                                'is_deducted' => true,
+                                'payroll_slip_id' => $slip->id,
+                            ]);
+                    }
                 }
 
                 // Re-create advance deductions
