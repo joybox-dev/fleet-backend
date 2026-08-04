@@ -140,6 +140,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Contracts — full CRUD + lock
         Route::apiResource('contracts', ContractController::class);
         Route::post('contracts/{contract}/lock', [ContractController::class, 'lock']);
+        Route::get('roles/permissions', [RoleController::class, 'availablePermissions']);
         Route::apiResource('roles', RoleController::class);
         Route::post('contracts/{contract}/monthly-parameters', [ContractController::class, 'storeMonthlyParameter']);
         Route::post('contracts/{contract}/bonuses', [ContractController::class, 'storeBonus']);

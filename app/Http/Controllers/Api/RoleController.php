@@ -54,4 +54,34 @@ class RoleController extends Controller
         $role->delete();
         return response()->json(['message' => 'تم حذف الدور بنجاح.']);
     }
+
+    public function availablePermissions(): JsonResponse
+    {
+        return response()->json([
+            'all_permissions' => \App\Services\PermissionService::ALL_PERMISSIONS,
+            'modules' => [
+                ['key' => 'dashboard', 'label' => 'لوحة التحكم', 'icon' => '📊'],
+                ['key' => 'clients', 'label' => 'العملاء', 'icon' => '🏢'],
+                ['key' => 'contracts', 'label' => 'العقود والشرائح', 'icon' => '📜'],
+                ['key' => 'employees', 'label' => 'الموظفين والسائقين', 'icon' => '👥'],
+                ['key' => 'driver_expenses', 'label' => 'مصاريف السائقين', 'icon' => '💸'],
+                ['key' => 'leaves', 'label' => 'الإجازات والغياب', 'icon' => '📅'],
+                ['key' => 'evaluations', 'label' => 'التقييم الأداء', 'icon' => '⭐'],
+                ['key' => 'custody', 'label' => 'العهد والأمانات', 'icon' => '📦'],
+                ['key' => 'guarantees', 'label' => 'الضمانات المالية', 'icon' => '🔒'],
+                ['key' => 'daily_logs', 'label' => 'سجلات العمل التشغيلية', 'icon' => '📝'],
+                ['key' => 'operations', 'label' => 'العمليات التشغيلية', 'icon' => '⚡'],
+                ['key' => 'violations', 'label' => 'المخالفات المرورية', 'icon' => '⚠️'],
+                ['key' => 'cash', 'label' => 'تصفية الكاش والتسويات', 'icon' => '💰'],
+                ['key' => 'vehicles', 'label' => 'المركبات والأسطول', 'icon' => '🚗'],
+                ['key' => 'maintenance', 'label' => 'الصيانة والورش', 'icon' => '🔧'],
+                ['key' => 'vehicle_expenses', 'label' => 'مصاريف المركبات', 'icon' => '⛽'],
+                ['key' => 'payroll', 'label' => 'مسير الرواتب', 'icon' => '💵'],
+                ['key' => 'salary_advances', 'label' => 'السلف الشخصية', 'icon' => '🏦'],
+                ['key' => 'op_advances', 'label' => 'السلف التشغيلية', 'icon' => '🛠️'],
+                ['key' => 'reports', 'label' => 'التقارير والإحصائيات', 'icon' => '📈'],
+                ['key' => 'settings', 'label' => 'إعدادات النظام', 'icon' => '⚙️'],
+            ]
+        ]);
+    }
 }

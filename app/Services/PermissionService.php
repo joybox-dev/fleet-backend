@@ -48,7 +48,7 @@ class PermissionService
         // Fleet
         'vehicles.view',      'vehicles.create',   'vehicles.edit',   'vehicles.delete',
         'maintenance.view',   'maintenance.create','maintenance.edit','maintenance.delete',
-        'vehicle_expenses.view','vehicle_expenses.create','vehicle_expenses.edit',
+        'vehicle_expenses.view','vehicle_expenses.create','vehicle_expenses.edit','vehicle_expenses.delete',
 
         // Finance
         'payroll.view',       'payroll.create',    'payroll.edit',
@@ -81,7 +81,7 @@ class PermissionService
             'cash.view' => true,       'cash.create' => true,       'cash.edit' => true,
             'vehicles.view' => true,   'vehicles.create' => true,   'vehicles.edit' => true,   'vehicles.delete' => true,
             'maintenance.view' => true,'maintenance.create' => true,'maintenance.edit' => true,'maintenance.delete' => true,
-            'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true,
+            'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true, 'vehicle_expenses.delete' => true,
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
             'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true,
