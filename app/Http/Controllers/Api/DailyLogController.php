@@ -315,18 +315,15 @@ class DailyLogController extends Controller
             $rate = $contract ? (float) $contract->rate_per_order : 0.0;
             $income = $rate * $ordersCount;
 
-            $existing = DailyLog::where('employee_id', $employeeId)
+            $allMatchingLogs = DailyLog::where('employee_id', $employeeId)
                 ->where('log_date', $logDate)
-                ->where(function ($q) use ($vehicleId, $contractId) {
-                    $q->where('vehicle_id', $vehicleId)
-                      ->orWhere('contract_id', $contractId);
-                })
-                ->first();
+                ->get();
 
-            if (!$existing) {
-                $existing = DailyLog::where('employee_id', $employeeId)
-                    ->where('log_date', $logDate)
-                    ->first();
+            $existing = $allMatchingLogs->first();
+            if ($allMatchingLogs->count() > 1) {
+                foreach ($allMatchingLogs->slice(1) as $dupLog) {
+                    $dupLog->forceDelete();
+                }
             }
 
             if ($existing) {
