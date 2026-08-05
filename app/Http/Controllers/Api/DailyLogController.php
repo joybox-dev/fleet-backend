@@ -295,8 +295,9 @@ class DailyLogController extends Controller
         $contractIds = array_unique(array_filter(array_column($logs, 'contract_id')));
         $contractsMap = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
 
-        DailyLog::withoutEvents(function () use ($logs, $contractsMap, $request, &$savedLogs) {
-            foreach ($logs as $logData) {
+        app()->instance('suppress_daily_log_observer', true);
+
+        foreach ($logs as $logData) {
                 $employeeId = $logData['employee_id'] ?? null;
                 $logDate = $logData['log_date'] ?? null;
                 $contractId = $logData['contract_id'] ?? null;
@@ -411,7 +412,8 @@ class DailyLogController extends Controller
                     }
                 }
             }
-        });
+
+        app()->instance('suppress_daily_log_observer', false);
 
         // Trigger payroll recalculation ONCE after all bulk logs are saved
         $employeeIds = array_unique(array_filter(array_column($logs, 'employee_id')));

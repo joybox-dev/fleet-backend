@@ -18,6 +18,9 @@ class DailyLogObserver
 
     public function created(DailyLog $log): void
     {
+        if (app()->bound('suppress_daily_log_observer') && app('suppress_daily_log_observer')) {
+            return;
+        }
         ErpSync::dispatch(SyncDailyLogJob::class, $log->id);
         $this->updateVehicleOdometer($log);
         $this->recalculatePayrollFor($log);
@@ -25,6 +28,10 @@ class DailyLogObserver
 
     public function updated(DailyLog $log): void
     {
+        if (app()->bound('suppress_daily_log_observer') && app('suppress_daily_log_observer')) {
+            return;
+        }
+
         // Anti-loop guard
         $changedFields = array_keys($log->getChanges());
         if (empty(array_diff($changedFields, [...self::ERP_FIELDS, 'updated_at']))) {
