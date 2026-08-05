@@ -15,7 +15,7 @@ class VehicleExpenseController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = VehicleExpense::with(['vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $query = VehicleExpense::with(['vehicle:id,plate_number,make,model']);
 
         if ($request->filled('vehicle_id')) {
             $query->where('vehicle_id', $request->vehicle_id);
