@@ -39,7 +39,7 @@ trait BelongsToCompany
             if (!$model->company_id) {
                 $companyId = app()->bound('current_company_id')
                     ? app('current_company_id')
-                    : null;
+                    : (auth()->user()?->company_id ?? 1);
 
                 if ($companyId) {
                     $model->company_id = $companyId;
