@@ -481,7 +481,7 @@ class BackendPhase15Test extends TestCase
             $allAssignments
         );
 
-        // Expected base actual = 7.200 (segment 1) + 11.250 (segment 2) = 18.450 KWD
-        $this->assertEquals(18.450, round($slipData['base_actual_salary'], 3));
+        // Expected orders bonus = 7.200 (segment 1) + 11.250 (segment 2) = 18.450 KWD
+        $this->assertEquals(18.450, round($slipData['orders_bonus'], 3));
     }
 }

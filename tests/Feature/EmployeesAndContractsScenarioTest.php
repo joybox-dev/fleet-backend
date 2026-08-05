@@ -303,7 +303,7 @@ class EmployeesAndContractsScenarioTest extends TestCase
         // Assert that the payroll slip shows the prorated base salary payout of 13.5 KWD
         $this->assertDatabaseHas('payroll_slips', [
             'employee_id' => $driver->id,
-            'base_actual' => 13.500, // 9 orders * 1.5 KWD
+            'orders_bonus' => 13.500, // 9 orders * 1.5 KWD
             'gross_actual' => 13.500,
         ]);
     }

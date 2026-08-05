@@ -640,7 +640,8 @@ class FlexibleCalculationsE2ETest extends TestCase
         $salemSlip->assertStatus(200);
 
         $salData = $salemSlip->json('internal_sheet');
-        $this->assertEquals(328.000, (float)$salData['base']); // Corrected key from base_actual to base
+        $this->assertEquals(0.000, (float)$salData['base']); // Corrected key from base_actual to base
+        $this->assertEquals(328.000, (float)$salData['orders_bonus']);
         $this->assertEquals(35.000, (float)$salData['fuel_allowance']);
         $this->assertEquals(363.000, (float)$salData['gross']);
         $this->assertEquals(120.000, (float)$salData['bank_portion']);

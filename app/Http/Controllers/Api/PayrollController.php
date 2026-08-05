@@ -914,52 +914,52 @@ class PayrollController extends Controller
 
                 if ($activeAssignForContract) {
                     $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $logDate, 'order_commission');
-                    if ($rate === null) {
-                        $contractObj = $contracts->get($contractId);
-                        if ($contractObj) {
-                            $vehicleTypeId = null;
-                            if ($log->vehicle_id && isset($vehicles[$log->vehicle_id])) {
-                                $vehicleTypeId = $vehicles[$log->vehicle_id]->vehicle_type_id;
-                            }
-                            if (!$vehicleTypeId && $employee->vehicle_type_id) {
-                                $vehicleTypeId = $employee->vehicle_type_id;
-                            }
+                }
+                if ($rate === null) {
+                    $contractObj = $contracts->get($contractId);
+                    if ($contractObj) {
+                        $vehicleTypeId = null;
+                        if ($log->vehicle_id && isset($vehicles[$log->vehicle_id])) {
+                            $vehicleTypeId = $vehicles[$log->vehicle_id]->vehicle_type_id;
+                        }
+                        if (!$vehicleTypeId && $employee->vehicle_type_id) {
+                            $vehicleTypeId = $employee->vehicle_type_id;
+                        }
 
-                            $pricingRules = is_string($contractObj->driver_pricing_rules)
-                                ? json_decode($contractObj->driver_pricing_rules, true)
-                                : $contractObj->driver_pricing_rules;
+                        $pricingRules = is_string($contractObj->driver_pricing_rules)
+                            ? json_decode($contractObj->driver_pricing_rules, true)
+                            : $contractObj->driver_pricing_rules;
 
-                            if (is_array($pricingRules)) {
-                                if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
-                                    $pricingRules = $pricingRules[$vehicleTypeId];
-                                } else {
-                                    $firstKey = array_key_first($pricingRules);
-                                    if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
-                                        $pricingRules = $pricingRules[$firstKey];
-                                    }
+                        if (is_array($pricingRules)) {
+                            if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                                $pricingRules = $pricingRules[$vehicleTypeId];
+                            } else {
+                                $firstKey = array_key_first($pricingRules);
+                                if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
+                                    $pricingRules = $pricingRules[$firstKey];
                                 }
                             }
+                        }
 
-                            $driverPaymentMethod = $contractObj->driver_payment_method;
-                            if (!$driverPaymentMethod && is_array($pricingRules) && isset($pricingRules['payment_method'])) {
-                                $driverPaymentMethod = $pricingRules['payment_method'];
-                            }
-                            if (!$driverPaymentMethod) {
-                                $driverPaymentMethod = $contractObj->payment_type;
-                            }
+                        $driverPaymentMethod = $contractObj->driver_payment_method;
+                        if (!$driverPaymentMethod && is_array($pricingRules) && isset($pricingRules['payment_method'])) {
+                            $driverPaymentMethod = $pricingRules['payment_method'];
+                        }
+                        if (!$driverPaymentMethod) {
+                            $driverPaymentMethod = $contractObj->payment_type;
+                        }
 
-                            if ($driverPaymentMethod === 'zones' || $driverPaymentMethod === 'zones_tiers') {
-                                $zoneRules = is_array($pricingRules) && isset($pricingRules['zones']) ? $pricingRules['zones'] : (is_array($pricingRules) && isset($pricingRules['zones_tiers']) ? $pricingRules['zones_tiers'] : $pricingRules);
-                                $zoneName = $log->zone;
-                                if (is_array($zoneRules)) {
-                                    if (isset($zoneRules[$zoneName])) {
-                                        $rate = (float) $zoneRules[$zoneName];
-                                    } else {
-                                        foreach ($zoneRules as $rule) {
-                                            if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
-                                                $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
-                                                break;
-                                            }
+                        if ($driverPaymentMethod === 'zones' || $driverPaymentMethod === 'zones_tiers') {
+                            $zoneRules = is_array($pricingRules) && isset($pricingRules['zones']) ? $pricingRules['zones'] : (is_array($pricingRules) && isset($pricingRules['zones_tiers']) ? $pricingRules['zones_tiers'] : $pricingRules);
+                            $zoneName = $log->zone;
+                            if (is_array($zoneRules)) {
+                                if (isset($zoneRules[$zoneName])) {
+                                    $rate = (float) $zoneRules[$zoneName];
+                                } else {
+                                    foreach ($zoneRules as $rule) {
+                                        if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
+                                            $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                            break;
                                         }
                                     }
                                 }
@@ -1453,8 +1453,8 @@ class PayrollController extends Controller
                     $segAbsenceDeduction = $absentDays * $dailyRate;
                     $segBaseActual = max(0.0, $proratedFixedSalary - $segAbsenceDeduction);
                 } elseif ($driverPaymentMethod === 'per_order') {
-                    $segBaseActual = $segOrdersBonus;
-                    $segOrdersBonus = 0.0;
+                    $segBaseActual = 0.0;
+                    // segOrdersBonus is already set to $segOrders * $flatCommissionRate
                 }
             } else {
                 if ($driverPaymentMethod === 'fixed') {
@@ -1483,7 +1483,8 @@ class PayrollController extends Controller
                     }
                     $segBaseActual = $baseSalary - $deficitDeduction + $surplusBonusAmt;
                 } elseif ($driverPaymentMethod === 'per_order') {
-                    $segBaseActual = $segLogsRecalculated->sum('driver_commission');
+                    $segOrdersBonus = $segLogsRecalculated->sum('driver_commission');
+                    $segBaseActual = 0.0;
                 } elseif ($driverPaymentMethod === 'hourly') {
                     $hourlyRate = SmartValueFallbackService::resolve($employeeId, $segContractId, $segment['end_date'], 'hourly_rate');
                     if ($hourlyRate === null) {
@@ -1546,7 +1547,8 @@ class PayrollController extends Controller
                         $payout += $zoneOrders * $rate * $segExchangeRate;
                     }
 
-                    $segBaseActual = $payout;
+                    $segOrdersBonus = $payout;
+                    $segBaseActual = 0.0;
                 } elseif ($driverPaymentMethod === 'zones_tiers') {
                     $pricingRules = null;
                     if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {
@@ -1604,7 +1606,8 @@ class PayrollController extends Controller
                         }
                         $payout += $zoneOrders * $selectedPrice * $segExchangeRate;
                     }
-                    $segBaseActual = $payout;
+                    $segOrdersBonus = $payout;
+                    $segBaseActual = 0.0;
                 } elseif ($driverPaymentMethod === 'tiers') {
                     $pricingRules = null;
                     if ($activeOverride && isset($activeOverride->custom_pricing_rules)) {
@@ -1641,7 +1644,8 @@ class PayrollController extends Controller
                     if ($selectedPrice === 0.0) {
                         $selectedPrice = (float) ($segContract->default_order_commission ?? 0.0);
                     }
-                    $segBaseActual = $segOrders * $selectedPrice * $segExchangeRate;
+                    $segOrdersBonus = $segOrders * $selectedPrice * $segExchangeRate;
+                    $segBaseActual = 0.0;
                 }
             }
 
