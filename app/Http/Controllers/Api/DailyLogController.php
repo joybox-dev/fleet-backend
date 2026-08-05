@@ -331,12 +331,15 @@ class DailyLogController extends Controller
 
             if ($existing) {
                 $settled = $existing->cash_settled ?? 0;
+                $ordersCash = (int) ($logData['orders_cash'] ?? 0);
+                $ordersOnline = max(0, $ordersCount - $ordersCash);
+
                 $existing->update([
                     'vehicle_id'     => $vehicleId,
                     'contract_id'    => $contractId,
                     'orders_count'   => $ordersCount,
-                    'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
-                    'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                    'orders_online'  => $ordersOnline,
+                    'orders_cash'    => $ordersCash,
                     'cash_collected' => $cashCollected,
                     'cash_pending'   => max(0, $cashCollected - $settled),
                     'online_hours'   => $onlineHours,
@@ -351,6 +354,9 @@ class DailyLogController extends Controller
                 ]);
                 $savedLogs[] = $existing;
             } else {
+                $ordersCash = (int) ($logData['orders_cash'] ?? 0);
+                $ordersOnline = max(0, $ordersCount - $ordersCash);
+
                 try {
                     $newLog = DailyLog::create([
                         'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
@@ -359,8 +365,8 @@ class DailyLogController extends Controller
                         'contract_id'    => $contractId,
                         'log_date'       => $logDate,
                         'orders_count'   => $ordersCount,
-                        'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
-                        'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                        'orders_online'  => $ordersOnline,
+                        'orders_cash'    => $ordersCash,
                         'cash_collected' => $cashCollected,
                         'cash_settled'   => 0,
                         'cash_pending'   => $cashCollected,
