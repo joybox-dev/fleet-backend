@@ -551,12 +551,12 @@ class PayrollController extends Controller
                     ]);
             }
 
-            $employeeIds = PayrollSlip::where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
+            $employeeIds = PayrollSlip::withoutGlobalScopes()->where('payroll_run_id', $run->id)->pluck('employee_id')->toArray();
             if (empty($employeeIds)) {
-                $employeeIds = Employee::where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
+                $employeeIds = Employee::withoutGlobalScopes()->where('role_category', 'driver')->whereIn('status', ['active', 'probation'])->pluck('id')->toArray();
             }
 
-            $employees = Employee::whereIn('id', $employeeIds)->get();
+            $employees = Employee::withoutGlobalScopes()->whereIn('id', $employeeIds)->get();
             $totalOfficial = 0;
             $totalActual = 0;
 
