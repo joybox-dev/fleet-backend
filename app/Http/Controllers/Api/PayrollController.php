@@ -695,29 +695,6 @@ class PayrollController extends Controller
                 if ($netActual < 0) {
                     $netBank = (float) $employee->official_salary;
                     $netCash = 0.0;
-
-                    // Clean up any existing auto-advance for this employee from this run
-                    SalaryAdvance::where('employee_id', $employee->id)
-                        ->where('company_id', $employee->company_id)
-                        ->where('reason', 'like', '%ترصيد عجز مالي وسالفة راتب سالب لشهر '.$month.'/'.$year.'%')
-                        ->delete();
-
-                    // Create SalaryAdvance to be deducted next month
-                    $debitAmount = $netBank - $netActual;
-                    $nextMonthDate = Carbon::parse($startDate)->addMonth();
-
-                    SalaryAdvance::create([
-                        'employee_id' => $employee->id,
-                        'company_id' => $employee->company_id,
-                        'amount' => $debitAmount,
-                        'advance_date' => $nextMonthDate->startOfMonth()->toDateString(),
-                        'monthly_installment' => $debitAmount,
-                        'total_installments' => 1,
-                        'remaining_balance' => $debitAmount,
-                        'approved_by' => auth()->id() ?? 1,
-                        'status' => 'active',
-                        'reason' => 'ترصيد عجز مالي وسالفة راتب سالب لشهر '.$month.'/'.$year,
-                    ]);
                 } else {
                     $netBank = min($netActual, (float) $employee->official_salary);
                     $netCash = max(0.0, $netActual - $netBank);
