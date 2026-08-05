@@ -295,119 +295,144 @@ class DailyLogController extends Controller
         $contractIds = array_unique(array_filter(array_column($logs, 'contract_id')));
         $contractsMap = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
 
-        foreach ($logs as $logData) {
-            $employeeId = $logData['employee_id'] ?? null;
-            $logDate = $logData['log_date'] ?? null;
-            $contractId = $logData['contract_id'] ?? null;
-            if (!$employeeId || !$logDate || !$contractId) continue;
+        DailyLog::withoutEvents(function () use ($logs, $contractsMap, $request, &$savedLogs) {
+            foreach ($logs as $logData) {
+                $employeeId = $logData['employee_id'] ?? null;
+                $logDate = $logData['log_date'] ?? null;
+                $contractId = $logData['contract_id'] ?? null;
+                if (!$employeeId || !$logDate || !$contractId) continue;
 
-            $vehicleId = $logData['vehicle_id'] ?? 1;
-            $ordersCount = (int) ($logData['orders_count'] ?? 0);
-            $cashCollected = (float) ($logData['cash_collected'] ?? 0);
-            $onlineHours = (float) ($logData['online_hours'] ?? 10);
-            $zone = $logData['zone'] ?? null;
-            $isValid = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
-            $lateLogin = isset($logData['late_login']) ? (bool) $logData['late_login'] : false;
-            $earlyLogout = isset($logData['early_logout']) ? (bool) $logData['early_logout'] : false;
-            $driverStatus = $logData['driver_status'] ?? 'working';
+                $vehicleId = $logData['vehicle_id'] ?? 1;
+                $ordersCount = (int) ($logData['orders_count'] ?? 0);
+                $cashCollected = (float) ($logData['cash_collected'] ?? 0);
+                $onlineHours = (float) ($logData['online_hours'] ?? 10);
+                $zone = $logData['zone'] ?? null;
+                $isValid = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
+                $lateLogin = isset($logData['late_login']) ? (bool) $logData['late_login'] : false;
+                $earlyLogout = isset($logData['early_logout']) ? (bool) $logData['early_logout'] : false;
+                $driverStatus = $logData['driver_status'] ?? 'working';
 
-            $contract = $contractsMap->get($contractId);
-            $rate = $contract ? (float) $contract->rate_per_order : 0.0;
-            $income = $rate * $ordersCount;
+                $contract = $contractsMap->get($contractId);
+                $rate = $contract ? (float) $contract->rate_per_order : 0.0;
+                $income = $rate * $ordersCount;
 
-            $allMatchingLogs = DailyLog::where('employee_id', $employeeId)
-                ->where('log_date', $logDate)
-                ->get();
+                $allMatchingLogs = DailyLog::where('employee_id', $employeeId)
+                    ->where('log_date', $logDate)
+                    ->get();
 
-            $existing = $allMatchingLogs->first();
-            if ($allMatchingLogs->count() > 1) {
-                foreach ($allMatchingLogs->slice(1) as $dupLog) {
-                    $dupLog->forceDelete();
+                $existing = $allMatchingLogs->first();
+                if ($allMatchingLogs->count() > 1) {
+                    foreach ($allMatchingLogs->slice(1) as $dupLog) {
+                        $dupLog->forceDelete();
+                    }
                 }
-            }
 
-            if ($existing) {
-                $settled = $existing->cash_settled ?? 0;
-                $ordersCash = (int) ($logData['orders_cash'] ?? 0);
-                $ordersOnline = max(0, $ordersCount - $ordersCash);
+                if ($existing) {
+                    $settled = $existing->cash_settled ?? 0;
+                    $ordersCash = (int) ($logData['orders_cash'] ?? 0);
+                    $ordersOnline = max(0, $ordersCount - $ordersCash);
 
-                $existing->update([
-                    'vehicle_id'     => $vehicleId,
-                    'contract_id'    => $contractId,
-                    'orders_count'   => $ordersCount,
-                    'orders_online'  => $ordersOnline,
-                    'orders_cash'    => $ordersCash,
-                    'cash_collected' => $cashCollected,
-                    'cash_pending'   => max(0, $cashCollected - $settled),
-                    'online_hours'   => $onlineHours,
-                    'zone'           => $zone,
-                    'is_valid'       => $isValid,
-                    'shift_valid'    => $isValid,
-                    'late_login'     => $lateLogin,
-                    'early_logout'   => $earlyLogout,
-                    'rate_per_order' => $rate,
-                    'income_amount'  => $income,
-                    'driver_status'  => $driverStatus,
-                ]);
-                $savedLogs[] = $existing;
-            } else {
-                $ordersCash = (int) ($logData['orders_cash'] ?? 0);
-                $ordersOnline = max(0, $ordersCount - $ordersCash);
-
-                try {
-                    $newLog = DailyLog::create([
-                        'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
-                        'employee_id'    => $employeeId,
+                    $existing->update([
                         'vehicle_id'     => $vehicleId,
                         'contract_id'    => $contractId,
-                        'log_date'       => $logDate,
                         'orders_count'   => $ordersCount,
                         'orders_online'  => $ordersOnline,
                         'orders_cash'    => $ordersCash,
                         'cash_collected' => $cashCollected,
-                        'cash_settled'   => 0,
-                        'cash_pending'   => $cashCollected,
+                        'cash_pending'   => max(0, $cashCollected - $settled),
                         'online_hours'   => $onlineHours,
                         'zone'           => $zone,
                         'is_valid'       => $isValid,
                         'shift_valid'    => $isValid,
                         'late_login'     => $lateLogin,
                         'early_logout'   => $earlyLogout,
-                        'created_by'     => $request->user()?->id ?? 1,
                         'rate_per_order' => $rate,
                         'income_amount'  => $income,
                         'driver_status'  => $driverStatus,
                     ]);
-                    $savedLogs[] = $newLog;
-                } catch (\Illuminate\Database\QueryException $e) {
-                    $fallback = DailyLog::where('employee_id', $employeeId)
-                        ->where('log_date', $logDate)
-                        ->first();
-                    if ($fallback) {
-                        $settled = $fallback->cash_settled ?? 0;
-                        $fallback->update([
+                    $savedLogs[] = $existing;
+                } else {
+                    $ordersCash = (int) ($logData['orders_cash'] ?? 0);
+                    $ordersOnline = max(0, $ordersCount - $ordersCash);
+
+                    try {
+                        $newLog = DailyLog::create([
+                            'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
+                            'employee_id'    => $employeeId,
                             'vehicle_id'     => $vehicleId,
                             'contract_id'    => $contractId,
+                            'log_date'       => $logDate,
                             'orders_count'   => $ordersCount,
-                            'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
-                            'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                            'orders_online'  => $ordersOnline,
+                            'orders_cash'    => $ordersCash,
                             'cash_collected' => $cashCollected,
-                            'cash_pending'   => max(0, $cashCollected - $settled),
+                            'cash_settled'   => 0,
+                            'cash_pending'   => $cashCollected,
                             'online_hours'   => $onlineHours,
                             'zone'           => $zone,
                             'is_valid'       => $isValid,
                             'shift_valid'    => $isValid,
                             'late_login'     => $lateLogin,
                             'early_logout'   => $earlyLogout,
+                            'created_by'     => $request->user()?->id ?? 1,
                             'rate_per_order' => $rate,
                             'income_amount'  => $income,
                             'driver_status'  => $driverStatus,
                         ]);
-                        $savedLogs[] = $fallback;
-                    } else {
-                        throw $e;
+                        $savedLogs[] = $newLog;
+                    } catch (\Illuminate\Database\QueryException $e) {
+                        $fallback = DailyLog::where('employee_id', $employeeId)
+                            ->where('log_date', $logDate)
+                            ->first();
+                        if ($fallback) {
+                            $settled = $fallback->cash_settled ?? 0;
+                            $fallback->update([
+                                'vehicle_id'     => $vehicleId,
+                                'contract_id'    => $contractId,
+                                'orders_count'   => $ordersCount,
+                                'orders_online'  => (int) ($logData['orders_online'] ?? $ordersCount),
+                                'orders_cash'    => (int) ($logData['orders_cash'] ?? 0),
+                                'cash_collected' => $cashCollected,
+                                'cash_pending'   => max(0, $cashCollected - $settled),
+                                'online_hours'   => $onlineHours,
+                                'zone'           => $zone,
+                                'is_valid'       => $isValid,
+                                'shift_valid'    => $isValid,
+                                'late_login'     => $lateLogin,
+                                'early_logout'   => $earlyLogout,
+                                'rate_per_order' => $rate,
+                                'income_amount'  => $income,
+                                'driver_status'  => $driverStatus,
+                            ]);
+                            $savedLogs[] = $fallback;
+                        } else {
+                            throw $e;
+                        }
                     }
                 }
+            }
+        });
+
+        // Trigger payroll recalculation ONCE after all bulk logs are saved
+        $employeeIds = array_unique(array_filter(array_column($logs, 'employee_id')));
+        $sampleDate = $logs[0]['log_date'] ?? null;
+        if (!empty($employeeIds) && !empty($sampleDate)) {
+            try {
+                $time = strtotime($sampleDate);
+                $year = (int) date('Y', $time);
+                $month = (int) date('n', $time);
+                foreach ($employeeIds as $empId) {
+                    \App\Http\Controllers\Api\PayrollController::recalculateEmployeeCommissions($empId, $year, $month);
+                }
+                $run = \App\Models\PayrollRun::where('year', $year)
+                    ->where('month', $month)
+                    ->where('status', 'draft')
+                    ->first();
+                if ($run) {
+                    \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+                }
+            } catch (\Throwable $e) {
+                \Log::error('Bulk payroll recalculation failed: ' . $e->getMessage());
             }
         }
 
