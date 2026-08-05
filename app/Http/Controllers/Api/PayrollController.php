@@ -1103,9 +1103,13 @@ class PayrollController extends Controller
             ->get();
 
         // Pre-fetch vehicles in bulk to eliminate N+1 queries inside 31-day loop
-        $logVehicleIds = $empLogs->pluck('vehicle_id')->filter()->unique();
-        $vehiclesMap = $logVehicleIds->isNotEmpty() 
-            ? \App\Models\Vehicle::withoutGlobalScopes()->whereIn('id', $logVehicleIds)->get()->keyBy('id')
+        $logVehicleIds = $empLogs->pluck('vehicle_id')->filter();
+        $assignVehicleIds = $empVehicleAssignments->map(function ($va) {
+            return is_array($va) ? ($va['vehicle_id'] ?? null) : ($va->vehicle_id ?? null);
+        })->filter();
+        $allVehIds = $logVehicleIds->concat($assignVehicleIds)->unique();
+        $vehiclesMap = $allVehIds->isNotEmpty() 
+            ? \App\Models\Vehicle::withoutGlobalScopes()->whereIn('id', $allVehIds)->get()->keyBy('id')
             : collect();
 
         // Map each day of the month to its active contract and vehicle type
@@ -1160,14 +1164,14 @@ class PayrollController extends Controller
             if ($dayLog && $dayLog->vehicle_id && isset($vehiclesMap[$dayLog->vehicle_id])) {
                 $vehicleTypeIdVal = $vehiclesMap[$dayLog->vehicle_id]->vehicle_type_id;
             }
-            if (!$vehicleTypeIdVal && $activeVehicleAssign && $activeVehicleAssign->vehicle) {
-                $vehicleTypeIdVal = $activeVehicleAssign->vehicle->vehicle_type_id;
+            if (!$vehicleTypeIdVal && $activeVehicleAssign) {
+                $vId = is_array($activeVehicleAssign) ? ($activeVehicleAssign['vehicle_id'] ?? null) : ($activeVehicleAssign->vehicle_id ?? null);
+                if ($vId && isset($vehiclesMap[$vId])) {
+                    $vehicleTypeIdVal = $vehiclesMap[$vId]->vehicle_type_id;
+                }
             }
             if (!$vehicleTypeIdVal && $employee->vehicle_type_id) {
                 $vehicleTypeIdVal = $employee->vehicle_type_id;
-            }
-            if (!$vehicleTypeIdVal && $employee->vehicle?->vehicle_type_id) {
-                $vehicleTypeIdVal = $employee->vehicle->vehicle_type_id;
             }
 
             $dayMap[$date] = [
