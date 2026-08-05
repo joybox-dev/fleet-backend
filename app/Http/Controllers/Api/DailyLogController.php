@@ -55,7 +55,7 @@ class DailyLogController extends Controller
             return response()->json(['message' => 'غير مصرح لك بإضافة سجلات تشغيل.'], 403);
         }
 
-        $companyId = app('current_company_id');
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
 
         // Auto-adjust orders if needed (e.g. zones contracts where they aren't collected separately)
         $total = (int) $request->input('orders_count', 0);
@@ -278,7 +278,8 @@ class DailyLogController extends Controller
                 $time = strtotime($sampleDate);
                 $logYear = (int) date('Y', $time);
                 $logMonth = (int) date('n', $time);
-                $isPayrollLocked = \App\Models\PayrollRun::where('company_id', app('current_company_id') ?? 1)
+                $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+                $isPayrollLocked = \App\Models\PayrollRun::where('company_id', $companyId)
                     ->where('year', $logYear)
                     ->where('month', $logMonth)
                     ->where('status', 'approved')
@@ -352,7 +353,7 @@ class DailyLogController extends Controller
             } else {
                 try {
                     $newLog = DailyLog::create([
-                        'company_id'     => app('current_company_id') ?? 1,
+                        'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
                         'employee_id'    => $employeeId,
                         'vehicle_id'     => $vehicleId,
                         'contract_id'    => $contractId,
