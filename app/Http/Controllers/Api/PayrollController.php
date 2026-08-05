@@ -661,6 +661,7 @@ class PayrollController extends Controller
                     $q->whereNull('end_date')
                         ->orWhere('end_date', '>=', $startDate);
                 })
+                ->with('contract')
                 ->get()
                 ->groupBy('employee_id');
 
