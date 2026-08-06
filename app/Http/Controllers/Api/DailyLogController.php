@@ -155,7 +155,8 @@ class DailyLogController extends Controller
         }
 
         // Auto-update existing record if log already exists for same employee and date (matching vehicle, contract, or employee+date)
-        $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
+        $existingLog = DailyLog::withoutGlobalScopes()
+            ->where('employee_id', $validated['employee_id'])
             ->where('log_date', $validated['log_date'])
             ->where(function ($q) use ($validated) {
                 $q->where('vehicle_id', $validated['vehicle_id'])
@@ -164,7 +165,8 @@ class DailyLogController extends Controller
             ->first();
 
         if (!$existingLog) {
-            $existingLog = DailyLog::where('employee_id', $validated['employee_id'])
+            $existingLog = DailyLog::withoutGlobalScopes()
+                ->where('employee_id', $validated['employee_id'])
                 ->where('log_date', $validated['log_date'])
                 ->first();
         }
@@ -208,6 +210,7 @@ class DailyLogController extends Controller
         if ($existingLog) {
             $settled = $existingLog->cash_settled ?? 0;
             $existingLog->update(array_merge($validated, [
+                'company_id'     => $companyId,
                 'rate_per_order' => $rate,
                 'income_amount'  => $income,
                 'orders_online'  => $validated['orders_online'] ?? $ordersCount,
@@ -222,6 +225,7 @@ class DailyLogController extends Controller
 
         try {
             $log = DailyLog::create(array_merge($validated, [
+                'company_id'      => $companyId,
                 'created_by'      => $request->user()?->id ?? 1,
                 'rate_per_order'  => $rate,
                 'income_amount'   => $income,
@@ -235,12 +239,21 @@ class DailyLogController extends Controller
             ]));
             return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
         } catch (\Illuminate\Database\QueryException $e) {
-            $fallback = DailyLog::where('employee_id', $validated['employee_id'])
+            $fallback = DailyLog::withoutGlobalScopes()
+                ->where('employee_id', $validated['employee_id'])
                 ->where('log_date', $validated['log_date'])
                 ->first();
+            if (!$fallback) {
+                $fallback = DailyLog::withoutGlobalScopes()
+                    ->where('employee_id', $validated['employee_id'])
+                    ->where('vehicle_id', $validated['vehicle_id'])
+                    ->where('log_date', $validated['log_date'])
+                    ->first();
+            }
             if ($fallback) {
                 $settled = $fallback->cash_settled ?? 0;
                 $fallback->update(array_merge($validated, [
+                    'company_id'     => $companyId,
                     'rate_per_order' => $rate,
                     'income_amount'  => $income,
                     'orders_online'  => $validated['orders_online'] ?? $ordersCount,
@@ -315,9 +328,18 @@ class DailyLogController extends Controller
             $rate = $contract ? (float) $contract->rate_per_order : 0.0;
             $income = $rate * $ordersCount;
 
-            $allMatchingLogs = DailyLog::where('employee_id', $employeeId)
+            $allMatchingLogs = DailyLog::withoutGlobalScopes()
+                ->where('employee_id', $employeeId)
                 ->where('log_date', $logDate)
                 ->get();
+
+            if ($allMatchingLogs->isEmpty()) {
+                $allMatchingLogs = DailyLog::withoutGlobalScopes()
+                    ->where('employee_id', $employeeId)
+                    ->where('vehicle_id', $vehicleId)
+                    ->where('log_date', $logDate)
+                    ->get();
+            }
 
             $existing = $allMatchingLogs->first();
             if ($allMatchingLogs->count() > 1) {
@@ -332,6 +354,7 @@ class DailyLogController extends Controller
                 $ordersOnline = max(0, $ordersCount - $ordersCash);
 
                 $existing->update([
+                    'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
                     'vehicle_id'     => $vehicleId,
                     'contract_id'    => $contractId,
                     'orders_count'   => $ordersCount,
@@ -382,12 +405,21 @@ class DailyLogController extends Controller
                     ]);
                     $savedLogs[] = $newLog;
                 } catch (\Illuminate\Database\QueryException $e) {
-                    $fallback = DailyLog::where('employee_id', $employeeId)
+                    $fallback = DailyLog::withoutGlobalScopes()
+                        ->where('employee_id', $employeeId)
                         ->where('log_date', $logDate)
                         ->first();
+                    if (!$fallback) {
+                        $fallback = DailyLog::withoutGlobalScopes()
+                            ->where('employee_id', $employeeId)
+                            ->where('vehicle_id', $vehicleId)
+                            ->where('log_date', $logDate)
+                            ->first();
+                    }
                     if ($fallback) {
                         $settled = $fallback->cash_settled ?? 0;
                         $fallback->update([
+                            'company_id'     => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
                             'vehicle_id'     => $vehicleId,
                             'contract_id'    => $contractId,
                             'orders_count'   => $ordersCount,
@@ -404,6 +436,7 @@ class DailyLogController extends Controller
                             'rate_per_order' => $rate,
                             'income_amount'  => $income,
                             'driver_status'  => $driverStatus,
+                            'notes'          => $logData['notes'] ?? null,
                         ]);
                         $savedLogs[] = $fallback;
                     } else {
