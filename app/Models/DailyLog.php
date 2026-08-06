@@ -13,7 +13,7 @@ class DailyLog extends Model
 
     protected $fillable = [
         'employee_id', 'vehicle_id', 'contract_id', 'created_by', 'log_date',
-        'orders_count', 'orders_online', 'orders_cash',
+        'orders_count', 'orders_online', 'orders_cash', 'rejected_orders_count',
         'cash_collected', 'cash_settled', 'cash_pending',
         'rate_per_order', 'income_amount',
         'odometer_start', 'odometer_end', 'odometer_photo_path', 'notes',
@@ -32,7 +32,10 @@ class DailyLog extends Model
     ];
 
     protected $casts = [
+        'rejected_orders_count' => 'integer',
         'cash_collected'    => 'decimal:3',
+        'cash_settled'      => 'decimal:3',
+        'cash_pending'      => 'decimal:3',
         'cash_settled'      => 'decimal:3',
         'cash_pending'      => 'decimal:3',
         'rate_per_order'    => 'decimal:3',
