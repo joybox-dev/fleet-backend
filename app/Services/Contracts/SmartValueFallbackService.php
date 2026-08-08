@@ -43,7 +43,8 @@ class SmartValueFallbackService
         $month = $carbonDate->month;
 
         // 1. Find active assignment
-        $assignment = ContractAssignment::where('employee_id', $employeeId)
+        $assignment = ContractAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employeeId)
             ->where('contract_id', $contractId)
             ->whereDate('start_date', '<=', $date)
             ->where(function ($q) use ($date) {
@@ -53,7 +54,7 @@ class SmartValueFallbackService
             ->first();
 
         if (!$assignment) {
-            $employee = \App\Models\Employee::find($employeeId);
+            $employee = \App\Models\Employee::withoutGlobalScopes()->find($employeeId);
             if ($employee) {
                 if ($parameterName === 'order_commission') {
                     return $employee->rate_per_order;
@@ -69,7 +70,8 @@ class SmartValueFallbackService
 
         if ($assignment) {
             // Check active override
-            $override = DriverContractOverride::where('contract_assignment_id', $assignment->id)
+            $override = DriverContractOverride::withoutGlobalScopes()
+                ->where('contract_assignment_id', $assignment->id)
                 ->whereDate('effective_from', '<=', $date)
                 ->where(function ($q) use ($date) {
                     $q->whereNull('effective_to')
@@ -101,7 +103,8 @@ class SmartValueFallbackService
         }
 
         // 2. Check Monthly Parameter
-        $monthlyParam = ContractMonthlyParameter::where('contract_id', $contractId)
+        $monthlyParam = ContractMonthlyParameter::withoutGlobalScopes()
+            ->where('contract_id', $contractId)
             ->where('year', $year)
             ->where('month', $month)
             ->first();
@@ -121,7 +124,7 @@ class SmartValueFallbackService
         }
 
         // 3. Fallback to Contract defaults
-        $contract = Contract::find($contractId);
+        $contract = Contract::withoutGlobalScopes()->find($contractId);
         if ($contract) {
             $contractField = match ($parameterName) {
                 'order_commission' => 'default_order_commission',
@@ -135,6 +138,28 @@ class SmartValueFallbackService
 
             if ($contractField && $contract->$contractField !== null) {
                 return $contract->$contractField;
+            }
+
+            // Fallback to contract driver_pricing_rules per vehicle type
+            if (is_array($contract->driver_pricing_rules) && !empty($contract->driver_pricing_rules)) {
+                $vtId = null;
+                $emp = \App\Models\Employee::withoutGlobalScopes()->find($employeeId);
+                if ($emp) {
+                    $vtId = $emp->vehicle_type_id;
+                }
+                $vtPricing = ($vtId && isset($contract->driver_pricing_rules[$vtId]))
+                    ? $contract->driver_pricing_rules[$vtId]
+                    : (array_values($contract->driver_pricing_rules)[0] ?? []);
+
+                if ($parameterName === 'fixed_salary' && isset($vtPricing['fixed_amount']) && $vtPricing['fixed_amount'] !== null && $vtPricing['fixed_amount'] !== '') {
+                    return (float) $vtPricing['fixed_amount'];
+                }
+                if ($parameterName === 'monthly_target' && (isset($vtPricing['fixed_target']) || isset($vtPricing['zone_target_orders'])) && (($vtPricing['fixed_target'] ?? null) !== null || ($vtPricing['zone_target_orders'] ?? null) !== null)) {
+                    return (int) ($vtPricing['fixed_target'] ?? $vtPricing['zone_target_orders']);
+                }
+                if ($parameterName === 'order_commission' && (isset($vtPricing['fixed_deficit_rate']) || isset($vtPricing['zone_deficit_rate'])) && (($vtPricing['fixed_deficit_rate'] ?? null) !== null || ($vtPricing['zone_deficit_rate'] ?? null) !== null)) {
+                    return (float) ($vtPricing['fixed_deficit_rate'] ?? $vtPricing['zone_deficit_rate']);
+                }
             }
 
             // Database column backups (employee default driver commission & contract default_order_commission)
