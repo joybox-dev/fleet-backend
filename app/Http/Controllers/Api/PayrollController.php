@@ -883,66 +883,98 @@ class PayrollController extends Controller
 
             $rate = null;
             if ($contractId) {
-                // Check if there is an active ContractAssignment
-                $activeAssignForContract = $assignments->first(function ($a) use ($contractId, $logDate) {
-                    $st = $a->start_date instanceof Carbon ? $a->start_date->toDateString() : substr((string)$a->start_date, 0, 10);
-                    $et = $a->end_date ? ($a->end_date instanceof Carbon ? $a->end_date->toDateString() : substr((string)$a->end_date, 0, 10)) : null;
-                    return $a->contract_id == $contractId && $st <= $logDate && (!$et || $et >= $logDate);
-                });
-
-                if ($activeAssignForContract) {
-                    $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $logDate, 'order_commission');
+                $contractObj = $contracts->get($contractId);
+                if (!$contractObj) {
+                    $contractObj = Contract::withoutGlobalScopes()->find($contractId);
                 }
-                if ($rate === null) {
-                    $contractObj = $contracts->get($contractId);
-                    if ($contractObj) {
-                        $vehicleTypeId = null;
-                        if ($log->vehicle_id && isset($vehicles[$log->vehicle_id])) {
-                            $vehicleTypeId = $vehicles[$log->vehicle_id]->vehicle_type_id;
-                        }
-                        if (!$vehicleTypeId && $employee->vehicle_type_id) {
-                            $vehicleTypeId = $employee->vehicle_type_id;
-                        }
 
-                        $pricingRules = is_string($contractObj->driver_pricing_rules)
-                            ? json_decode($contractObj->driver_pricing_rules, true)
-                            : $contractObj->driver_pricing_rules;
+                $driverPaymentMethod = $contractObj ? $contractObj->driver_payment_method : null;
+                $pricingRules = $contractObj ? (is_string($contractObj->driver_pricing_rules) ? json_decode($contractObj->driver_pricing_rules, true) : $contractObj->driver_pricing_rules) : [];
 
-                        if (is_array($pricingRules)) {
-                            if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
-                                $pricingRules = $pricingRules[$vehicleTypeId];
-                            } else {
-                                $firstKey = array_key_first($pricingRules);
-                                if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey]) && (isset($pricingRules[$firstKey]['payment_method']) || isset($pricingRules[$firstKey]['vehicle_type_id']))) {
-                                    $pricingRules = $pricingRules[$firstKey];
-                                }
+                $vehicleTypeId = null;
+                if ($log->vehicle_id && isset($vehicles[$log->vehicle_id])) {
+                    $vehicleTypeId = $vehicles[$log->vehicle_id]->vehicle_type_id;
+                }
+                if (!$vehicleTypeId && $employee->vehicle_type_id) {
+                    $vehicleTypeId = $employee->vehicle_type_id;
+                }
+
+                if (is_array($pricingRules)) {
+                    if ($vehicleTypeId !== null && isset($pricingRules[$vehicleTypeId])) {
+                        $vtRules = $pricingRules[$vehicleTypeId];
+                        if (isset($vtRules['payment_method'])) {
+                            $driverPaymentMethod = $vtRules['payment_method'];
+                        }
+                        $pricingRules = $vtRules;
+                    } else {
+                        $firstKey = array_key_first($pricingRules);
+                        if ($firstKey !== null && isset($pricingRules[$firstKey]) && is_array($pricingRules[$firstKey])) {
+                            if (isset($pricingRules[$firstKey]['payment_method'])) {
+                                $driverPaymentMethod = $pricingRules[$firstKey]['payment_method'];
                             }
+                            $pricingRules = $pricingRules[$firstKey];
                         }
+                    }
+                }
 
-                        $driverPaymentMethod = $contractObj->driver_payment_method;
-                        if (!$driverPaymentMethod && is_array($pricingRules) && isset($pricingRules['payment_method'])) {
-                            $driverPaymentMethod = $pricingRules['payment_method'];
-                        }
-                        if (!$driverPaymentMethod) {
-                            $driverPaymentMethod = $contractObj->payment_type;
-                        }
+                if (!$driverPaymentMethod) {
+                    $driverPaymentMethod = $contractObj ? $contractObj->payment_type : 'per_order';
+                }
 
-                        if ($driverPaymentMethod === 'zones' || $driverPaymentMethod === 'zones_tiers') {
-                            $zoneRules = is_array($pricingRules) && isset($pricingRules['zones']) ? $pricingRules['zones'] : (is_array($pricingRules) && isset($pricingRules['zones_tiers']) ? $pricingRules['zones_tiers'] : $pricingRules);
-                            $zoneName = $log->zone;
+                if ($driverPaymentMethod === 'zones' || $driverPaymentMethod === 'zones_tiers') {
+                    $zoneRules = is_array($pricingRules) && isset($pricingRules['zones']) ? $pricingRules['zones'] : (is_array($pricingRules) && isset($pricingRules['zones_tiers']) ? $pricingRules['zones_tiers'] : $pricingRules);
+                    $logComm = 0.0;
+                    $notesData = $log->notes ? json_decode($log->notes, true) : null;
+                    $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders']))
+                        ? $notesData['zone_orders']
+                        : [];
+
+                    if (!empty($zoneOrdersMap)) {
+                        foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
+                            $zCount = (int)$zCount;
+                            if ($zCount <= 0) continue;
+                            $zRate = 0.0;
                             if (is_array($zoneRules)) {
-                                if (isset($zoneRules[$zoneName])) {
-                                    $rate = (float) $zoneRules[$zoneName];
-                                } else {
-                                    foreach ($zoneRules as $rule) {
-                                        if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
-                                            $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
-                                            break;
-                                        }
+                                foreach ($zoneRules as $rule) {
+                                    if (is_array($rule) && (
+                                        (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                                        (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
+                                        (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
+                                    )) {
+                                        $zRate = (float)($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                        break;
                                     }
                                 }
                             }
+                            $logComm += $zCount * $zRate;
                         }
+                    } else {
+                        $zoneName = $log->zone;
+                        $zRate = 0.0;
+                        if (is_array($zoneRules)) {
+                            foreach ($zoneRules as $rule) {
+                                if (is_array($rule) && (
+                                    (isset($rule['id']) && (string)$rule['id'] === (string)$zoneName) ||
+                                    (isset($rule['name']) && $rule['name'] === $zoneName) ||
+                                    (isset($rule['zone']) && $rule['zone'] === $zoneName)
+                                )) {
+                                    $zRate = (float)($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                    break;
+                                }
+                            }
+                        }
+                        $logComm = $cOrders * $zRate;
+                    }
+                    $rate = ($cOrders > 0) ? ($logComm / $cOrders) : 0.0;
+                } else {
+                    $activeAssignForContract = $assignments->first(function ($a) use ($contractId, $logDate) {
+                        $st = $a->start_date instanceof Carbon ? $a->start_date->toDateString() : substr((string)$a->start_date, 0, 10);
+                        $et = $a->end_date ? ($a->end_date instanceof Carbon ? $a->end_date->toDateString() : substr((string)$a->end_date, 0, 10)) : null;
+                        return $a->contract_id == $contractId && $st <= $logDate && (!$et || $et >= $logDate);
+                    });
+
+                    if ($activeAssignForContract) {
+                        $rate = SmartValueFallbackService::resolve($employeeId, $contractId, $logDate, 'order_commission');
                     }
                 }
             }
@@ -1507,29 +1539,54 @@ class PayrollController extends Controller
                     }
 
                     $payout = 0.0;
-                    $groupedLogs = $segLogs->groupBy('zone');
-                    foreach ($groupedLogs as $zoneName => $zoneLogs) {
-                        $zoneOrders = $zoneLogs->sum('orders_count');
-                        $rate = null;
-                        if (is_array($pricingRules)) {
-                            if (isset($pricingRules[$zoneName])) {
-                                $rate = (float) $pricingRules[$zoneName];
-                            } else {
+                    foreach ($segLogs as $l) {
+                        $cOrders = (int) $l->orders_count;
+                        if ($cOrders <= 0) continue;
+
+                        $notesData = $l->notes ? json_decode($l->notes, true) : null;
+                        $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders']))
+                            ? $notesData['zone_orders']
+                            : [];
+
+                        if (!empty($zoneOrdersMap)) {
+                            foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
+                                $zCount = (int)$zCount;
+                                if ($zCount <= 0) continue;
+                                $zRate = 0.0;
+                                if (is_array($pricingRules)) {
+                                    foreach ($pricingRules as $rule) {
+                                        if (is_array($rule) && (
+                                            (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                                            (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
+                                            (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
+                                        )) {
+                                            $zRate = (float)($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                            break;
+                                        }
+                                    }
+                                }
+                                $payout += $zCount * $zRate * $segExchangeRate;
+                            }
+                        } else {
+                            $zoneName = $l->zone;
+                            $zRate = 0.0;
+                            if (is_array($pricingRules)) {
                                 foreach ($pricingRules as $rule) {
-                                    if (is_array($rule) && (isset($rule['zone']) || isset($rule['name'])) && (($rule['zone'] ?? $rule['name']) == $zoneName)) {
-                                        $rate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
+                                    if (is_array($rule) && (
+                                        (isset($rule['id']) && (string)$rule['id'] === (string)$zoneName) ||
+                                        (isset($rule['name']) && $rule['name'] === $zoneName) ||
+                                        (isset($rule['zone']) && $rule['zone'] === $zoneName)
+                                    )) {
+                                        $zRate = (float)($rule['price'] ?? $rule['rate'] ?? 0.0);
                                         break;
                                     }
                                 }
                             }
+                            $payout += $cOrders * $zRate * $segExchangeRate;
                         }
-                        if ($rate === null) {
-                            $rate = (float) ($segContract->default_order_commission ?? 0.0);
-                        }
-                        $payout += $zoneOrders * $rate * $segExchangeRate;
                     }
 
-                    $segOrdersBonus = $payout;
+                    $segOrdersBonus = round($payout, 3);
                     $segBaseActual = 0.0;
                 } elseif ($driverPaymentMethod === 'zones_tiers') {
                     $pricingRules = null;
