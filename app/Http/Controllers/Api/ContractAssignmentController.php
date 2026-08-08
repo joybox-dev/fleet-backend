@@ -18,7 +18,7 @@ class ContractAssignmentController extends Controller
             'employee_id' => 'required|exists:employees,id',
         ]);
 
-        $assignments = ContractAssignment::with(['contract:id,name,currency,payment_type', 'overrides'])
+        $assignments = ContractAssignment::with(['contract:id,name,currency,payment_type,client_pricing_rules,driver_pricing_rules', 'overrides'])
             ->where('employee_id', $request->employee_id)
             ->orderByDesc('start_date')
             ->get();
