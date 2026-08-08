@@ -28,7 +28,8 @@ class DailyLog extends Model
         'late_login',
         'early_logout',
         'is_valid',
-        'zone'
+        'zone',
+        'driver_status'
     ];
 
     protected $casts = [

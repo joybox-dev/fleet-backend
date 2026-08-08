@@ -123,6 +123,7 @@ class DailyLogController extends Controller
             'is_valid'            => 'nullable|boolean',
             'shift_valid'         => 'nullable|boolean',
             'zone'                => 'nullable|string|max:255',
+            'driver_status'       => 'nullable|string|max:50',
         ]);
 
         $validator->after(function ($validator) use ($request) {
