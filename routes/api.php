@@ -229,6 +229,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         // Payroll
         Route::prefix('payroll')->group(function () {
             Route::post('run', [PayrollController::class, 'run']);
+            Route::get('contract-sheet/{contract}', [PayrollController::class, 'contractSheet']);
             Route::get('{year}/{month}', [PayrollController::class, 'show']);
             Route::get('{year}/{month}/{employee}', [PayrollController::class, 'slip']);
             Route::post('{year}/{month}/approve', [PayrollController::class, 'approve']);

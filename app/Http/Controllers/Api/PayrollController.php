@@ -1867,4 +1867,562 @@ class PayrollController extends Controller
             'total_absence_deduction' => $absenceDeduction,
         ];
     }
+
+    /**
+     * GET /api/payroll/contract-sheet/{contract}
+     * Contract-Centric Payroll Sheet API
+     */
+    public function contractSheet(Request $request, $contractId): JsonResponse
+    {
+        $year = (int) $request->input('year', date('Y'));
+        $month = (int) $request->input('month', date('n'));
+        $startDate = sprintf('%04d-%02d-01', $year, $month);
+        $daysInMonth = Carbon::parse($startDate)->daysInMonth;
+        $endDate = sprintf('%04d-%02d-%02d', $year, $month, $daysInMonth);
+
+        $contract = Contract::withoutGlobalScopes()->find($contractId);
+        if (!$contract) {
+            return response()->json(['message' => 'العقد غير موجود.'], 404);
+        }
+
+        // Get contract assignments active during this month
+        $assignments = ContractAssignment::withoutGlobalScopes()
+            ->where('contract_id', $contractId)
+            ->whereDate('start_date', '<=', $endDate)
+            ->where(function ($q) use ($startDate) {
+                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate);
+            })
+            ->with(['employee' => function($q){ $q->withoutGlobalScopes(); }, 'overrides'])
+            ->get();
+
+        $employeeIds = $assignments->pluck('employee_id')->filter()->unique()->values();
+
+        // Include any extra drivers with daily logs under this contract
+        $extraLogDriverIds = DailyLog::withoutGlobalScopes()
+            ->where('contract_id', $contractId)
+            ->whereBetween('log_date', [$startDate, $endDate])
+            ->pluck('employee_id')
+            ->filter()
+            ->unique()
+            ->diff($employeeIds);
+
+        if ($extraLogDriverIds->isNotEmpty()) {
+            $extraEmployees = Employee::withoutGlobalScopes()->whereIn('id', $extraLogDriverIds)->get();
+            foreach ($extraEmployees as $extraEmp) {
+                $dummyAssign = new ContractAssignment([
+                    'id' => null,
+                    'contract_id' => $contractId,
+                    'employee_id' => $extraEmp->id,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'status' => 'active'
+                ]);
+                $dummyAssign->setRelation('employee', $extraEmp);
+                $dummyAssign->setRelation('overrides', collect());
+                $assignments->push($dummyAssign);
+                $employeeIds->push($extraEmp->id);
+            }
+        }
+
+        // Fetch logs for all drivers in this contract
+        $allLogs = DailyLog::withoutGlobalScopes()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('log_date', [$startDate, $endDate])
+            ->get()
+            ->groupBy('employee_id');
+
+        // Fetch global deductions (advances & violations)
+        $allAdvances = \App\Models\SalaryAdvance::withoutGlobalScopes()
+            ->whereIn('employee_id', $employeeIds)
+            ->where('status', 'approved')
+            ->get()
+            ->groupBy('employee_id');
+
+        $allViolations = \App\Models\Violation::withoutGlobalScopes()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('violation_date', [$startDate, $endDate])
+            ->get()
+            ->groupBy('employee_id');
+
+        $driversResult = [];
+        $totalOrdersSum = 0;
+        $totalEarningsSum = 0.0;
+        $totalDeductionsSum = 0.0;
+        $totalNetSum = 0.0;
+
+        foreach ($assignments as $assignment) {
+            $employee = $assignment->employee;
+            if (!$employee) continue;
+            $empId = $employee->id;
+
+            // Determine effective start and end dates for proration
+            $assignStart = $assignment->start_date ? substr((string)$assignment->start_date, 0, 10) : $startDate;
+            $assignEnd = $assignment->end_date ? substr((string)$assignment->end_date, 0, 10) : $endDate;
+
+            $effStart = max($startDate, $assignStart);
+            $effEnd = min($endDate, $assignEnd);
+
+            $effStartCarbon = Carbon::parse($effStart);
+            $effEndCarbon = Carbon::parse($effEnd);
+            if ($effStartCarbon->gt($effEndCarbon)) {
+                $assignedDays = 0;
+            } else {
+                $assignedDays = $effStartCarbon->diffInDays($effEndCarbon) + 1;
+            }
+            $segRatio = $daysInMonth > 0 ? min(1.0, max(0.0, $assignedDays / $daysInMonth)) : 1.0;
+
+            // Driver's logs for this contract
+            $empLogs = $allLogs->get($empId, collect())->where('contract_id', $contractId);
+
+            // Active override for this driver
+            $activeOverride = $assignment->overrides ? $assignment->overrides->first(function($ov) use ($startDate, $endDate) {
+                $ovStart = $ov->effective_from ? substr((string)$ov->effective_from, 0, 10) : $startDate;
+                $ovEnd = $ov->effective_to ? substr((string)$ov->effective_to, 0, 10) : null;
+                return $ovStart <= $endDate && (!$ovEnd || $ovEnd >= $startDate);
+            }) : null;
+
+            // Vehicle type resolution
+            $vtId = $employee->vehicle_type_id;
+            if (!$vtId) {
+                $firstLogWithVeh = $empLogs->firstWhere('vehicle_id', '!=', null);
+                if ($firstLogWithVeh) {
+                    $veh = \App\Models\Vehicle::withoutGlobalScopes()->find($firstLogWithVeh->vehicle_id);
+                    if ($veh) $vtId = $veh->vehicle_type_id;
+                }
+            }
+
+            // Determine driver payment method
+            $driverPaymentMethod = null;
+            if ($activeOverride && $activeOverride->override_type) {
+                $driverPaymentMethod = $activeOverride->override_type;
+            } elseif ($vtId && is_array($contract->driver_pricing_rules) && isset($contract->driver_pricing_rules[$vtId]['payment_method'])) {
+                $driverPaymentMethod = $contract->driver_pricing_rules[$vtId]['payment_method'];
+            } elseif (is_array($contract->driver_pricing_rules)) {
+                $firstKey = array_key_first($contract->driver_pricing_rules);
+                if ($firstKey !== null && isset($contract->driver_pricing_rules[$firstKey]['payment_method'])) {
+                    $driverPaymentMethod = $contract->driver_pricing_rules[$firstKey]['payment_method'];
+                }
+            }
+
+            if (!$driverPaymentMethod) {
+                $driverPaymentMethod = $contract->driver_payment_method ?: ($contract->payment_type ?: 'per_order');
+            }
+
+            // Route to specialized calculation function
+            $calcResult = null;
+            switch ($driverPaymentMethod) {
+                case 'fixed':
+                    $calcResult = self::calculateFixedDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $segRatio, $assignedDays, $vtId);
+                    break;
+                case 'hybrid':
+                    $calcResult = self::calculateHybridDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $segRatio, $assignedDays, $vtId);
+                    break;
+                case 'zones':
+                    $calcResult = self::calculateZonesDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
+                    break;
+                case 'zones_tiers':
+                    $calcResult = self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
+                    break;
+                case 'per_order':
+                default:
+                    $calcResult = self::calculatePerOrderDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
+                    break;
+            }
+
+            // Deductions calculation (advances & violations)
+            $advSum = 0.0;
+            $empAdvances = $allAdvances->get($empId, collect());
+            foreach ($empAdvances as $adv) {
+                $inst = min((float)$adv->monthly_installment, (float)$adv->remaining_balance);
+                if ($inst > 0) $advSum += $inst;
+            }
+
+            $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction_amount');
+            $totalGlobalDeductions = $advSum + $violSum;
+
+            $grossEarnings = (float) ($calcResult['gross_contract_earnings'] ?? 0.0);
+            $netPayout = max(0.0, $grossEarnings - $totalGlobalDeductions);
+
+            $driversResult[] = [
+                'employee_id' => $empId,
+                'employee_name' => $employee->name,
+                'employee_number' => $employee->employee_number,
+                'payment_method' => $driverPaymentMethod,
+                'payment_method_label' => self::getPaymentMethodLabel($driverPaymentMethod),
+                'has_override' => !!$activeOverride,
+                'assigned_days' => $assignedDays,
+                'days_ratio' => round($segRatio, 4),
+                'orders_count' => $calcResult['orders_count'] ?? $empLogs->sum('orders_count'),
+                'base_salary' => $calcResult['base_salary'] ?? 0.0,
+                'orders_bonus' => $calcResult['orders_bonus'] ?? 0.0,
+                'deficit_deduction' => $calcResult['deficit_deduction'] ?? 0.0,
+                'surplus_bonus' => $calcResult['surplus_bonus'] ?? 0.0,
+                'absence_deduction' => $calcResult['absence_deduction'] ?? 0.0,
+                'gross_contract_earnings' => $grossEarnings,
+                'global_deductions' => [
+                    'advances' => $advSum,
+                    'violations' => $violSum,
+                    'total' => $totalGlobalDeductions
+                ],
+                'net_payout' => $netPayout,
+                'calculation_details' => $calcResult['calculation_details'] ?? []
+            ];
+
+            $totalOrdersSum += ($calcResult['orders_count'] ?? $empLogs->sum('orders_count'));
+            $totalEarningsSum += $grossEarnings;
+            $totalDeductionsSum += $totalGlobalDeductions;
+            $totalNetSum += $netPayout;
+        }
+
+        return response()->json([
+            'contract' => [
+                'id' => $contract->id,
+                'name' => $contract->name,
+                'contract_number' => $contract->contract_number,
+                'currency' => $contract->currency ?: 'KWD',
+                'payment_type' => $contract->payment_type,
+                'driver_payment_method' => $contract->driver_payment_method
+            ],
+            'period' => [
+                'year' => $year,
+                'month' => $month,
+                'days_in_month' => $daysInMonth
+            ],
+            'summary' => [
+                'total_drivers' => count($driversResult),
+                'total_orders' => $totalOrdersSum,
+                'total_gross_earnings' => round($totalEarningsSum, 3),
+                'total_global_deductions' => round($totalDeductionsSum, 3),
+                'total_net_payout' => round($totalNetSum, 3)
+            ],
+            'drivers' => $driversResult
+        ]);
+    }
+
+    private static function calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $segRatio, $assignedDays, $vtId)
+    {
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
+        
+        $baseSalaryConfig = $override ? ($override->fixed_amount ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
+        $targetConfig = $override ? ($override->fixed_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
+        $deficitRateConfig = $override ? ($override->fixed_deficit_rate ?? 0) : ($vtPricing['fixed_deficit_rate'] ?? 0);
+
+        $proratedBaseSalary = round((float)$baseSalaryConfig * $segRatio, 3);
+        $proratedTarget = (int) round((float)$targetConfig * $segRatio);
+        
+        $ordersCount = $empLogs->sum('orders_count');
+        $deficitDeduction = 0.0;
+        $surplusBonus = 0.0;
+
+        if ($proratedTarget > 0) {
+            if ($ordersCount < $proratedTarget) {
+                $deficitDeduction = round(($proratedTarget - $ordersCount) * (float)$deficitRateConfig, 3);
+            } else {
+                $surplusRate = (float) ($vtPricing['fixed_surplus_rate'] ?? $deficitRateConfig);
+                $surplusBonus = round(($ordersCount - $proratedTarget) * $surplusRate, 3);
+            }
+        }
+
+        $gross = max(0.0, $proratedBaseSalary - $deficitDeduction + $surplusBonus);
+
+        $details = [
+            [
+                'label' => 'الراتب الثابت المستحق (مجزأ)',
+                'amount' => $proratedBaseSalary,
+                'formula' => "الراتب الأساسي {$baseSalaryConfig} د.ك × نسبة التواجد " . round($segRatio * 100, 1) . "% = {$proratedBaseSalary} د.ك"
+            ]
+        ];
+
+        if ($proratedTarget > 0) {
+            if ($deficitDeduction > 0) {
+                $details[] = [
+                    'label' => "خصم النقص في التارغت (مستهدف: {$proratedTarget} | منفذ: {$ordersCount})",
+                    'amount' => -$deficitDeduction,
+                    'formula' => "نقص " . ($proratedTarget - $ordersCount) . " طلب × {$deficitRateConfig} د.ك = -{$deficitDeduction} د.ك"
+                ];
+            } elseif ($surplusBonus > 0) {
+                $details[] = [
+                    'label' => "بونص تجاوز التارغت (مستهدف: {$proratedTarget} | منفذ: {$ordersCount})",
+                    'amount' => $surplusBonus,
+                    'formula' => "زيادة " . ($ordersCount - $proratedTarget) . " طلب × {$deficitRateConfig} د.ك = {$surplusBonus} د.ك"
+                ];
+            }
+        }
+
+        return [
+            'base_salary' => $proratedBaseSalary,
+            'orders_count' => $ordersCount,
+            'orders_bonus' => 0.0,
+            'deficit_deduction' => $deficitDeduction,
+            'surplus_bonus' => $surplusBonus,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => $gross,
+            'calculation_details' => $details
+        ];
+    }
+
+    private static function calculatePerOrderDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId)
+    {
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
+        $rate = (float) ($override ? ($override->order_commission ?? 0) : ($vtPricing['order_commission'] ?? $contract->rate_per_order ?? 0.0));
+        
+        $ordersCount = $empLogs->sum('orders_count');
+        $ordersBonus = round($ordersCount * $rate, 3);
+
+        $details = [
+            [
+                'label' => 'عمولة الطلبات المنجزة',
+                'orders' => $ordersCount,
+                'rate' => $rate,
+                'amount' => $ordersBonus,
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك"
+            ]
+        ];
+
+        return [
+            'base_salary' => 0.0,
+            'orders_count' => $ordersCount,
+            'orders_bonus' => $ordersBonus,
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => $ordersBonus,
+            'calculation_details' => $details
+        ];
+    }
+
+    private static function calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $segRatio, $assignedDays, $vtId)
+    {
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
+        $baseSalaryConfig = $override ? ($override->fixed_amount ?? 0) : ($vtPricing['fixed_amount'] ?? $employee->salary ?? 0);
+        $rate = (float) ($override ? ($override->order_commission ?? 0) : ($vtPricing['order_commission'] ?? 0.0));
+
+        $proratedBaseSalary = round((float)$baseSalaryConfig * $segRatio, 3);
+        $ordersCount = $empLogs->sum('orders_count');
+        $ordersBonus = round($ordersCount * $rate, 3);
+        $gross = $proratedBaseSalary + $ordersBonus;
+
+        $details = [
+            [
+                'label' => 'الراتب الثابت المخصص (مجزأ)',
+                'amount' => $proratedBaseSalary,
+                'formula' => "{$baseSalaryConfig} د.ك × نسبة التواجد " . round($segRatio * 100, 1) . "% = {$proratedBaseSalary} د.ك"
+            ],
+            [
+                'label' => 'عمولة الطلبات فوق الراتب',
+                'orders' => $ordersCount,
+                'rate' => $rate,
+                'amount' => $ordersBonus,
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك"
+            ]
+        ];
+
+        return [
+            'base_salary' => $proratedBaseSalary,
+            'orders_count' => $ordersCount,
+            'orders_bonus' => $ordersBonus,
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => $gross,
+            'calculation_details' => $details
+        ];
+    }
+
+    private static function calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId)
+    {
+        $pricingRules = null;
+        if ($override && isset($override->zones) && is_array($override->zones) && count($override->zones) > 0) {
+            $pricingRules = $override->zones;
+        } else {
+            $pricingRules = is_string($contract->driver_pricing_rules) ? json_decode($contract->driver_pricing_rules, true) : $contract->driver_pricing_rules;
+            if (is_array($pricingRules)) {
+                if ($vtId && isset($pricingRules[$vtId]['zones'])) {
+                    $pricingRules = $pricingRules[$vtId]['zones'];
+                } else {
+                    $firstKey = array_key_first($pricingRules);
+                    if ($firstKey !== null && isset($pricingRules[$firstKey]['zones'])) {
+                        $pricingRules = $pricingRules[$firstKey]['zones'];
+                    }
+                }
+            }
+        }
+
+        $zoneOrdersTotals = [];
+        $totalOrders = 0;
+
+        foreach ($empLogs as $l) {
+            $cOrders = (int)$l->orders_count;
+            if ($cOrders <= 0) continue;
+            $totalOrders += $cOrders;
+
+            $notesData = $l->notes ? json_decode($l->notes, true) : null;
+            $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders'])) ? $notesData['zone_orders'] : [];
+
+            if (!empty($zoneOrdersMap)) {
+                foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
+                    $zCount = (int)$zCount;
+                    if ($zCount <= 0) continue;
+                    $zoneOrdersTotals[$zIdOrName] = ($zoneOrdersTotals[$zIdOrName] ?? 0) + $zCount;
+                }
+            } else {
+                $zName = $l->zone ?: 'افتراضي';
+                $zoneOrdersTotals[$zName] = ($zoneOrdersTotals[$zName] ?? 0) + $cOrders;
+            }
+        }
+
+        $gross = 0.0;
+        $details = [];
+
+        if (is_array($pricingRules)) {
+            foreach ($zoneOrdersTotals as $zIdOrName => $zCount) {
+                $zRuleName = $zIdOrName;
+                $zRate = 0.0;
+                foreach ($pricingRules as $rule) {
+                    if (is_array($rule) && (
+                        (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                        (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
+                        (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
+                    )) {
+                        $zRuleName = $rule['name'] ?? $rule['zone'] ?? $zIdOrName;
+                        $zRate = (float) ($rule['price'] ?? $rule['rate'] ?? 0.0);
+                        break;
+                    }
+                }
+                $amt = round($zCount * $zRate, 3);
+                $gross += $amt;
+                $details[] = [
+                    'label' => "فئة ({$zRuleName})",
+                    'orders' => $zCount,
+                    'rate' => $zRate,
+                    'amount' => $amt,
+                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك"
+                ];
+            }
+        }
+
+        return [
+            'base_salary' => 0.0,
+            'orders_count' => $totalOrders,
+            'orders_bonus' => round($gross, 3),
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => round($gross, 3),
+            'calculation_details' => $details
+        ];
+    }
+
+    private static function calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId)
+    {
+        $pricingRules = null;
+        if ($override && isset($override->zones_tiers) && is_array($override->zones_tiers) && count($override->zones_tiers) > 0) {
+            $pricingRules = $override->zones_tiers;
+        } else {
+            $pricingRules = is_string($contract->driver_pricing_rules) ? json_decode($contract->driver_pricing_rules, true) : $contract->driver_pricing_rules;
+            if (is_array($pricingRules)) {
+                if ($vtId && isset($pricingRules[$vtId]['zones_tiers'])) {
+                    $pricingRules = $pricingRules[$vtId]['zones_tiers'];
+                } else {
+                    $firstKey = array_key_first($pricingRules);
+                    if ($firstKey !== null && isset($pricingRules[$firstKey]['zones_tiers'])) {
+                        $pricingRules = $pricingRules[$firstKey]['zones_tiers'];
+                    }
+                }
+            }
+        }
+
+        $zoneOrdersTotals = [];
+        $totalOrders = 0;
+
+        foreach ($empLogs as $l) {
+            $cOrders = (int)$l->orders_count;
+            if ($cOrders <= 0) continue;
+            $totalOrders += $cOrders;
+
+            $notesData = $l->notes ? json_decode($l->notes, true) : null;
+            $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders'])) ? $notesData['zone_orders'] : [];
+
+            if (!empty($zoneOrdersMap)) {
+                foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
+                    $zCount = (int)$zCount;
+                    if ($zCount <= 0) continue;
+                    $zoneOrdersTotals[$zIdOrName] = ($zoneOrdersTotals[$zIdOrName] ?? 0) + $zCount;
+                }
+            } else {
+                $zName = $l->zone ?: 'افتراضي';
+                $zoneOrdersTotals[$zName] = ($zoneOrdersTotals[$zName] ?? 0) + $cOrders;
+            }
+        }
+
+        $gross = 0.0;
+        $details = [];
+
+        if (is_array($pricingRules)) {
+            foreach ($zoneOrdersTotals as $zIdOrName => $zCount) {
+                $zRuleName = $zIdOrName;
+                $zTiers = [];
+                foreach ($pricingRules as $rule) {
+                    if (is_array($rule) && (
+                        (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                        (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
+                        (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
+                    )) {
+                        $zRuleName = $rule['name'] ?? $rule['zone'] ?? $zIdOrName;
+                        $zTiers = $rule['tiers'] ?? [];
+                        break;
+                    }
+                }
+
+                // Resolve highest tier reached for $zCount (FIXED UNCONTAINED LIMITS as directed)
+                $zRate = 0.0;
+                $tierLabel = "الأساسية";
+                if (!empty($zTiers)) {
+                    foreach ($zTiers as $t) {
+                        $min = (int) ($t['min'] ?? 1);
+                        $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int)$t['max'] : INF;
+                        if ($zCount >= $min && $zCount <= $max) {
+                            $zRate = (float) ($t['price'] ?? 0.0);
+                            $maxText = $max === INF ? 'فأكثر' : "إلى {$max}";
+                            $tierLabel = "الشريحة ({$min}-{$maxText} طلب)";
+                            break;
+                        }
+                    }
+                }
+
+                $amt = round($zCount * $zRate, 3);
+                $gross += $amt;
+                $details[] = [
+                    'label' => "فئة ({$zRuleName}) - {$tierLabel}",
+                    'orders' => $zCount,
+                    'rate' => $zRate,
+                    'amount' => $amt,
+                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك"
+                ];
+            }
+        }
+
+        return [
+            'base_salary' => 0.0,
+            'orders_count' => $totalOrders,
+            'orders_bonus' => round($gross, 3),
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => round($gross, 3),
+            'calculation_details' => $details
+        ];
+    }
+
+    private static function getPaymentMethodLabel($method)
+    {
+        return match ($method) {
+            'fixed' => 'راتب ثابت (Fixed)',
+            'per_order' => 'بالطلب (Per-Order)',
+            'hybrid' => 'هجين (Fixed + Commission)',
+            'zones' => 'فئات (Zones)',
+            'zones_tiers' => 'شرائح الفئات (Zones + Tiers)',
+            default => $method
+        };
+    }
 }
