@@ -146,14 +146,22 @@ class DailyLogController extends Controller
         $logTime = strtotime($validated['log_date']);
         $logYear = (int) date('Y', $logTime);
         $logMonth = (int) date('n', $logTime);
-        $isPayrollLocked = \App\Models\PayrollRun::where('company_id', app('current_company_id') ?? 1)
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+        $isPayrollLocked = \App\Models\PayrollRun::where('company_id', $companyId)
             ->where('year', $logYear)
             ->where('month', $logMonth)
             ->where('status', 'approved')
             ->exists();
 
-        if ($isPayrollLocked) {
-            return response()->json(['message' => 'تم اعتماد رواتب هذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+        $isContractPayrollLocked = \App\Models\ContractPayrollRun::where('company_id', $companyId)
+            ->where('contract_id', $request->input('contract_id'))
+            ->where('year', $logYear)
+            ->where('month', $logMonth)
+            ->where('status', 'approved')
+            ->exists();
+
+        if ($isPayrollLocked || $isContractPayrollLocked) {
+            return response()->json(['message' => 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
         }
 
         // Auto-update existing record if log already exists for same employee and date (matching vehicle, contract, or employee+date)
@@ -195,7 +203,19 @@ class DailyLogController extends Controller
         $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : 0.0;
         $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : 0.0;
         $ordersCount = (int)$validated['orders_count'];
-        $driverStatus = $validated['driver_status'] ?? ($ordersCount > 0 ? 'working' : 'working');
+        $rejectedOrdersCount = (int)($validated['rejected_orders_count'] ?? 0);
+        $cashCollected = (float)($validated['cash_collected'] ?? 0);
+
+        if ($ordersCount > 0 || $rejectedOrdersCount > 0 || $cashCollected > 0) {
+            $driverStatus = 'working';
+        } else {
+            $passedStatus = $validated['driver_status'] ?? null;
+            if ($passedStatus && in_array($passedStatus, ['working', 'absent', 'unexcused_absent', 'paid_leave', 'unpaid_leave', 'sick_leave', 'holiday'])) {
+                $driverStatus = $passedStatus;
+            } else {
+                $driverStatus = 'unpaid_leave';
+            }
+        }
 
         if (isset($validated['is_valid'])) {
             $isValid = (bool)$validated['is_valid'];
@@ -306,8 +326,16 @@ class DailyLogController extends Controller
                     ->where('status', 'approved')
                     ->exists();
 
-                if ($isPayrollLocked) {
-                    return response()->json(['message' => 'تم اعتماد رواتب هذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+                $contractId = $logs[0]['contract_id'] ?? null;
+                $isContractPayrollLocked = $contractId ? \App\Models\ContractPayrollRun::where('company_id', $companyId)
+                    ->where('contract_id', $contractId)
+                    ->where('year', $logYear)
+                    ->where('month', $logMonth)
+                    ->where('status', 'approved')
+                    ->exists() : false;
+
+                if ($isPayrollLocked || $isContractPayrollLocked) {
+                    return response()->json(['message' => 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
                 }
             }
         }
@@ -331,7 +359,17 @@ class DailyLogController extends Controller
             $isValid = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
             $lateLogin = isset($logData['late_login']) ? (bool) $logData['late_login'] : false;
             $earlyLogout = isset($logData['early_logout']) ? (bool) $logData['early_logout'] : false;
-            $driverStatus = $logData['driver_status'] ?? 'working';
+
+            if ($ordersCount > 0 || $rejectedOrdersCount > 0 || $cashCollected > 0) {
+                $driverStatus = 'working';
+            } else {
+                $passedStatus = $logData['driver_status'] ?? null;
+                if ($passedStatus && in_array($passedStatus, ['working', 'absent', 'unexcused_absent', 'paid_leave', 'unpaid_leave', 'sick_leave', 'holiday'])) {
+                    $driverStatus = $passedStatus;
+                } else {
+                    $driverStatus = 'unpaid_leave';
+                }
+            }
 
             $contract = $contractsMap->get($contractId);
             $rate = $contract ? (float) $contract->rate_per_order : 0.0;

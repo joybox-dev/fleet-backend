@@ -9,6 +9,7 @@ use App\Models\Contract;
 use App\Models\ContractAssignment;
 use App\Models\ContractMandatoryDay;
 use App\Models\ContractMonthlyParameter;
+use App\Models\ContractPayrollRun;
 use App\Models\CurrencyExchangeRate;
 use App\Models\CustodyItem;
 use App\Models\DailyLog;
@@ -1879,6 +1880,7 @@ class PayrollController extends Controller
         $startDate = sprintf('%04d-%02d-01', $year, $month);
         $daysInMonth = Carbon::parse($startDate)->daysInMonth;
         $endDate = sprintf('%04d-%02d-%02d', $year, $month, $daysInMonth);
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
 
         $contract = Contract::withoutGlobalScopes()->find($contractId);
         if (!$contract) {
@@ -2023,25 +2025,25 @@ class PayrollController extends Controller
                 case 'zones_tiers':
                     $calcResult = self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
                     break;
+                case 'tiers':
+                    $calcResult = self::calculateTiersDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
+                    break;
                 case 'per_order':
                 default:
                     $calcResult = self::calculatePerOrderDriverPayroll($employee, $contract, $assignment, $activeOverride, $empLogs, $vtId);
                     break;
             }
 
-            // Deductions calculation (advances & violations)
-            $advSum = 0.0;
-            $empAdvances = $allAdvances->get($empId, collect());
-            foreach ($empAdvances as $adv) {
-                $inst = min((float)$adv->monthly_installment, (float)$adv->remaining_balance);
-                if ($inst > 0) $advSum += $inst;
-            }
-
+            // Deductions calculation for contract level (Traffic Violations ONLY - Salary Advances are deducted in main monthly payroll)
             $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction_amount');
-            $totalGlobalDeductions = $advSum + $violSum;
+            $totalContractDeductions = $violSum;
 
             $grossEarnings = (float) ($calcResult['gross_contract_earnings'] ?? 0.0);
-            $netPayout = max(0.0, $grossEarnings - $totalGlobalDeductions);
+            $netPayout = round($grossEarnings - $totalContractDeductions, 3);
+
+            $actualWorkDays = $empLogs->filter(function($log) {
+                return ($log->orders_count > 0) || ($log->cash_collected > 0) || ($log->rejected_orders_count > 0) || ($log->driver_status === 'working');
+            })->count();
 
             $driversResult[] = [
                 'employee_id' => $empId,
@@ -2051,6 +2053,7 @@ class PayrollController extends Controller
                 'payment_method_label' => self::getPaymentMethodLabel($driverPaymentMethod),
                 'has_override' => !!$activeOverride,
                 'assigned_days' => $assignedDays,
+                'actual_work_days' => $actualWorkDays,
                 'days_ratio' => round($segRatio, 4),
                 'orders_count' => $calcResult['orders_count'] ?? $empLogs->sum('orders_count'),
                 'base_salary' => $calcResult['base_salary'] ?? 0.0,
@@ -2059,10 +2062,11 @@ class PayrollController extends Controller
                 'surplus_bonus' => $calcResult['surplus_bonus'] ?? 0.0,
                 'absence_deduction' => $calcResult['absence_deduction'] ?? 0.0,
                 'gross_contract_earnings' => $grossEarnings,
+                'violations_deduction' => $violSum,
                 'global_deductions' => [
-                    'advances' => $advSum,
+                    'advances' => 0.0,
                     'violations' => $violSum,
-                    'total' => $totalGlobalDeductions
+                    'total' => $totalContractDeductions
                 ],
                 'net_payout' => $netPayout,
                 'calculation_details' => $calcResult['calculation_details'] ?? []
@@ -2070,9 +2074,17 @@ class PayrollController extends Controller
 
             $totalOrdersSum += ($calcResult['orders_count'] ?? $empLogs->sum('orders_count'));
             $totalEarningsSum += $grossEarnings;
-            $totalDeductionsSum += $totalGlobalDeductions;
+            $totalDeductionsSum += $totalContractDeductions;
             $totalNetSum += $netPayout;
         }
+
+        $approvedRun = ContractPayrollRun::with('approvedBy:id,name')
+            ->where('company_id', $companyId)
+            ->where('contract_id', $contract->id)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->first();
 
         return response()->json([
             'contract' => [
@@ -2088,14 +2100,241 @@ class PayrollController extends Controller
                 'month' => $month,
                 'days_in_month' => $daysInMonth
             ],
+            'is_approved' => !!$approvedRun,
+            'approved_run' => $approvedRun,
             'summary' => [
                 'total_drivers' => count($driversResult),
                 'total_orders' => $totalOrdersSum,
                 'total_gross_earnings' => round($totalEarningsSum, 3),
+                'total_violations_deductions' => round($totalDeductionsSum, 3),
                 'total_global_deductions' => round($totalDeductionsSum, 3),
                 'total_net_payout' => round($totalNetSum, 3)
             ],
             'drivers' => $driversResult
+        ]);
+    }
+
+    /**
+     * POST /api/payroll/contract-sheet/{contract}/approve
+     * Approve and freeze contract payroll sheet for a month.
+     */
+    public function approveContractSheet(Request $request, $contractId): JsonResponse
+    {
+        $contract = Contract::findOrFail($contractId);
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+        $year = (int) $request->input('year', date('Y'));
+        $month = (int) $request->input('month', date('n'));
+        $notes = $request->input('notes');
+
+        // Run live calculation of contract sheet to create fresh snapshot
+        $sheetRes = $this->contractSheet($request, $contract->id);
+        $data = json_decode($sheetRes->getContent(), true);
+
+        $summary = $data['summary'] ?? [];
+        $drivers = $data['drivers'] ?? [];
+
+        $run = ContractPayrollRun::updateOrCreate(
+            [
+                'company_id'  => $companyId,
+                'contract_id' => $contract->id,
+                'year'        => $year,
+                'month'       => $month,
+            ],
+            [
+                'status'                      => 'approved',
+                'total_drivers'               => count($drivers),
+                'total_orders'                => (int) ($summary['total_orders'] ?? 0),
+                'total_gross_earnings'        => (float) ($summary['total_gross_earnings'] ?? 0.0),
+                'total_violations_deductions' => (float) ($summary['total_violations_deductions'] ?? $summary['total_global_deductions'] ?? 0.0),
+                'total_net_payout'            => (float) ($summary['total_net_payout'] ?? 0.0),
+                'snapshot_data'               => $data,
+                'approved_by'                 => $request->user()?->id,
+                'approved_at'                 => now(),
+                'notes'                       => $notes,
+            ]
+        );
+
+        return response()->json([
+            'message' => "تم اعتماد وتجميد كشف رواتب العقد ({$contract->name}) لشهر {$month}/{$year} بنجاح 🔒",
+            'run'     => $run->load('approvedBy:id,name')
+        ]);
+    }
+
+    /**
+     * POST /api/payroll/contract-sheet/{contract}/unapprove
+     * Unapprove (un-freeze) contract payroll sheet.
+     */
+    public function unapproveContractSheet(Request $request, $contractId): JsonResponse
+    {
+        $contract = Contract::findOrFail($contractId);
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+        $year = (int) $request->input('year', date('Y'));
+        $month = (int) $request->input('month', date('n'));
+
+        $run = ContractPayrollRun::where('company_id', $companyId)
+            ->where('contract_id', $contract->id)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->first();
+
+        if ($run) {
+            $run->delete();
+        }
+
+        return response()->json([
+            'message' => "تم فك تجميد واعتماد كشف رواتب العقد ({$contract->name}) لشهر {$month}/{$year} بنجاح.",
+        ]);
+    }
+
+    /**
+     * GET /api/payroll/consolidated/{year}/{month}
+     * Consolidated Monthly Payroll Sheet based strictly on Approved Contract Payroll Runs.
+     */
+    public function consolidatedSheet(Request $request, $year, $month): JsonResponse
+    {
+        $year = (int) $year;
+        $month = (int) $month;
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+
+        $startDate = sprintf('%04d-%02d-01', $year, $month);
+        $daysInMonth = Carbon::parse($startDate)->daysInMonth;
+        $endDate = sprintf('%04d-%02d-%02d', $year, $month, $daysInMonth);
+
+        // Fetch all contracts for company
+        $allContracts = Contract::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('status', 'active')
+            ->get(['id', 'name', 'contract_number']);
+
+        // Fetch approved contract runs for this month
+        $approvedRuns = ContractPayrollRun::with(['contract:id,name,contract_number', 'approvedBy:id,name'])
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->get();
+
+        $approvedContractIds = $approvedRuns->pluck('contract_id')->toArray();
+
+        // Separate contracts into approved vs unapproved
+        $unapprovedContracts = $allContracts->filter(function ($c) use ($approvedContractIds) {
+            return !in_array($c->id, $approvedContractIds);
+        })->values();
+
+        // Consolidated drivers mapping
+        $consolidatedDrivers = [];
+
+        foreach ($approvedRuns as $run) {
+            $contractObj = $run->contract;
+            $contractName = $contractObj?->name ?? "عقد #{$run->contract_id}";
+            $snapshot = $run->snapshot_data;
+            $drivers = $snapshot['drivers'] ?? [];
+
+            foreach ($drivers as $d) {
+                $empId = $d['employee_id'];
+                if (!$empId) continue;
+
+                if (!isset($consolidatedDrivers[$empId])) {
+                    $consolidatedDrivers[$empId] = [
+                        'employee_id' => $empId,
+                        'employee_name' => $d['employee_name'],
+                        'employee_number' => $d['employee_number'],
+                        'assigned_days' => $d['assigned_days'] ?? 0,
+                        'actual_work_days' => $d['actual_work_days'] ?? 0,
+                        'orders_count' => $d['orders_count'] ?? 0,
+                        'gross_contract_earnings' => (float) ($d['gross_contract_earnings'] ?? 0.0),
+                        'violations_deduction' => (float) ($d['violations_deduction'] ?? 0.0),
+                        'contracts_worked' => []
+                    ];
+                } else {
+                    $consolidatedDrivers[$empId]['assigned_days'] = max($consolidatedDrivers[$empId]['assigned_days'], $d['assigned_days'] ?? 0);
+                    $consolidatedDrivers[$empId]['actual_work_days'] += ($d['actual_work_days'] ?? 0);
+                    $consolidatedDrivers[$empId]['orders_count'] += ($d['orders_count'] ?? 0);
+                    $consolidatedDrivers[$empId]['gross_contract_earnings'] += (float) ($d['gross_contract_earnings'] ?? 0.0);
+                    $consolidatedDrivers[$empId]['violations_deduction'] += (float) ($d['violations_deduction'] ?? 0.0);
+                }
+
+                $consolidatedDrivers[$empId]['contracts_worked'][] = [
+                    'contract_id' => $run->contract_id,
+                    'contract_name' => $contractName,
+                    'payment_method' => $d['payment_method'] ?? 'fixed',
+                    'payment_method_label' => $d['payment_method_label'] ?? 'ثابت',
+                    'orders_count' => $d['orders_count'] ?? 0,
+                    'gross' => (float) ($d['gross_contract_earnings'] ?? 0.0),
+                    'violations' => (float) ($d['violations_deduction'] ?? 0.0),
+                    'net' => (float) ($d['net_payout'] ?? 0.0),
+                    'calculation_details' => $d['calculation_details'] ?? []
+                ];
+            }
+        }
+
+        // Fetch company-level Salary Advances for all active drivers in this month
+        $allEmpIds = array_keys($consolidatedDrivers);
+        $advancesMap = [];
+        if (!empty($allEmpIds)) {
+            $advances = \App\Models\SalaryAdvance::withoutGlobalScopes()
+                ->whereIn('employee_id', $allEmpIds)
+                ->where('status', 'approved')
+                ->whereBetween('request_date', [$startDate, $endDate])
+                ->get();
+
+            foreach ($advances as $adv) {
+                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + (float)$adv->amount;
+            }
+        }
+
+        $driversList = [];
+        $totalOrdersSum = 0;
+        $totalGrossSum = 0.0;
+        $totalViolationsSum = 0.0;
+        $totalAdvancesSum = 0.0;
+        $totalFinalNetSum = 0.0;
+
+        foreach ($consolidatedDrivers as $empId => $d) {
+            $advDeduction = round((float)($advancesMap[$empId] ?? 0.0), 3);
+            $gross = round($d['gross_contract_earnings'], 3);
+            $viols = round($d['violations_deduction'], 3);
+            $finalNet = round($gross - $viols - $advDeduction, 3);
+
+            $d['advances_deduction'] = $advDeduction;
+            $d['final_net_payout'] = $finalNet;
+            $driversList[] = $d;
+
+            $totalOrdersSum += $d['orders_count'];
+            $totalGrossSum += $gross;
+            $totalViolationsSum += $viols;
+            $totalAdvancesSum += $advDeduction;
+            $totalFinalNetSum += $finalNet;
+        }
+
+        return response()->json([
+            'period' => [
+                'year' => $year,
+                'month' => $month,
+                'days_in_month' => $daysInMonth
+            ],
+            'summary' => [
+                'total_approved_contracts' => count($approvedRuns),
+                'total_unapproved_contracts' => count($unapprovedContracts),
+                'total_drivers' => count($driversList),
+                'total_orders' => $totalOrdersSum,
+                'total_gross_earnings' => round($totalGrossSum, 3),
+                'total_violations_deductions' => round($totalViolationsSum, 3),
+                'total_advances_deductions' => round($totalAdvancesSum, 3),
+                'total_final_net_payout' => round($totalFinalNetSum, 3)
+            ],
+            'approved_runs' => $approvedRuns->map(function($r) {
+                return [
+                    'contract_id' => $r->contract_id,
+                    'contract_name' => $r->contract?->name,
+                    'approved_at' => $r->approved_at,
+                    'approved_by_name' => $r->approvedBy?->name,
+                    'total_drivers' => $r->total_drivers,
+                    'total_net_payout' => $r->total_net_payout,
+                ];
+            }),
+            'unapproved_contracts' => $unapprovedContracts,
+            'drivers' => $driversList
         ]);
     }
 
@@ -2109,7 +2348,25 @@ class PayrollController extends Controller
 
         $proratedBaseSalary = round((float)$baseSalaryConfig * $segRatio, 3);
         $proratedTarget = (int) round((float)$targetConfig * $segRatio);
-        
+
+        // Required work days in contract (default 26 days)
+        $requiredWorkDays = (int) ($contract->default_required_work_days ?? 26);
+        $proratedRequiredWorkDays = (int) round($requiredWorkDays * $segRatio);
+
+        // Count actual work days vs paid leave days
+        $actualWorkDays = $empLogs->filter(function($log) {
+            return ($log->orders_count > 0) || ($log->cash_collected > 0) || ($log->rejected_orders_count > 0) || ($log->driver_status === 'working');
+        })->count();
+
+        $paidLeaveDays = $empLogs->filter(function($log) {
+            return in_array($log->driver_status, ['paid_leave', 'holiday']);
+        })->count();
+
+        $creditedDays = $actualWorkDays + $paidLeaveDays;
+        $absenceDays = max(0, $proratedRequiredWorkDays - $creditedDays);
+        $dailyBaseRate = $requiredWorkDays > 0 ? round((float)$baseSalaryConfig / $requiredWorkDays, 3) : 0.0;
+        $absenceDeduction = round($absenceDays * $dailyBaseRate, 3);
+
         $ordersCount = $empLogs->sum('orders_count');
         $deficitDeduction = 0.0;
         $surplusBonus = 0.0;
@@ -2123,28 +2380,62 @@ class PayrollController extends Controller
             }
         }
 
-        $gross = max(0.0, $proratedBaseSalary - $deficitDeduction + $surplusBonus);
+        $gross = round($proratedBaseSalary - $absenceDeduction - $deficitDeduction + $surplusBonus, 3);
 
         $details = [
             [
-                'label' => 'الراتب الثابت المستحق (مجزأ)',
+                'label' => 'الراتب الثابت الأساسي (مجزأ)',
                 'amount' => $proratedBaseSalary,
                 'formula' => "الراتب الأساسي {$baseSalaryConfig} د.ك × نسبة التواجد " . round($segRatio * 100, 1) . "% = {$proratedBaseSalary} د.ك"
             ]
         ];
 
+        if ($paidLeaveDays > 0) {
+            $details[] = [
+                'label' => "إجازات مدفوعة الأجر ({$paidLeaveDays} يوم مدفوع بالكامل)",
+                'count' => $paidLeaveDays,
+                'unit' => 'day',
+                'type' => 'paid_leave',
+                'rate' => $dailyBaseRate,
+                'amount' => 0.0,
+                'formula' => "{$paidLeaveDays} أيام إجازة مدفوعة (محسوبة ضمن أصل الـ {$proratedRequiredWorkDays} يوم عمل)"
+            ];
+        }
+
+        if ($absenceDays > 0) {
+            $details[] = [
+                'label' => "خصم أيام الغياب غير المدفوعة ({$absenceDays} أيام غياب من أصل {$proratedRequiredWorkDays} يوم عمل مطلوب)",
+                'count' => $absenceDays,
+                'unit' => 'day',
+                'type' => 'absence',
+                'rate' => $dailyBaseRate,
+                'amount' => -$absenceDeduction,
+                'formula' => "غياب {$absenceDays} أيام × {$dailyBaseRate} د.ك/يوم = -{$absenceDeduction} د.ك"
+            ];
+        }
+
         if ($proratedTarget > 0) {
             if ($deficitDeduction > 0) {
                 $details[] = [
                     'label' => "خصم النقص في التارغت (مستهدف: {$proratedTarget} | منفذ: {$ordersCount})",
+                    'count' => ($proratedTarget - $ordersCount),
+                    'orders' => ($proratedTarget - $ordersCount),
+                    'unit' => 'order',
+                    'type' => 'deficit',
+                    'rate' => (float)$deficitRateConfig,
                     'amount' => -$deficitDeduction,
                     'formula' => "نقص " . ($proratedTarget - $ordersCount) . " طلب × {$deficitRateConfig} د.ك = -{$deficitDeduction} د.ك"
                 ];
             } elseif ($surplusBonus > 0) {
                 $details[] = [
                     'label' => "بونص تجاوز التارغت (مستهدف: {$proratedTarget} | منفذ: {$ordersCount})",
+                    'count' => ($ordersCount - $proratedTarget),
+                    'orders' => ($ordersCount - $proratedTarget),
+                    'unit' => 'order',
+                    'type' => 'surplus',
+                    'rate' => $surplusRate,
                     'amount' => $surplusBonus,
-                    'formula' => "زيادة " . ($ordersCount - $proratedTarget) . " طلب × {$deficitRateConfig} د.ك = {$surplusBonus} د.ك"
+                    'formula' => "زيادة " . ($ordersCount - $proratedTarget) . " طلب × {$surplusRate} د.ك = {$surplusBonus} د.ك"
                 ];
             }
         }
@@ -2155,7 +2446,7 @@ class PayrollController extends Controller
             'orders_bonus' => 0.0,
             'deficit_deduction' => $deficitDeduction,
             'surplus_bonus' => $surplusBonus,
-            'absence_deduction' => 0.0,
+            'absence_deduction' => $absenceDeduction,
             'gross_contract_earnings' => $gross,
             'calculation_details' => $details
         ];
@@ -2414,6 +2705,73 @@ class PayrollController extends Controller
         ];
     }
 
+    private static function calculateTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId)
+    {
+        $tiers = [];
+        if ($override) {
+            $cRules = is_string($override->custom_pricing_rules) ? json_decode($override->custom_pricing_rules, true) : $override->custom_pricing_rules;
+            if (is_array($cRules) && isset($cRules['tiers']) && is_array($cRules['tiers']) && count($cRules['tiers']) > 0) {
+                $tiers = $cRules['tiers'];
+            } elseif (is_array($override->pricing_rules) && isset($override->pricing_rules['tiers'])) {
+                $tiers = $override->pricing_rules['tiers'];
+            }
+        }
+
+        if (empty($tiers)) {
+            $driverRules = is_string($contract->driver_pricing_rules) ? json_decode($contract->driver_pricing_rules, true) : $contract->driver_pricing_rules;
+            if (is_array($driverRules)) {
+                if ($vtId && isset($driverRules[$vtId]['tiers'])) {
+                    $tiers = $driverRules[$vtId]['tiers'];
+                } else {
+                    $firstKey = array_key_first($driverRules);
+                    if ($firstKey !== null && isset($driverRules[$firstKey]['tiers'])) {
+                        $tiers = $driverRules[$firstKey]['tiers'];
+                    }
+                }
+            }
+        }
+
+        $ordersCount = $empLogs->sum('orders_count');
+        $rate = 0.0;
+        $tierLabel = "الأساسية";
+
+        if (!empty($tiers)) {
+            foreach ($tiers as $t) {
+                $min = (int) ($t['min'] ?? 1);
+                $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int)$t['max'] : INF;
+                if ($ordersCount >= $min && $ordersCount <= $max) {
+                    $rate = (float) ($t['price'] ?? 0.0);
+                    $maxText = $max === INF ? 'فأكثر' : "إلى {$max}";
+                    $tierLabel = "الشريحة ({$min}-{$maxText} طلب)";
+                    break;
+                }
+            }
+        }
+
+        $gross = round($ordersCount * $rate, 3);
+
+        $details = [
+            [
+                'label' => "عمولة الطلبات حسب الشريحة - {$tierLabel}",
+                'orders' => $ordersCount,
+                'rate' => $rate,
+                'amount' => $gross,
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$gross} د.ك"
+            ]
+        ];
+
+        return [
+            'base_salary' => 0.0,
+            'orders_count' => $ordersCount,
+            'orders_bonus' => $gross,
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => $gross,
+            'calculation_details' => $details
+        ];
+    }
+
     private static function getPaymentMethodLabel($method)
     {
         return match ($method) {
@@ -2422,6 +2780,7 @@ class PayrollController extends Controller
             'hybrid' => 'هجين (Fixed + Commission)',
             'zones' => 'فئات (Zones)',
             'zones_tiers' => 'شرائح الفئات (Zones + Tiers)',
+            'tiers' => 'شرائح (Tiers)',
             default => $method
         };
     }
