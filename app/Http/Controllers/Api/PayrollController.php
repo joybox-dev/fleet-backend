@@ -2350,7 +2350,7 @@ class PayrollController extends Controller
     {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
         
-        $effectiveRatio = $override ? 1.0 : $segRatio;
+        $effectiveRatio = $segRatio;
         $baseSalaryConfig = $override ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
         $targetConfig = $override ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
         $deficitRateConfig = $override ? ($override->fixed_deficit_rate ?? 0) : ($vtPricing['fixed_deficit_rate'] ?? 0);
