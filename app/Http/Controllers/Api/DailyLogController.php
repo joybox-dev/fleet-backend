@@ -164,6 +164,28 @@ class DailyLogController extends Controller
             return response()->json(['message' => 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
         }
 
+        // Validate driver assignment on this contract for the log_date
+        $logDate = $validated['log_date'];
+        $contractId = $validated['contract_id'];
+        $employeeId = $validated['employee_id'];
+
+        $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employeeId)
+            ->where('contract_id', $contractId)
+            ->where('start_date', '<=', $logDate)
+            ->where(function ($q) use ($logDate) {
+                $q->whereNull('end_date')
+                  ->orWhere('end_date', '>=', $logDate);
+            })
+            ->exists();
+
+        if (!$isAssigned) {
+            return response()->json([
+                'message' => 'لا يمكن إدخال أو تعديل سجل يومي للسائق في تاريخ خارج فترة تعيينه الرسمية على هذا العقد.',
+                'errors' => ['log_date' => ['السائق غير معين على هذا العقد في هذا التاريخ.']]
+            ], 422);
+        }
+
         // Auto-update existing record if log already exists for same employee and date (matching vehicle, contract, or employee+date)
         $existingLog = DailyLog::withTrashed()->withoutGlobalScopes()
             ->where('employee_id', $validated['employee_id'])
@@ -349,6 +371,19 @@ class DailyLogController extends Controller
             $logDate = $logData['log_date'] ?? null;
             $contractId = $logData['contract_id'] ?? null;
             if (!$employeeId || !$logDate || !$contractId) continue;
+
+            // Check if driver is assigned to contract on this logDate
+            $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
+                ->where('employee_id', $employeeId)
+                ->where('contract_id', $contractId)
+                ->where('start_date', '<=', $logDate)
+                ->where(function ($q) use ($logDate) {
+                    $q->whereNull('end_date')
+                      ->orWhere('end_date', '>=', $logDate);
+                })
+                ->exists();
+
+            if (!$isAssigned) continue;
 
             $vehicleId = $logData['vehicle_id'] ?? 1;
             $ordersCount = (int) ($logData['orders_count'] ?? 0);
