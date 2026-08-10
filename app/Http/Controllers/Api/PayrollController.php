@@ -1875,6 +1875,10 @@ class PayrollController extends Controller
      */
     public function contractSheet(Request $request, $contractId): JsonResponse
     {
+        if (!$request->user()->can('contract_payroll.view') && !$request->user()->can('payroll.view') && !$request->user()->can('contracts.view')) {
+            return response()->json(['message' => 'غير مصرح لك باستعراض كشف رواتب العقود.'], 403);
+        }
+
         $year = (int) $request->input('year', date('Y'));
         $month = (int) $request->input('month', date('n'));
         $startDate = sprintf('%04d-%02d-01', $year, $month);
@@ -2120,6 +2124,10 @@ class PayrollController extends Controller
      */
     public function approveContractSheet(Request $request, $contractId): JsonResponse
     {
+        if (!$request->user()->can('contract_payroll.approve') && !$request->user()->can('contract_payroll.edit') && !$request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك باعتماد كشف رواتب العقد.'], 403);
+        }
+
         $contract = Contract::findOrFail($contractId);
         $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
         $year = (int) $request->input('year', date('Y'));

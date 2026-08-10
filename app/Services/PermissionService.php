@@ -52,6 +52,7 @@ class PermissionService
 
         // Finance
         'payroll.view',       'payroll.create',    'payroll.edit',
+        'contract_payroll.view','contract_payroll.create','contract_payroll.edit','contract_payroll.approve','contract_payroll.delete',
         'salary_advances.view','salary_advances.create','salary_advances.edit',
         'op_advances.view',   'op_advances.create', 'op_advances.edit', 'op_advances.delete',
         'reports.view',
@@ -83,6 +84,7 @@ class PermissionService
             'maintenance.view' => true,'maintenance.create' => true,'maintenance.edit' => true,'maintenance.delete' => true,
             'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true, 'vehicle_expenses.delete' => true,
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
+            'contract_payroll.view' => true, 'contract_payroll.create' => true, 'contract_payroll.edit' => true, 'contract_payroll.approve' => true, 'contract_payroll.delete' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
             'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true,
             'reports.view' => true,
@@ -106,6 +108,7 @@ class PermissionService
             'vehicle_expenses.view' => true, 'vehicle_expenses.create' => true, 'vehicle_expenses.edit' => true,
             'driver_expenses.view' => true, 'driver_expenses.create' => true, 'driver_expenses.edit' => true,
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
+            'contract_payroll.view' => true, 'contract_payroll.create' => true, 'contract_payroll.edit' => true, 'contract_payroll.approve' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true,
             'reports.view' => true,
         ],
