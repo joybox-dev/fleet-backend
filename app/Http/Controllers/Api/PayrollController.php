@@ -2430,6 +2430,21 @@ class PayrollController extends Controller
             ];
         }
 
+        $ordersCount = $empLogs->sum('orders_count');
+        $deficitDeduction = 0.0;
+        $surplusBonus = 0.0;
+
+        if ($proratedTarget > 0) {
+            if ($ordersCount < $proratedTarget) {
+                $deficitDeduction = round(($proratedTarget - $ordersCount) * (float)$deficitRateConfig, 3);
+            } else {
+                $surplusRate = (float) ($vtPricing['fixed_surplus_rate'] ?? $deficitRateConfig);
+                $surplusBonus = round(($ordersCount - $proratedTarget) * $surplusRate, 3);
+            }
+        }
+
+        $gross = round($proratedBaseSalary - $absenceDeduction - $deficitDeduction + $surplusBonus, 3);
+
         if ($proratedTarget > 0) {
             if ($deficitDeduction > 0) {
                 $details[] = [
