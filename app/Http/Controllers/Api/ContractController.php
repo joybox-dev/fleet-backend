@@ -69,6 +69,7 @@ class ContractController extends Controller
             'expected_total_profit'      => 'nullable|numeric|min:0',
             
             'default_required_valid_days' => 'nullable|integer|min:0',
+            'default_required_work_days'  => 'nullable|integer|min:1',
             
             'start_date'     => 'required|date',
             'end_date'       => 'nullable|date|after:start_date',
@@ -162,6 +163,7 @@ class ContractController extends Controller
             'expected_total_profit'      => 'nullable|numeric|min:0',
             
             'default_required_valid_days' => 'nullable|integer|min:0',
+            'default_required_work_days'  => 'nullable|integer|min:1',
             
             'start_date'     => 'sometimes|date',
             'end_date'       => 'nullable|date',
