@@ -38,8 +38,11 @@ class ContractDashboardController extends Controller
         $endDateStr = $endDate->toDateString();
 
         // 1. Employee Count and Deficit
-        $activeAssignments = $contract->assignments()
-            ->with(['overrides'])
+        $activeAssignments = \App\Models\ContractAssignment::withoutGlobalScopes()
+            ->where('contract_id', $contract->id)
+            ->with(['overrides' => function($q) {
+                $q->withoutGlobalScopes();
+            }])
             ->where('start_date', '<=', $endDateStr)
             ->where(function ($q) use ($startDateStr) {
                 $q->whereNull('end_date')
