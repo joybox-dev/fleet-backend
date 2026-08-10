@@ -2349,20 +2349,17 @@ class PayrollController extends Controller
     private static function calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $segRatio, $assignedDays, $vtId)
     {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
-        
-        $effectiveRatio = $segRatio;
-        $baseSalaryConfig = $override ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
-        $targetConfig = $override ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
-        $deficitRateConfig = $override ? ($override->fixed_deficit_rate ?? 0) : ($vtPricing['fixed_deficit_rate'] ?? 0);
+        $isOverride = !empty($override);
 
-        $proratedBaseSalary = round((float)$baseSalaryConfig * $effectiveRatio, 3);
-        $proratedTarget = (int) round((float)$targetConfig * $effectiveRatio);
+        $baseSalaryConfig = $isOverride ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
+        $targetConfig = $isOverride ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
+        $deficitRateConfig = $isOverride ? ($override->fixed_deficit_rate ?? 0) : ($vtPricing['fixed_deficit_rate'] ?? 0);
 
-        // Required work days in contract (default 26 days)
+        // Required work days and divisor
         $requiredWorkDays = (int) ($contract->default_required_work_days ?? 26);
-        $proratedRequiredWorkDays = (int) round($requiredWorkDays * $segRatio);
+        $absenceDivisor = (int) ($contract->default_absence_divisor ?? $requiredWorkDays);
+        if ($absenceDivisor <= 0) $absenceDivisor = 26;
 
-        // Count actual work days vs paid leave days
         $actualWorkDays = $empLogs->filter(function($log) {
             return ($log->orders_count > 0) || ($log->cash_collected > 0) || ($log->rejected_orders_count > 0) || ($log->driver_status === 'working');
         })->count();
@@ -2372,32 +2369,42 @@ class PayrollController extends Controller
         })->count();
 
         $creditedDays = $actualWorkDays + $paidLeaveDays;
-        $absenceDays = max(0, $proratedRequiredWorkDays - $creditedDays);
-        $dailyBaseRate = $requiredWorkDays > 0 ? round((float)$baseSalaryConfig / $requiredWorkDays, 3) : 0.0;
-        $absenceDeduction = round($absenceDays * $dailyBaseRate, 3);
 
-        $ordersCount = $empLogs->sum('orders_count');
-        $deficitDeduction = 0.0;
-        $surplusBonus = 0.0;
+        if ($isOverride) {
+            // Override salary is a custom explicit fixed amount; proration ratio is NOT applied to base salary, but absence is deducted
+            $proratedBaseSalary = round((float)$baseSalaryConfig, 3);
+            $proratedTarget = (int) $targetConfig;
 
-        if ($proratedTarget > 0) {
-            if ($ordersCount < $proratedTarget) {
-                $deficitDeduction = round(($proratedTarget - $ordersCount) * (float)$deficitRateConfig, 3);
-            } else {
-                $surplusRate = (float) ($vtPricing['fixed_surplus_rate'] ?? $deficitRateConfig);
-                $surplusBonus = round(($ordersCount - $proratedTarget) * $surplusRate, 3);
-            }
+            $proratedRequiredDays = (int) round($requiredWorkDays * $segRatio);
+            $absenceDays = max(0, $proratedRequiredDays - $creditedDays);
+            $dailyBaseRate = round((float)$baseSalaryConfig / $absenceDivisor, 3);
+            $absenceDeduction = round($absenceDays * $dailyBaseRate, 3);
+
+            $details = [
+                [
+                    'label' => 'الراتب الثابت المخصص (استثناء مالي)',
+                    'amount' => $proratedBaseSalary,
+                    'formula' => "مبلغ استثناء مالي مخصص ثنائي = {$baseSalaryConfig} د.ك"
+                ]
+            ];
+        } else {
+            $effectiveRatio = $segRatio;
+            $proratedBaseSalary = round((float)$baseSalaryConfig * $effectiveRatio, 3);
+            $proratedTarget = (int) round((float)$targetConfig * $effectiveRatio);
+
+            $proratedRequiredDays = (int) round($requiredWorkDays * $segRatio);
+            $absenceDays = max(0, $proratedRequiredDays - $creditedDays);
+            $dailyBaseRate = round((float)$baseSalaryConfig / $absenceDivisor, 3);
+            $absenceDeduction = round($absenceDays * $dailyBaseRate, 3);
+
+            $details = [
+                [
+                    'label' => 'الراتب الثابت الأساسي (مجزأ)',
+                    'amount' => $proratedBaseSalary,
+                    'formula' => "الراتب الأساسي {$baseSalaryConfig} د.ك × نسبة التواجد " . round($segRatio * 100, 1) . "% = {$proratedBaseSalary} د.ك"
+                ]
+            ];
         }
-
-        $gross = round($proratedBaseSalary - $absenceDeduction - $deficitDeduction + $surplusBonus, 3);
-
-        $details = [
-            [
-                'label' => 'الراتب الثابت الأساسي (مجزأ)',
-                'amount' => $proratedBaseSalary,
-                'formula' => "الراتب الأساسي {$baseSalaryConfig} د.ك × نسبة التواجد " . round($segRatio * 100, 1) . "% = {$proratedBaseSalary} د.ك"
-            ]
-        ];
 
         if ($paidLeaveDays > 0) {
             $details[] = [
@@ -2407,13 +2414,13 @@ class PayrollController extends Controller
                 'type' => 'paid_leave',
                 'rate' => $dailyBaseRate,
                 'amount' => 0.0,
-                'formula' => "{$paidLeaveDays} أيام إجازة مدفوعة (محسوبة ضمن أصل الـ {$proratedRequiredWorkDays} يوم عمل)"
+                'formula' => "{$paidLeaveDays} أيام إجازة مدفوعة (محسوبة ضمن أصل الـ {$proratedRequiredDays} يوم عمل)"
             ];
         }
 
         if ($absenceDays > 0) {
             $details[] = [
-                'label' => "خصم أيام الغياب غير المدفوعة ({$absenceDays} أيام غياب من أصل {$proratedRequiredWorkDays} يوم عمل مطلوب)",
+                'label' => "خصم أيام الغياب غير المدفوعة ({$absenceDays} أيام غياب من أصل {$proratedRequiredDays} يوم عمل مطلوب)",
                 'count' => $absenceDays,
                 'unit' => 'day',
                 'type' => 'absence',
