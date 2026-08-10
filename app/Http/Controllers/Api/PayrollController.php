@@ -2342,12 +2342,13 @@ class PayrollController extends Controller
     {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) ? $contract->driver_pricing_rules[$vtId] : [];
         
-        $baseSalaryConfig = $override ? ($override->fixed_amount ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
-        $targetConfig = $override ? ($override->fixed_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
+        $effectiveRatio = $override ? 1.0 : $segRatio;
+        $baseSalaryConfig = $override ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0) : ($vtPricing['fixed_amount'] ?? $contract->default_fixed_salary ?? $employee->salary ?? 0);
+        $targetConfig = $override ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0) : ($vtPricing['fixed_target'] ?? 0);
         $deficitRateConfig = $override ? ($override->fixed_deficit_rate ?? 0) : ($vtPricing['fixed_deficit_rate'] ?? 0);
 
-        $proratedBaseSalary = round((float)$baseSalaryConfig * $segRatio, 3);
-        $proratedTarget = (int) round((float)$targetConfig * $segRatio);
+        $proratedBaseSalary = round((float)$baseSalaryConfig * $effectiveRatio, 3);
+        $proratedTarget = (int) round((float)$targetConfig * $effectiveRatio);
 
         // Required work days in contract (default 26 days)
         $requiredWorkDays = (int) ($contract->default_required_work_days ?? 26);
