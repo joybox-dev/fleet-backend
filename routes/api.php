@@ -233,6 +233,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('contract-sheet/{contract}', [PayrollController::class, 'contractSheet']);
             Route::post('contract-sheet/{contract}/approve', [PayrollController::class, 'approveContractSheet']);
             Route::post('contract-sheet/{contract}/unapprove', [PayrollController::class, 'unapproveContractSheet']);
+            Route::get('contract-sheet/{contract}/adjustments', [PayrollController::class, 'getContractAdjustments']);
+            Route::post('contract-sheet/{contract}/adjustments', [PayrollController::class, 'storeContractAdjustment']);
+            Route::delete('contract-sheet/adjustments/{adjustment}', [PayrollController::class, 'destroyContractAdjustment']);
             Route::get('{year}/{month}', [PayrollController::class, 'show']);
             Route::get('{year}/{month}/{employee}', [PayrollController::class, 'slip']);
             Route::post('{year}/{month}/approve', [PayrollController::class, 'approve']);

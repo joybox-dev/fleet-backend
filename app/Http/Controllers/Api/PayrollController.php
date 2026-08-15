@@ -1950,10 +1950,20 @@ class PayrollController extends Controller
             ->get()
             ->groupBy('employee_id');
 
+        // Fetch manual contract payroll adjustments
+        $allAdjustments = \App\Models\ContractPayrollAdjustment::withoutGlobalScopes()
+            ->where('contract_id', $contract->id)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->with('createdBy:id,name')
+            ->get()
+            ->groupBy('employee_id');
+
         $driversResult = [];
         $totalOrdersSum = 0;
         $totalEarningsSum = 0.0;
         $totalDeductionsSum = 0.0;
+        $totalAdjustmentsSum = 0.0;
         $totalNetSum = 0.0;
 
         foreach ($assignments as $assignment) {
@@ -2024,12 +2034,30 @@ class PayrollController extends Controller
                 $vtId
             );
 
-            // Deductions calculation for contract level (Traffic Violations ONLY - Salary Advances are deducted in main monthly payroll)
+            // Deductions calculation for contract level (Traffic Violations ONLY)
             $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction_amount');
             $totalContractDeductions = $violSum;
 
+            // Manual adjustments calculation for this driver
+            $empAdjustments = $allAdjustments->get($empId, collect());
+            $additionsSum = (float) $empAdjustments->where('type', 'addition')->sum('amount');
+            $deductionsSum = (float) $empAdjustments->where('type', 'deduction')->sum('amount');
+            $netAdjustment = round($additionsSum - $deductionsSum, 3);
+
+            $calcDetails = $calcResult['calculation_details'] ?? [];
+            foreach ($empAdjustments as $adj) {
+                $isAdd = $adj->type === 'addition';
+                $amt = (float) $adj->amount;
+                $signedAmt = $isAdd ? $amt : -$amt;
+                $calcDetails[] = [
+                    'label' => ($isAdd ? 'زيادة / مكافأة يدوية' : 'خصم يدوي') . " ({$adj->reason})",
+                    'amount' => $signedAmt,
+                    'formula' => ($isAdd ? '+' : '-') . number_format($amt, 3) . " د.ك ({$adj->reason})"
+                ];
+            }
+
             $grossEarnings = (float) ($calcResult['gross_contract_earnings'] ?? 0.0);
-            $netPayout = round($grossEarnings - $totalContractDeductions, 3);
+            $netPayout = round($grossEarnings - $totalContractDeductions + $netAdjustment, 3);
 
             $actualWorkDays = $empLogs->filter(function($log) {
                 return ($log->orders_count > 0) || ($log->cash_collected > 0) || ($log->rejected_orders_count > 0) || ($log->driver_status === 'working');
@@ -2053,18 +2081,32 @@ class PayrollController extends Controller
                 'absence_deduction' => $calcResult['absence_deduction'] ?? 0.0,
                 'gross_contract_earnings' => $grossEarnings,
                 'violations_deduction' => $violSum,
+                'manual_adjustments' => [
+                    'total' => $netAdjustment,
+                    'additions' => $additionsSum,
+                    'deductions' => $deductionsSum,
+                    'items' => $empAdjustments->map(fn($a) => [
+                        'id' => $a->id,
+                        'type' => $a->type,
+                        'amount' => (float)$a->amount,
+                        'reason' => $a->reason,
+                        'created_at' => $a->created_at?->toDateTimeString(),
+                        'created_by_name' => $a->createdBy?->name,
+                    ])->values()->toArray()
+                ],
                 'global_deductions' => [
                     'advances' => 0.0,
                     'violations' => $violSum,
                     'total' => $totalContractDeductions
                 ],
                 'net_payout' => $netPayout,
-                'calculation_details' => $calcResult['calculation_details'] ?? []
+                'calculation_details' => $calcDetails
             ];
 
             $totalOrdersSum += ($calcResult['orders_count'] ?? $empLogs->sum('orders_count'));
             $totalEarningsSum += $grossEarnings;
             $totalDeductionsSum += $totalContractDeductions;
+            $totalAdjustmentsSum += $netAdjustment;
             $totalNetSum += $netPayout;
         }
 
@@ -2097,6 +2139,7 @@ class PayrollController extends Controller
                 'total_orders' => $totalOrdersSum,
                 'total_gross_earnings' => round($totalEarningsSum, 3),
                 'total_violations_deductions' => round($totalDeductionsSum, 3),
+                'total_manual_adjustments' => round($totalAdjustmentsSum, 3),
                 'total_global_deductions' => round($totalDeductionsSum, 3),
                 'total_net_payout' => round($totalNetSum, 3)
             ],
@@ -2181,6 +2224,103 @@ class PayrollController extends Controller
     }
 
     /**
+     * GET /api/payroll/contract-sheet/{contract}/adjustments
+     */
+    public function getContractAdjustments(Request $request, $contractId): JsonResponse
+    {
+        $contract = Contract::findOrFail($contractId);
+        $year = (int) $request->input('year', date('Y'));
+        $month = (int) $request->input('month', date('n'));
+
+        $adjustments = \App\Models\ContractPayrollAdjustment::withoutGlobalScopes()
+            ->where('contract_id', $contract->id)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->with(['employee:id,name,employee_number', 'createdBy:id,name'])
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json($adjustments);
+    }
+
+    /**
+     * POST /api/payroll/contract-sheet/{contract}/adjustments
+     */
+    public function storeContractAdjustment(Request $request, $contractId): JsonResponse
+    {
+        if (!$request->user()->can('contract_payroll.edit') && !$request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بإضافة تسويات رواتب.'], 403);
+        }
+
+        $contract = Contract::findOrFail($contractId);
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+
+        $validated = $request->validate([
+            'employee_id' => 'required|exists:employees,id',
+            'year'        => 'required|integer|min:2020|max:2030',
+            'month'       => 'required|integer|min:1|max:12',
+            'type'        => 'required|in:addition,deduction',
+            'amount'      => 'required|numeric|min:0.001',
+            'reason'      => 'required|string|max:500',
+        ]);
+
+        // Check if contract is already approved/frozen for this month
+        $approvedRun = ContractPayrollRun::where('company_id', $companyId)
+            ->where('contract_id', $contract->id)
+            ->where('year', $validated['year'])
+            ->where('month', $validated['month'])
+            ->where('status', 'approved')
+            ->first();
+
+        if ($approvedRun) {
+            return response()->json(['message' => 'لا يمكن إضافة تسوية لأن كشف رواتب العقد معتمد ومجمد.'], 422);
+        }
+
+        $adjustment = \App\Models\ContractPayrollAdjustment::create([
+            'company_id'  => $companyId,
+            'contract_id' => $contract->id,
+            'employee_id' => $validated['employee_id'],
+            'year'        => $validated['year'],
+            'month'       => $validated['month'],
+            'type'        => $validated['type'],
+            'amount'      => $validated['amount'],
+            'reason'      => $validated['reason'],
+            'created_by'  => $request->user()?->id,
+        ]);
+
+        return response()->json([
+            'message' => 'تمت إضافة التسوية بنجاح.',
+            'adjustment' => $adjustment->load(['employee:id,name,employee_number', 'createdBy:id,name'])
+        ], 201);
+    }
+
+    /**
+     * DELETE /api/payroll/contract-sheet/adjustments/{adjustment}
+     */
+    public function destroyContractAdjustment(Request $request, $adjustmentId): JsonResponse
+    {
+        if (!$request->user()->can('contract_payroll.edit') && !$request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بحذف تسويات رواتب.'], 403);
+        }
+
+        $adjustment = \App\Models\ContractPayrollAdjustment::findOrFail($adjustmentId);
+        
+        $approvedRun = ContractPayrollRun::where('contract_id', $adjustment->contract_id)
+            ->where('year', $adjustment->year)
+            ->where('month', $adjustment->month)
+            ->where('status', 'approved')
+            ->first();
+
+        if ($approvedRun) {
+            return response()->json(['message' => 'لا يمكن حذف التسوية لأن الكشف معتمد ومجمد.'], 422);
+        }
+
+        $adjustment->delete();
+
+        return response()->json(['message' => 'تم حذف التسوية بنجاح.']);
+    }
+
+    /**
      * GET /api/payroll/consolidated/{year}/{month}
      * Consolidated Monthly Payroll Sheet based strictly on Approved Contract Payroll Runs.
      */
@@ -2228,6 +2368,8 @@ class PayrollController extends Controller
                 $empId = $d['employee_id'];
                 if (!$empId) continue;
 
+                $adjTotal = (float) ($d['manual_adjustments']['total'] ?? 0.0);
+
                 if (!isset($consolidatedDrivers[$empId])) {
                     $consolidatedDrivers[$empId] = [
                         'employee_id' => $empId,
@@ -2238,6 +2380,7 @@ class PayrollController extends Controller
                         'orders_count' => $d['orders_count'] ?? 0,
                         'gross_contract_earnings' => (float) ($d['gross_contract_earnings'] ?? 0.0),
                         'violations_deduction' => (float) ($d['violations_deduction'] ?? 0.0),
+                        'manual_adjustments' => $adjTotal,
                         'contracts_worked' => []
                     ];
                 } else {
@@ -2246,6 +2389,7 @@ class PayrollController extends Controller
                     $consolidatedDrivers[$empId]['orders_count'] += ($d['orders_count'] ?? 0);
                     $consolidatedDrivers[$empId]['gross_contract_earnings'] += (float) ($d['gross_contract_earnings'] ?? 0.0);
                     $consolidatedDrivers[$empId]['violations_deduction'] += (float) ($d['violations_deduction'] ?? 0.0);
+                    $consolidatedDrivers[$empId]['manual_adjustments'] += $adjTotal;
                 }
 
                 $consolidatedDrivers[$empId]['contracts_worked'][] = [
@@ -2256,6 +2400,7 @@ class PayrollController extends Controller
                     'orders_count' => $d['orders_count'] ?? 0,
                     'gross' => (float) ($d['gross_contract_earnings'] ?? 0.0),
                     'violations' => (float) ($d['violations_deduction'] ?? 0.0),
+                    'manual_adjustments' => $adjTotal,
                     'net' => (float) ($d['net_payout'] ?? 0.0),
                     'calculation_details' => $d['calculation_details'] ?? []
                 ];
@@ -2281,6 +2426,7 @@ class PayrollController extends Controller
         $totalOrdersSum = 0;
         $totalGrossSum = 0.0;
         $totalViolationsSum = 0.0;
+        $totalAdjustmentsSum = 0.0;
         $totalAdvancesSum = 0.0;
         $totalFinalNetSum = 0.0;
 
@@ -2288,15 +2434,18 @@ class PayrollController extends Controller
             $advDeduction = round((float)($advancesMap[$empId] ?? 0.0), 3);
             $gross = round($d['gross_contract_earnings'], 3);
             $viols = round($d['violations_deduction'], 3);
-            $finalNet = round($gross - $viols - $advDeduction, 3);
+            $adj = round($d['manual_adjustments'] ?? 0.0, 3);
+            $finalNet = round($gross - $viols + $adj - $advDeduction, 3);
 
             $d['advances_deduction'] = $advDeduction;
+            $d['manual_adjustments_total'] = $adj;
             $d['final_net_payout'] = $finalNet;
             $driversList[] = $d;
 
             $totalOrdersSum += $d['orders_count'];
             $totalGrossSum += $gross;
             $totalViolationsSum += $viols;
+            $totalAdjustmentsSum += $adj;
             $totalAdvancesSum += $advDeduction;
             $totalFinalNetSum += $finalNet;
         }
@@ -2314,6 +2463,7 @@ class PayrollController extends Controller
                 'total_orders' => $totalOrdersSum,
                 'total_gross_earnings' => round($totalGrossSum, 3),
                 'total_violations_deductions' => round($totalViolationsSum, 3),
+                'total_manual_adjustments' => round($totalAdjustmentsSum, 3),
                 'total_advances_deductions' => round($totalAdvancesSum, 3),
                 'total_final_net_payout' => round($totalFinalNetSum, 3)
             ],
@@ -2331,8 +2481,6 @@ class PayrollController extends Controller
             'drivers' => $driversList
         ]);
     }
-
-
 
     private static function getPaymentMethodLabel($method)
     {
