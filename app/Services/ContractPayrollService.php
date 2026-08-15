@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\ContractAssignment;
-use App\Models\ContractDriverOverride;
+use App\Models\DriverContractOverride;
 use App\Models\Employee;
 use Illuminate\Support\Collection;
 
@@ -57,7 +57,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -86,7 +86,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -195,7 +195,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -240,7 +240,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -306,7 +306,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -399,7 +399,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
@@ -508,7 +508,7 @@ class ContractPayrollService
         Employee $employee,
         Contract $contract,
         ContractAssignment $assignment,
-        ?ContractDriverOverride $override,
+        ?DriverContractOverride $override,
         Collection $empLogs,
         ?int $vtId = null
     ): array {
