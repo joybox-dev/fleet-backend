@@ -15,8 +15,10 @@ class ContractController extends Controller
     public function index(Request $request): JsonResponse
     {
         $allowedIds = ContractScopeService::getAllocatedContractIds();
+        $startOfMonth = now()->startOfMonth()->toDateString();
+        $endOfMonth = now()->endOfMonth()->toDateString();
 
-        $contracts = Contract::with('client:id,name')
+        $query = Contract::with(['client:id,name', 'vehicleType:id,name'])
             ->when($allowedIds !== null, fn($q) => $q->whereIn('id', $allowedIds))
             ->when($request->client_id, fn($q) => $q->where('client_id', $request->client_id))
             ->when($request->status, fn($q) => $q->where('status', $request->status))
@@ -25,8 +27,19 @@ class ContractController extends Controller
                 $query->where('vehicle_type_id', $request->vehicle_type_id)
                       ->orWhereNull('vehicle_type_id');
             }))
-            ->orderByDesc('start_date')
-            ->paginate(50);
+            ->withCount([
+                'assignments as active_drivers_count' => fn($q) => $q->where('status', 'active')
+            ])
+            ->withSum([
+                'dailyLogs as current_month_orders' => fn($q) => $q->whereBetween('log_date', [$startOfMonth, $endOfMonth])
+            ], 'orders_count')
+            ->withSum([
+                'dailyLogs as current_month_cash' => fn($q) => $q->whereBetween('log_date', [$startOfMonth, $endOfMonth])
+            ], 'cash_collected')
+            ->orderByRaw("FIELD(status, 'active', 'suspended', 'ended') ASC")
+            ->orderBy('name');
+
+        $contracts = $query->paginate(100);
 
         return response()->json($contracts);
     }
