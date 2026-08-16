@@ -89,8 +89,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('vehicles/{vehicle}', [VehicleController::class, 'show']);
         Route::post('vehicles/{vehicle}/assign', [VehicleController::class, 'assign']);
         Route::post('vehicles/{vehicle}/unassign', [VehicleController::class, 'unassign']);
-        Route::patch('vehicles/{vehicle}/odometer', [VehicleController::class, 'updateOdometer']);
         Route::get('vehicle-types', [VehicleTypeController::class, 'index']);
+        Route::apiResource('vehicle-types', VehicleTypeController::class)->except(['index']);
         Route::get('vehicle-expense-types', [VehicleExpenseTypeController::class, 'index']);
         Route::apiResource('vehicle-expense-types', VehicleExpenseTypeController::class)->except(['index', 'show']);
 

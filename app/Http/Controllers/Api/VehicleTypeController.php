@@ -39,6 +39,22 @@ class VehicleTypeController extends Controller
         return response()->json($type, 201);
     }
 
+    public function show(VehicleType $vehicleType): JsonResponse
+    {
+        return response()->json($vehicleType);
+    }
+
+    public function update(Request $request, VehicleType $vehicleType): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'name_ar' => 'nullable|string|max:255',
+        ]);
+
+        $vehicleType->update($validated);
+        return response()->json($vehicleType);
+    }
+
     public function destroy(VehicleType $vehicleType): JsonResponse
     {
         if ($vehicleType->vehicles()->exists()) {
