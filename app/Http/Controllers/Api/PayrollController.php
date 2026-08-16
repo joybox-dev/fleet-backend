@@ -2413,12 +2413,13 @@ class PayrollController extends Controller
         if (!empty($allEmpIds)) {
             $advances = \App\Models\SalaryAdvance::withoutGlobalScopes()
                 ->whereIn('employee_id', $allEmpIds)
-                ->where('status', 'approved')
-                ->whereBetween('request_date', [$startDate, $endDate])
+                ->where('status', 'active')
+                ->whereDate('advance_date', '<=', $endDate)
                 ->get();
 
             foreach ($advances as $adv) {
-                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + (float)$adv->amount;
+                $dedAmt = min((float)($adv->monthly_installment ?? $adv->amount), (float)($adv->remaining_balance ?? $adv->amount));
+                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + (float)$dedAmt;
             }
         }
 
