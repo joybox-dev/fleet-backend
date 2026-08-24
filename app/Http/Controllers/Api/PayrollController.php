@@ -10,6 +10,7 @@ use App\Models\ContractAssignment;
 use App\Models\ContractMandatoryDay;
 use App\Models\ContractMonthlyParameter;
 use App\Models\ContractPayrollRun;
+use App\Models\ConsolidatedPayrollRun;
 use App\Models\CurrencyExchangeRate;
 use App\Models\CustodyItem;
 use App\Models\DailyLog;
@@ -1937,13 +1938,10 @@ class PayrollController extends Controller
             ->get()
             ->groupBy('employee_id');
 
-        // Fetch global deductions (advances & violations)
-        $allAdvances = \App\Models\SalaryAdvance::withoutGlobalScopes()
-            ->whereIn('employee_id', $employeeIds)
-            ->where('status', 'approved')
-            ->get()
-            ->groupBy('employee_id');
-
+        // Traffic violations are the only automatic deduction applied at contract level.
+        // Salary advances are deliberately left out here and resolved once per employee in
+        // consolidatedSheet(), so a driver working under several contracts in the same month
+        // is never charged the same instalment more than once.
         $allViolations = \App\Models\Violation::withoutGlobalScopes()
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('violation_date', [$startDate, $endDate])
@@ -2034,8 +2032,9 @@ class PayrollController extends Controller
                 $vtId
             );
 
-            // Deductions calculation for contract level (Traffic Violations ONLY)
-            $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction_amount');
+            // Deductions calculation for contract level (Traffic Violations ONLY).
+            // `driver_deduction` mirrors `driver_share`, so a company-liable fine is 0 by design.
+            $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction');
             $totalContractDeductions = $violSum;
 
             // Manual adjustments calculation for this driver
@@ -2407,9 +2406,12 @@ class PayrollController extends Controller
             }
         }
 
-        // Fetch company-level Salary Advances for all active drivers in this month
+        // Company-level deductions are resolved once per employee rather than summed across the
+        // per-contract snapshots, so a driver working under several contracts in the same month
+        // is charged for an advance instalment or a traffic fine exactly once.
         $allEmpIds = array_keys($consolidatedDrivers);
         $advancesMap = [];
+        $violationsMap = [];
         if (!empty($allEmpIds)) {
             $advances = \App\Models\SalaryAdvance::withoutGlobalScopes()
                 ->whereIn('employee_id', $allEmpIds)
@@ -2418,9 +2420,49 @@ class PayrollController extends Controller
                 ->get();
 
             foreach ($advances as $adv) {
-                $dedAmt = min((float)($adv->monthly_installment ?? $adv->amount), (float)($adv->remaining_balance ?? $adv->amount));
-                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + (float)$dedAmt;
+                $dedAmt = self::resolveAdvanceInstallmentForMonth($adv, $year, $month);
+                if ($dedAmt <= 0) {
+                    continue;
+                }
+                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + $dedAmt;
             }
+
+            $violationsMap = \App\Models\Violation::withoutGlobalScopes()
+                ->whereIn('employee_id', $allEmpIds)
+                ->whereBetween('violation_date', [$startDate, $endDate])
+                ->get()
+                ->groupBy('employee_id')
+                ->map(fn ($group) => (float) $group->sum('driver_deduction'))
+                ->toArray();
+        }
+
+        // Company-level deductions only take money off a driver once the month has been
+        // approved here. Until then they are reported as pending so an accountant can see
+        // the effect before committing to it, and the payable net stays untouched.
+        $consolidatedRun = ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->with('approvedBy:id,name')
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->first();
+
+        $deductionsApplied = (bool) $consolidatedRun;
+
+        // An approved month is frozen: serve exactly what was collected, never a fresh
+        // projection. Re-deriving would silently drop an advance that has since closed.
+        if ($consolidatedRun && is_array($consolidatedRun->snapshot_data)) {
+            $frozen = $consolidatedRun->snapshot_data;
+            $frozen['is_approved'] = true;
+            $frozen['deductions_applied'] = true;
+            $frozen['consolidated_run'] = [
+                'id' => $consolidatedRun->id,
+                'approved_at' => $consolidatedRun->approved_at,
+                'approved_by_name' => $consolidatedRun->approvedBy?->name,
+                'notes' => $consolidatedRun->notes,
+            ];
+
+            return response()->json($frozen);
         }
 
         $driversList = [];
@@ -2430,15 +2472,25 @@ class PayrollController extends Controller
         $totalAdjustmentsSum = 0.0;
         $totalAdvancesSum = 0.0;
         $totalFinalNetSum = 0.0;
+        $totalPendingViolationsSum = 0.0;
+        $totalPendingAdvancesSum = 0.0;
 
         foreach ($consolidatedDrivers as $empId => $d) {
-            $advDeduction = round((float)($advancesMap[$empId] ?? 0.0), 3);
+            $pendingAdvances = round((float) ($advancesMap[$empId] ?? 0.0), 3);
+            $pendingViolations = round((float) ($violationsMap[$empId] ?? 0.0), 3);
+
+            $advDeduction = $deductionsApplied ? $pendingAdvances : 0.0;
+            $viols = $deductionsApplied ? $pendingViolations : 0.0;
+
             $gross = round($d['gross_contract_earnings'], 3);
-            $viols = round($d['violations_deduction'], 3);
             $adj = round($d['manual_adjustments'] ?? 0.0, 3);
             $finalNet = round($gross - $viols + $adj - $advDeduction, 3);
 
+            $d['deductions_applied'] = $deductionsApplied;
+            $d['violations_deduction'] = $viols;
             $d['advances_deduction'] = $advDeduction;
+            $d['pending_violations_deduction'] = $pendingViolations;
+            $d['pending_advances_deduction'] = $pendingAdvances;
             $d['manual_adjustments_total'] = $adj;
             $d['final_net_payout'] = $finalNet;
             $driversList[] = $d;
@@ -2449,6 +2501,8 @@ class PayrollController extends Controller
             $totalAdjustmentsSum += $adj;
             $totalAdvancesSum += $advDeduction;
             $totalFinalNetSum += $finalNet;
+            $totalPendingViolationsSum += $pendingViolations;
+            $totalPendingAdvancesSum += $pendingAdvances;
         }
 
         return response()->json([
@@ -2457,6 +2511,14 @@ class PayrollController extends Controller
                 'month' => $month,
                 'days_in_month' => $daysInMonth
             ],
+            'is_approved' => $deductionsApplied,
+            'deductions_applied' => $deductionsApplied,
+            'consolidated_run' => $consolidatedRun ? [
+                'id' => $consolidatedRun->id,
+                'approved_at' => $consolidatedRun->approved_at,
+                'approved_by_name' => $consolidatedRun->approvedBy?->name,
+                'notes' => $consolidatedRun->notes,
+            ] : null,
             'summary' => [
                 'total_approved_contracts' => count($approvedRuns),
                 'total_unapproved_contracts' => count($unapprovedContracts),
@@ -2466,7 +2528,9 @@ class PayrollController extends Controller
                 'total_violations_deductions' => round($totalViolationsSum, 3),
                 'total_manual_adjustments' => round($totalAdjustmentsSum, 3),
                 'total_advances_deductions' => round($totalAdvancesSum, 3),
-                'total_final_net_payout' => round($totalFinalNetSum, 3)
+                'total_final_net_payout' => round($totalFinalNetSum, 3),
+                'total_pending_violations_deductions' => round($totalPendingViolationsSum, 3),
+                'total_pending_advances_deductions' => round($totalPendingAdvancesSum, 3),
             ],
             'approved_runs' => $approvedRuns->map(function($r) {
                 return [
@@ -2481,6 +2545,265 @@ class PayrollController extends Controller
             'unapproved_contracts' => $unapprovedContracts,
             'drivers' => $driversList
         ]);
+    }
+
+    /**
+     * POST /api/payroll/consolidated/{year}/{month}/approve
+     *
+     * Freezes the company-wide sheet and commits the deductions it projected: traffic
+     * fines are marked deducted and salary-advance instalments are recorded against the
+     * run, paying the advance down. This is the only place either happens on the contract
+     * payroll path, so an unapproved month never touches a driver's balance.
+     */
+    public function approveConsolidatedSheet(Request $request, $year, $month): JsonResponse
+    {
+        if (! $request->user()->can('contract_payroll.approve') && ! $request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك باعتماد كشف الرواتب المجمّع.'], 403);
+        }
+
+        $year = (int) $year;
+        $month = (int) $month;
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+
+        $existing = ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'message' => "كشف الرواتب المجمّع لشهر {$month}/{$year} معتمد بالفعل. افكّ الاعتماد أولاً لإعادة احتسابه.",
+            ], 422);
+        }
+
+        $startDate = sprintf('%04d-%02d-01', $year, $month);
+        $endDate = sprintf('%04d-%02d-%02d', $year, $month, Carbon::parse($startDate)->daysInMonth);
+
+        // Re-run the projection so the frozen snapshot reflects the data as of approval.
+        $data = json_decode($this->consolidatedSheet($request, $year, $month)->getContent(), true);
+        $drivers = $data['drivers'] ?? [];
+
+        if (empty($drivers)) {
+            return response()->json([
+                'message' => 'لا يوجد سائقون في الكشف المجمّع لهذا الشهر. اعتمد كشوف العقود أولاً.',
+            ], 422);
+        }
+
+        $run = \DB::transaction(function () use ($request, $companyId, $year, $month, $startDate, $endDate, $drivers, $data) {
+            $run = ConsolidatedPayrollRun::create([
+                'company_id' => $companyId,
+                'year' => $year,
+                'month' => $month,
+                'status' => 'approved',
+                'approved_by' => $request->user()?->id,
+                'approved_at' => now(),
+                'notes' => $request->input('notes'),
+            ]);
+
+            $employeeIds = array_values(array_filter(array_column($drivers, 'employee_id')));
+
+            // Commit the advance instalments this month actually collects. The amount can be
+            // smaller than the projection when the remaining principal is nearly exhausted,
+            // so what is committed here — not the projection — is what the driver is charged.
+            $committedAdvances = [];
+            $advances = SalaryAdvance::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
+                ->where('status', 'active')
+                ->whereDate('advance_date', '<=', $endDate)
+                ->get();
+
+            foreach ($advances as $advance) {
+                $installment = min(
+                    self::resolveAdvanceInstallmentForMonth($advance, $year, $month),
+                    (float) $advance->remaining_balance
+                );
+                if ($installment <= 0) {
+                    continue;
+                }
+
+                AdvanceDeduction::create([
+                    'salary_advance_id' => $advance->id,
+                    'payroll_slip_id' => null,
+                    'consolidated_run_id' => $run->id,
+                    'amount' => $installment,
+                    'deduction_date' => $endDate,
+                    'company_id' => $advance->company_id,
+                ]);
+
+                $committedAdvances[$advance->employee_id] =
+                    ($committedAdvances[$advance->employee_id] ?? 0.0) + $installment;
+
+                $advance->paid_installments = (int) $advance->paid_installments + 1;
+                $advance->remaining_balance = max(0, (float) $advance->remaining_balance - $installment);
+                if ($advance->remaining_balance <= 0) {
+                    $advance->status = 'completed';
+                }
+                $advance->saveQuietly();
+            }
+
+            // Mark the fines this month collected so they are not charged twice.
+            Violation::withoutGlobalScopes()
+                ->whereIn('employee_id', $employeeIds)
+                ->whereBetween('violation_date', [$startDate, $endDate])
+                ->where('driver_deduction', '>', 0)
+                ->update(['is_deducted' => true]);
+
+            // Freeze the sheet as it stands AFTER the deductions were applied. Re-projecting
+            // an approved month would forget what it collected the moment an advance closes.
+            $totals = ['violations' => 0.0, 'advances' => 0.0, 'gross' => 0.0, 'adjustments' => 0.0, 'net' => 0.0, 'orders' => 0];
+
+            foreach ($drivers as $i => $d) {
+                $empId = $d['employee_id'] ?? null;
+                $violations = round((float) ($d['pending_violations_deduction'] ?? 0.0), 3);
+                $advanceAmount = round((float) ($committedAdvances[$empId] ?? 0.0), 3);
+                $gross = round((float) ($d['gross_contract_earnings'] ?? 0.0), 3);
+                $adjustments = round((float) ($d['manual_adjustments_total'] ?? 0.0), 3);
+                $net = round($gross - $violations + $adjustments - $advanceAmount, 3);
+
+                $drivers[$i]['deductions_applied'] = true;
+                $drivers[$i]['violations_deduction'] = $violations;
+                $drivers[$i]['advances_deduction'] = $advanceAmount;
+                $drivers[$i]['pending_violations_deduction'] = $violations;
+                $drivers[$i]['pending_advances_deduction'] = $advanceAmount;
+                $drivers[$i]['final_net_payout'] = $net;
+
+                $totals['violations'] += $violations;
+                $totals['advances'] += $advanceAmount;
+                $totals['gross'] += $gross;
+                $totals['adjustments'] += $adjustments;
+                $totals['orders'] += (int) ($d['orders_count'] ?? 0);
+                $totals['net'] += $net;
+            }
+
+            $data['drivers'] = $drivers;
+            $data['is_approved'] = true;
+            $data['deductions_applied'] = true;
+            $data['summary'] = array_merge($data['summary'] ?? [], [
+                'total_violations_deductions' => round($totals['violations'], 3),
+                'total_advances_deductions' => round($totals['advances'], 3),
+                'total_pending_violations_deductions' => round($totals['violations'], 3),
+                'total_pending_advances_deductions' => round($totals['advances'], 3),
+                'total_final_net_payout' => round($totals['net'], 3),
+            ]);
+
+            $run->update([
+                'total_drivers' => count($drivers),
+                'total_orders' => $totals['orders'],
+                'total_gross_earnings' => round($totals['gross'], 3),
+                'total_violations_deductions' => round($totals['violations'], 3),
+                'total_advances_deductions' => round($totals['advances'], 3),
+                'total_manual_adjustments' => round($totals['adjustments'], 3),
+                'total_final_net_payout' => round($totals['net'], 3),
+                'snapshot_data' => $data,
+            ]);
+
+            return $run;
+        });
+
+        return response()->json([
+            'message' => "تم اعتماد كشف الرواتب المجمّع لشهر {$month}/{$year} وتطبيق خصومات المخالفات والسلف 🔒",
+            'run' => $run->load('approvedBy:id,name'),
+        ]);
+    }
+
+    /**
+     * POST /api/payroll/consolidated/{year}/{month}/unapprove
+     *
+     * Reverses everything approve() committed: instalments are refunded to the advance,
+     * fines are un-marked, and the month falls back to a projection.
+     */
+    public function unapproveConsolidatedSheet(Request $request, $year, $month): JsonResponse
+    {
+        if (! $request->user()->can('contract_payroll.approve') && ! $request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بفك اعتماد كشف الرواتب المجمّع.'], 403);
+        }
+
+        $year = (int) $year;
+        $month = (int) $month;
+        $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
+
+        $run = ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->first();
+
+        if (! $run) {
+            return response()->json(['message' => 'لا يوجد اعتماد لكشف هذا الشهر.'], 404);
+        }
+
+        $startDate = sprintf('%04d-%02d-01', $year, $month);
+        $endDate = sprintf('%04d-%02d-%02d', $year, $month, Carbon::parse($startDate)->daysInMonth);
+
+        \DB::transaction(function () use ($run, $startDate, $endDate) {
+            foreach ($run->advanceDeductions()->get() as $deduction) {
+                $advance = SalaryAdvance::withoutGlobalScopes()->find($deduction->salary_advance_id);
+                if ($advance) {
+                    $advance->remaining_balance = (float) $advance->remaining_balance + (float) $deduction->amount;
+                    $advance->paid_installments = max(0, (int) $advance->paid_installments - 1);
+                    if ($advance->status === 'completed' && $advance->remaining_balance > 0) {
+                        $advance->status = 'active';
+                    }
+                    $advance->saveQuietly();
+                }
+                $deduction->delete();
+            }
+
+            $employeeIds = collect($run->snapshot_data['drivers'] ?? [])->pluck('employee_id')->filter()->all();
+            if (! empty($employeeIds)) {
+                Violation::withoutGlobalScopes()
+                    ->whereIn('employee_id', $employeeIds)
+                    ->whereBetween('violation_date', [$startDate, $endDate])
+                    ->update(['is_deducted' => false]);
+            }
+
+            $run->delete();
+        });
+
+        return response()->json([
+            'message' => "تم فك اعتماد كشف الرواتب المجمّع لشهر {$month}/{$year} وإرجاع خصومات المخالفات والسلف 🔓",
+        ]);
+    }
+
+    /**
+     * Resolve how much of a salary advance falls due in a specific payroll month.
+     *
+     * The consolidated sheet is a read-only projection: it never writes, so it cannot rely on
+     * `remaining_balance` having been decremented (that only happens on the legacy PayrollRun
+     * path). The amount due is therefore derived from the advance's own repayment schedule,
+     * which keeps the sheet idempotent for any month — past or future — and makes an advance
+     * stop being charged once its instalments are exhausted, instead of repeating forever.
+     *
+     * @return float Amount due that month; 0.0 when the month falls outside the schedule.
+     */
+    private static function resolveAdvanceInstallmentForMonth(SalaryAdvance $advance, int $year, int $month): float
+    {
+        $amount = (float) $advance->amount;
+        $installment = (float) $advance->monthly_installment;
+
+        if ($amount <= 0 || $installment <= 0 || ! $advance->advance_date) {
+            return 0.0;
+        }
+
+        $start = Carbon::parse($advance->advance_date);
+
+        // 1-based index of the instalment that falls in the requested month.
+        $index = (($year * 12) + $month) - (($start->year * 12) + $start->month) + 1;
+        if ($index < 1) {
+            return 0.0;
+        }
+
+        $totalInstallments = (int) ($advance->total_installments ?: ceil($amount / $installment));
+        if ($totalInstallments > 0 && $index > $totalInstallments) {
+            return 0.0;
+        }
+
+        // The final instalment collects only whatever principal is left.
+        $due = min($installment, $amount - (($index - 1) * $installment));
+
+        return $due > 0 ? round($due, 3) : 0.0;
     }
 
     private static function getPaymentMethodLabel($method)

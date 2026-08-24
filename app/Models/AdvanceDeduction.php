@@ -14,6 +14,7 @@ class AdvanceDeduction extends Model
     protected $fillable = [
         'salary_advance_id',
         'payroll_slip_id',
+        'consolidated_run_id',
         'amount',
         'deduction_date',
         'company_id',
@@ -32,5 +33,10 @@ class AdvanceDeduction extends Model
     public function payrollSlip(): BelongsTo
     {
         return $this->belongsTo(PayrollSlip::class);
+    }
+
+    public function consolidatedRun(): BelongsTo
+    {
+        return $this->belongsTo(ConsolidatedPayrollRun::class, 'consolidated_run_id');
     }
 }
