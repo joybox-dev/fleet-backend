@@ -2162,7 +2162,9 @@ class PayrollController extends Controller
      */
     public function approveContractSheet(Request $request, $contractId): JsonResponse
     {
-        if (!$request->user()->can('contract_payroll.approve') && !$request->user()->can('contract_payroll.edit') && !$request->user()->can('payroll.edit')) {
+        // Approving freezes a month's pay. `contract_payroll.edit` deliberately does NOT grant
+        // it — editing a sheet and signing it off are different authorities.
+        if (! $request->user()->can('contract_payroll.approve') && ! $request->user()->can('payroll.edit')) {
             return response()->json(['message' => 'غير مصرح لك باعتماد كشف رواتب العقد.'], 403);
         }
 
@@ -2212,6 +2214,13 @@ class PayrollController extends Controller
      */
     public function unapproveContractSheet(Request $request, $contractId): JsonResponse
     {
+        // Unapproving deletes the frozen snapshot, so it needs at least the authority that
+        // created it. This was previously ungated: anyone the route let through could destroy
+        // an approved month's record, which defeated the point of a separate approve permission.
+        if (! $request->user()->can('contract_payroll.approve') && ! $request->user()->can('payroll.edit')) {
+            return response()->json(['message' => 'غير مصرح لك بفك اعتماد كشف رواتب العقد.'], 403);
+        }
+
         $contract = Contract::findOrFail($contractId);
         $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
         $year = (int) $request->input('year', date('Y'));
