@@ -3,8 +3,11 @@
 namespace App\Observers;
 
 use App\Helpers\ErpSync;
+use App\Http\Controllers\Api\PayrollController;
 use App\Models\DailyLog;
+use App\Models\PayrollRun;
 use App\Services\ErpNext\Jobs\SyncDailyLogJob;
+use Carbon\Carbon;
 
 /**
  * DailyLogObserver
@@ -15,6 +18,12 @@ use App\Services\ErpNext\Jobs\SyncDailyLogJob;
 class DailyLogObserver
 {
     private const ERP_FIELDS = ['erp_id', 'erp_synced_at', 'erp_sync_status'];
+
+    /** True while a bulk write is running: recalculations are collected instead of run per row. */
+    private static bool $deferring = false;
+
+    /** @var array<string, array{int, int, int}> pending [employeeId, year, month] */
+    private static array $pending = [];
 
     public function created(DailyLog $log): void
     {
@@ -59,28 +68,97 @@ class DailyLogObserver
     }
 
     /**
+     * Collect recalculations instead of running one per saved row.
+     *
+     * A 31-row bulk save fired this observer 31 times, and every call rebuilt each slip in the
+     * month's draft payroll run (113 of them) — roughly 3,500 full slip computations inside a
+     * single HTTP request, which is why saving one month took 23 seconds. The work is identical
+     * for every row of the same (employee, month), so the caller defers it and flushes once.
+     */
+    public static function deferRecalculations(): void
+    {
+        self::$deferring = true;
+        self::$pending = [];
+
+        // Safety net: a caller that dies mid-loop must not leave the flag set for whatever
+        // else this request still writes.
+        app()->terminating(function () {
+            self::$deferring = false;
+            self::$pending = [];
+        });
+    }
+
+    /**
+     * Run every recalculation collected since deferRecalculations(), each one only once.
+     */
+    public static function flushRecalculations(): void
+    {
+        $pending = self::$pending;
+        self::$deferring = false;
+        self::$pending = [];
+
+        $months = [];
+        foreach ($pending as [$employeeId, $year, $month]) {
+            self::recalculateCommissions($employeeId, $year, $month);
+            $months[$year.'-'.$month] = [$year, $month];
+        }
+
+        // One rebuild per month — not one per employee, and certainly not one per row.
+        foreach ($months as [$year, $month]) {
+            self::recalculateDraftRun($year, $month);
+        }
+    }
+
+    /**
      * Trigger automatic retroactive payroll recalculation if a draft run exists.
      */
     private function recalculatePayrollFor(DailyLog $log): void
     {
         try {
-            $date = \Carbon\Carbon::parse($log->log_date);
-            $year = $date->year;
-            $month = $date->month;
+            $date = Carbon::parse($log->log_date);
+        } catch (\Throwable $e) {
+            \Log::error('Retroactive recalculation in DailyLogObserver failed: '.$e->getMessage());
 
-            // Recalculate driver commissions chronologically for the month
-            \App\Http\Controllers\Api\PayrollController::recalculateEmployeeCommissions($log->employee_id, $year, $month);
+            return;
+        }
 
-            $run = \App\Models\PayrollRun::where('year', $year)
+        if (self::$deferring) {
+            self::$pending[$log->employee_id.'|'.$date->year.'|'.$date->month] = [
+                (int) $log->employee_id, $date->year, $date->month,
+            ];
+
+            return;
+        }
+
+        self::recalculateCommissions((int) $log->employee_id, $date->year, $date->month);
+        self::recalculateDraftRun($date->year, $date->month);
+    }
+
+    /**
+     * Recalculate driver commissions chronologically for the month.
+     */
+    private static function recalculateCommissions(int $employeeId, int $year, int $month): void
+    {
+        try {
+            PayrollController::recalculateEmployeeCommissions($employeeId, $year, $month);
+        } catch (\Throwable $e) {
+            \Log::error('Retroactive recalculation in DailyLogObserver failed: '.$e->getMessage());
+        }
+    }
+
+    private static function recalculateDraftRun(int $year, int $month): void
+    {
+        try {
+            $run = PayrollRun::where('year', $year)
                 ->where('month', $month)
                 ->where('status', 'draft')
                 ->first();
 
             if ($run) {
-                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
+                PayrollController::recalculateRun($run);
             }
         } catch (\Throwable $e) {
-            \Log::error('Retroactive recalculation in DailyLogObserver failed: ' . $e->getMessage());
+            \Log::error('Retroactive recalculation in DailyLogObserver failed: '.$e->getMessage());
         }
     }
 }

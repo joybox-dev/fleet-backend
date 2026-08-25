@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 
 use App\Models\DailyLog;
 use App\Models\Contract;
+use App\Observers\DailyLogObserver;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -371,6 +372,11 @@ class DailyLogController extends Controller
         $contractIds = array_unique(array_filter(array_column($logs, 'contract_id')));
         $contractsMap = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
 
+        // Every saved row used to fire DailyLogObserver, which rebuilt every payroll slip of the
+        // month's draft run. A 31-day month therefore paid for 31 identical rebuilds and took
+        // 23 seconds. The recalculation is collected here and run once after the loop.
+        DailyLogObserver::deferRecalculations();
+
         foreach ($logs as $logData) {
             $employeeId = $logData['employee_id'] ?? null;
             $logDate = $logData['log_date'] ?? null;
@@ -559,6 +565,8 @@ class DailyLogController extends Controller
                 }
             }
         }
+
+        DailyLogObserver::flushRecalculations();
 
         $skippedCount = count($skipped);
         $savedCount = count($savedLogs);
