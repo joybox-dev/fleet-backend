@@ -9,8 +9,9 @@ use App\Models\Contract;
 use App\Models\ContractAssignment;
 use App\Models\ContractMandatoryDay;
 use App\Models\ContractMonthlyParameter;
-use App\Models\ContractPayrollRun;
+use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\ConsolidatedPayrollRun;
+use App\Models\ContractPayrollRun;
 use App\Models\CurrencyExchangeRate;
 use App\Models\CustodyItem;
 use App\Models\DailyLog;
@@ -23,6 +24,7 @@ use App\Models\PayrollSlip;
 use App\Models\SalaryAdvance;
 use App\Models\VehicleAssignment;
 use App\Models\Violation;
+use App\Services\CompanyDeductionService;
 use App\Services\Contracts\SmartValueFallbackService;
 use App\Services\ErpNext\Jobs\SyncFuelExpenseJob;
 use App\Services\ErpNext\Jobs\SyncPayrollDeductionsJob;
@@ -2414,38 +2416,13 @@ class PayrollController extends Controller
             }
         }
 
-        // Company-level deductions are resolved once per employee rather than summed across the
-        // per-contract snapshots, so a driver working under several contracts in the same month
-        // is charged for an advance instalment or a traffic fine exactly once.
+        // Every charge that belongs to the person rather than to a contract: traffic fines,
+        // driver-liable maintenance, damaged or lost custody, driver-borne expenses, unpaid
+        // leave and salary-advance instalments. Resolved once per employee — so a driver on
+        // several contracts is charged once — and never including anything the ledger shows
+        // as already collected.
         $allEmpIds = array_keys($consolidatedDrivers);
-        $advancesMap = [];
-        $violationsMap = [];
-        if (!empty($allEmpIds)) {
-            $advances = \App\Models\SalaryAdvance::withoutGlobalScopes()
-                ->whereIn('employee_id', $allEmpIds)
-                ->where('status', 'active')
-                ->whereDate('advance_date', '<=', $endDate)
-                ->get();
-
-            foreach ($advances as $adv) {
-                $dedAmt = self::resolveAdvanceInstallmentForMonth($adv, $year, $month);
-                if ($dedAmt <= 0) {
-                    continue;
-                }
-                $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + $dedAmt;
-            }
-
-            // Only fines still outstanding. One already marked `is_deducted` was collected by
-            // the legacy payroll run or an earlier approved month, and must not be taken twice.
-            $violationsMap = \App\Models\Violation::withoutGlobalScopes()
-                ->whereIn('employee_id', $allEmpIds)
-                ->whereBetween('violation_date', [$startDate, $endDate])
-                ->where('is_deducted', false)
-                ->get()
-                ->groupBy('employee_id')
-                ->map(fn ($group) => (float) $group->sum('driver_deduction'))
-                ->toArray();
-        }
+        $pendingDeductions = CompanyDeductionService::pendingFor($allEmpIds, $startDate, $endDate, $year, $month);
 
         // Company-level deductions only take money off a driver once the month has been
         // approved here. Until then they are reported as pending so an accountant can see
@@ -2479,41 +2456,55 @@ class PayrollController extends Controller
         $driversList = [];
         $totalOrdersSum = 0;
         $totalGrossSum = 0.0;
-        $totalViolationsSum = 0.0;
         $totalAdjustmentsSum = 0.0;
-        $totalAdvancesSum = 0.0;
         $totalFinalNetSum = 0.0;
-        $totalPendingViolationsSum = 0.0;
-        $totalPendingAdvancesSum = 0.0;
+        $totalPendingSum = 0.0;
+        $byType = [];
 
         foreach ($consolidatedDrivers as $empId => $d) {
-            $pendingAdvances = round((float) ($advancesMap[$empId] ?? 0.0), 3);
-            $pendingViolations = round((float) ($violationsMap[$empId] ?? 0.0), 3);
+            $pending = $pendingDeductions[$empId] ?? ['items' => [], 'total' => 0.0];
+            $grouped = CompanyDeductionService::groupByType($pending['items']);
 
-            $advDeduction = $deductionsApplied ? $pendingAdvances : 0.0;
-            $viols = $deductionsApplied ? $pendingViolations : 0.0;
+            $pendingTotal = round((float) $pending['total'], 3);
+            $applied = $deductionsApplied ? $pendingTotal : 0.0;
 
             $gross = round($d['gross_contract_earnings'], 3);
             $adj = round($d['manual_adjustments'] ?? 0.0, 3);
-            $finalNet = round($gross - $viols + $adj - $advDeduction, 3);
+            $finalNet = round($gross + $adj - $applied, 3);
+
+            $amountOf = fn (string $type) => round((float) ($grouped[$type]['total'] ?? 0.0), 3);
 
             $d['deductions_applied'] = $deductionsApplied;
-            $d['violations_deduction'] = $viols;
-            $d['advances_deduction'] = $advDeduction;
-            $d['pending_violations_deduction'] = $pendingViolations;
-            $d['pending_advances_deduction'] = $pendingAdvances;
             $d['manual_adjustments_total'] = $adj;
             $d['final_net_payout'] = $finalNet;
+
+            // Every source is reported both ways: what is owed, and what has actually been
+            // taken. Before approval the second column is zero across the board.
+            $d['pending_deductions_total'] = $pendingTotal;
+            $d['deductions_total'] = $applied;
+            $d['deduction_items'] = $pending['items'];
+
+            foreach ([
+                'violations' => ConsolidatedPayrollDeduction::SOURCE_VIOLATION,
+                'maintenance' => ConsolidatedPayrollDeduction::SOURCE_MAINTENANCE,
+                'custody' => ConsolidatedPayrollDeduction::SOURCE_CUSTODY,
+                'driver_expenses' => ConsolidatedPayrollDeduction::SOURCE_DRIVER_EXPENSE,
+                'leaves' => ConsolidatedPayrollDeduction::SOURCE_LEAVE,
+                'advances' => ConsolidatedPayrollDeduction::SOURCE_ADVANCE,
+            ] as $key => $type) {
+                $amount = $amountOf($type);
+                $d["pending_{$key}_deduction"] = $amount;
+                $d["{$key}_deduction"] = $deductionsApplied ? $amount : 0.0;
+                $byType[$key] = round(($byType[$key] ?? 0.0) + $amount, 3);
+            }
+
             $driversList[] = $d;
 
             $totalOrdersSum += $d['orders_count'];
             $totalGrossSum += $gross;
-            $totalViolationsSum += $viols;
             $totalAdjustmentsSum += $adj;
-            $totalAdvancesSum += $advDeduction;
             $totalFinalNetSum += $finalNet;
-            $totalPendingViolationsSum += $pendingViolations;
-            $totalPendingAdvancesSum += $pendingAdvances;
+            $totalPendingSum += $pendingTotal;
         }
 
         return response()->json([
@@ -2536,12 +2527,18 @@ class PayrollController extends Controller
                 'total_drivers' => count($driversList),
                 'total_orders' => $totalOrdersSum,
                 'total_gross_earnings' => round($totalGrossSum, 3),
-                'total_violations_deductions' => round($totalViolationsSum, 3),
                 'total_manual_adjustments' => round($totalAdjustmentsSum, 3),
-                'total_advances_deductions' => round($totalAdvancesSum, 3),
                 'total_final_net_payout' => round($totalFinalNetSum, 3),
-                'total_pending_violations_deductions' => round($totalPendingViolationsSum, 3),
-                'total_pending_advances_deductions' => round($totalPendingAdvancesSum, 3),
+                'total_pending_deductions' => round($totalPendingSum, 3),
+                'total_deductions' => $deductionsApplied ? round($totalPendingSum, 3) : 0.0,
+                'total_violations_deductions' => $deductionsApplied ? ($byType['violations'] ?? 0.0) : 0.0,
+                'total_advances_deductions' => $deductionsApplied ? ($byType['advances'] ?? 0.0) : 0.0,
+                'total_pending_violations_deductions' => $byType['violations'] ?? 0.0,
+                'total_pending_advances_deductions' => $byType['advances'] ?? 0.0,
+                'total_pending_maintenance_deductions' => $byType['maintenance'] ?? 0.0,
+                'total_pending_custody_deductions' => $byType['custody'] ?? 0.0,
+                'total_pending_driver_expenses_deductions' => $byType['driver_expenses'] ?? 0.0,
+                'total_pending_leaves_deductions' => $byType['leaves'] ?? 0.0,
             ],
             'approved_runs' => $approvedRuns->map(function($r) {
                 return [
@@ -2615,85 +2612,130 @@ class PayrollController extends Controller
 
             $employeeIds = array_values(array_filter(array_column($drivers, 'employee_id')));
 
-            // Commit the advance instalments this month actually collects. The amount can be
-            // smaller than the projection when the remaining principal is nearly exhausted,
-            // so what is committed here — not the projection — is what the driver is charged.
-            $committedAdvances = [];
-            $advances = SalaryAdvance::withoutGlobalScopes()
-                ->whereIn('employee_id', $employeeIds)
-                ->where('status', 'active')
-                ->whereDate('advance_date', '<=', $endDate)
-                ->get();
+            // Re-resolve rather than trusting the projection passed in: between opening the
+            // sheet and pressing approve, a fine may have been settled or an advance closed.
+            $pending = CompanyDeductionService::pendingFor($employeeIds, $startDate, $endDate, $year, $month);
 
-            foreach ($advances as $advance) {
-                $installment = min(
-                    self::resolveAdvanceInstallmentForMonth($advance, $year, $month),
-                    (float) $advance->remaining_balance
-                );
-                if ($installment <= 0) {
-                    continue;
+            $committedByEmployee = [];
+            $chargedViolationIds = [];
+            $chargedExpenseIds = [];
+
+            foreach ($pending as $employeeId => $bucket) {
+                $employee = Employee::withoutGlobalScopes()->find($employeeId);
+
+                foreach ($bucket['items'] as $item) {
+                    $amount = (float) $item['amount'];
+                    $type = $item['source_type'];
+                    $sourceId = $item['source_id'];
+
+                    if ($type === ConsolidatedPayrollDeduction::SOURCE_ADVANCE) {
+                        $advance = SalaryAdvance::withoutGlobalScopes()->find($sourceId);
+                        if (! $advance) {
+                            continue;
+                        }
+                        // The final instalment collects only the principal that is left.
+                        $amount = min($amount, (float) $advance->remaining_balance);
+                        if ($amount <= 0) {
+                            continue;
+                        }
+
+                        AdvanceDeduction::create([
+                            'salary_advance_id' => $advance->id,
+                            'payroll_slip_id' => null,
+                            'consolidated_run_id' => $run->id,
+                            'amount' => $amount,
+                            'deduction_date' => $endDate,
+                            'company_id' => $advance->company_id,
+                        ]);
+
+                        $advance->paid_installments = (int) $advance->paid_installments + 1;
+                        $advance->remaining_balance = max(0, (float) $advance->remaining_balance - $amount);
+                        if ($advance->remaining_balance <= 0) {
+                            $advance->status = 'completed';
+                        }
+                        $advance->saveQuietly();
+                    }
+
+                    if ($type === ConsolidatedPayrollDeduction::SOURCE_VIOLATION) {
+                        $chargedViolationIds[] = $sourceId;
+                    }
+                    if ($type === ConsolidatedPayrollDeduction::SOURCE_DRIVER_EXPENSE) {
+                        $chargedExpenseIds[] = $sourceId;
+                    }
+
+                    ConsolidatedPayrollDeduction::create([
+                        'company_id' => $employee?->company_id ?? $companyId,
+                        'consolidated_run_id' => $run->id,
+                        'employee_id' => $employeeId,
+                        'source_type' => $type,
+                        'source_id' => $sourceId,
+                        'amount' => $amount,
+                        'label' => $item['label'],
+                    ]);
+
+                    $committedByEmployee[$employeeId] = round(($committedByEmployee[$employeeId] ?? 0.0) + $amount, 3);
                 }
-
-                AdvanceDeduction::create([
-                    'salary_advance_id' => $advance->id,
-                    'payroll_slip_id' => null,
-                    'consolidated_run_id' => $run->id,
-                    'amount' => $installment,
-                    'deduction_date' => $endDate,
-                    'company_id' => $advance->company_id,
-                ]);
-
-                $committedAdvances[$advance->employee_id] =
-                    ($committedAdvances[$advance->employee_id] ?? 0.0) + $installment;
-
-                $advance->paid_installments = (int) $advance->paid_installments + 1;
-                $advance->remaining_balance = max(0, (float) $advance->remaining_balance - $installment);
-                if ($advance->remaining_balance <= 0) {
-                    $advance->status = 'completed';
-                }
-                $advance->saveQuietly();
             }
 
-            // Mark only the fines THIS run collects. Ones already flagged were charged by the
-            // legacy payroll run, so they were never included in the projection above and must
-            // keep their flag — otherwise unapproving would release someone else's deduction.
-            $chargedViolationIds = Violation::withoutGlobalScopes()
-                ->whereIn('employee_id', $employeeIds)
-                ->whereBetween('violation_date', [$startDate, $endDate])
-                ->where('driver_deduction', '>', 0)
-                ->where('is_deducted', false)
-                ->pluck('id')
-                ->all();
-
+            // Keep the legacy flags in step so the old payroll path also sees these as settled.
+            // Only what THIS run charged is flagged — anything already true was collected
+            // elsewhere, and unapproving must not release someone else's deduction.
             if (! empty($chargedViolationIds)) {
-                Violation::withoutGlobalScopes()
-                    ->whereIn('id', $chargedViolationIds)
-                    ->update(['is_deducted' => true]);
+                Violation::withoutGlobalScopes()->whereIn('id', $chargedViolationIds)->update(['is_deducted' => true]);
+            }
+            if (! empty($chargedExpenseIds)) {
+                \App\Models\DriverExpense::withoutGlobalScopes()->whereIn('id', $chargedExpenseIds)->update(['is_deducted' => true]);
             }
 
             // Freeze the sheet as it stands AFTER the deductions were applied. Re-projecting
             // an approved month would forget what it collected the moment an advance closes.
-            $totals = ['violations' => 0.0, 'advances' => 0.0, 'gross' => 0.0, 'adjustments' => 0.0, 'net' => 0.0, 'orders' => 0];
+            $ledger = ConsolidatedPayrollDeduction::withoutGlobalScopes()
+                ->where('consolidated_run_id', $run->id)
+                ->get()
+                ->groupBy('employee_id');
+
+            $totals = ['gross' => 0.0, 'adjustments' => 0.0, 'net' => 0.0, 'orders' => 0, 'deductions' => 0.0];
+            $byType = [];
+
+            $typeKeys = [
+                'violations' => ConsolidatedPayrollDeduction::SOURCE_VIOLATION,
+                'maintenance' => ConsolidatedPayrollDeduction::SOURCE_MAINTENANCE,
+                'custody' => ConsolidatedPayrollDeduction::SOURCE_CUSTODY,
+                'driver_expenses' => ConsolidatedPayrollDeduction::SOURCE_DRIVER_EXPENSE,
+                'leaves' => ConsolidatedPayrollDeduction::SOURCE_LEAVE,
+                'advances' => ConsolidatedPayrollDeduction::SOURCE_ADVANCE,
+            ];
 
             foreach ($drivers as $i => $d) {
                 $empId = $d['employee_id'] ?? null;
-                $violations = round((float) ($d['pending_violations_deduction'] ?? 0.0), 3);
-                $advanceAmount = round((float) ($committedAdvances[$empId] ?? 0.0), 3);
+                $rows = $ledger->get($empId, collect());
+                $charged = round((float) $rows->sum('amount'), 3);
+
                 $gross = round((float) ($d['gross_contract_earnings'] ?? 0.0), 3);
                 $adjustments = round((float) ($d['manual_adjustments_total'] ?? 0.0), 3);
-                $net = round($gross - $violations + $adjustments - $advanceAmount, 3);
+                $net = round($gross + $adjustments - $charged, 3);
 
                 $drivers[$i]['deductions_applied'] = true;
-                $drivers[$i]['violations_deduction'] = $violations;
-                $drivers[$i]['advances_deduction'] = $advanceAmount;
-                $drivers[$i]['pending_violations_deduction'] = $violations;
-                $drivers[$i]['pending_advances_deduction'] = $advanceAmount;
                 $drivers[$i]['final_net_payout'] = $net;
+                $drivers[$i]['deductions_total'] = $charged;
+                $drivers[$i]['pending_deductions_total'] = $charged;
+                $drivers[$i]['deduction_items'] = $rows->map(fn ($r) => [
+                    'source_type' => $r->source_type,
+                    'source_id' => $r->source_id,
+                    'amount' => (float) $r->amount,
+                    'label' => $r->label,
+                ])->values()->all();
 
-                $totals['violations'] += $violations;
-                $totals['advances'] += $advanceAmount;
+                foreach ($typeKeys as $key => $type) {
+                    $amount = round((float) $rows->where('source_type', $type)->sum('amount'), 3);
+                    $drivers[$i]["{$key}_deduction"] = $amount;
+                    $drivers[$i]["pending_{$key}_deduction"] = $amount;
+                    $byType[$key] = round(($byType[$key] ?? 0.0) + $amount, 3);
+                }
+
                 $totals['gross'] += $gross;
                 $totals['adjustments'] += $adjustments;
+                $totals['deductions'] += $charged;
                 $totals['orders'] += (int) ($d['orders_count'] ?? 0);
                 $totals['net'] += $net;
             }
@@ -2701,22 +2743,26 @@ class PayrollController extends Controller
             $data['drivers'] = $drivers;
             $data['is_approved'] = true;
             $data['deductions_applied'] = true;
-            // Recorded so unapprove releases exactly these fines and nothing else.
-            $data['charged_violation_ids'] = $chargedViolationIds;
             $data['summary'] = array_merge($data['summary'] ?? [], [
-                'total_violations_deductions' => round($totals['violations'], 3),
-                'total_advances_deductions' => round($totals['advances'], 3),
-                'total_pending_violations_deductions' => round($totals['violations'], 3),
-                'total_pending_advances_deductions' => round($totals['advances'], 3),
                 'total_final_net_payout' => round($totals['net'], 3),
+                'total_deductions' => round($totals['deductions'], 3),
+                'total_pending_deductions' => round($totals['deductions'], 3),
+                'total_violations_deductions' => $byType['violations'] ?? 0.0,
+                'total_advances_deductions' => $byType['advances'] ?? 0.0,
+                'total_pending_violations_deductions' => $byType['violations'] ?? 0.0,
+                'total_pending_advances_deductions' => $byType['advances'] ?? 0.0,
+                'total_pending_maintenance_deductions' => $byType['maintenance'] ?? 0.0,
+                'total_pending_custody_deductions' => $byType['custody'] ?? 0.0,
+                'total_pending_driver_expenses_deductions' => $byType['driver_expenses'] ?? 0.0,
+                'total_pending_leaves_deductions' => $byType['leaves'] ?? 0.0,
             ]);
 
             $run->update([
                 'total_drivers' => count($drivers),
                 'total_orders' => $totals['orders'],
                 'total_gross_earnings' => round($totals['gross'], 3),
-                'total_violations_deductions' => round($totals['violations'], 3),
-                'total_advances_deductions' => round($totals['advances'], 3),
+                'total_violations_deductions' => $byType['violations'] ?? 0.0,
+                'total_advances_deductions' => $byType['advances'] ?? 0.0,
                 'total_manual_adjustments' => round($totals['adjustments'], 3),
                 'total_final_net_payout' => round($totals['net'], 3),
                 'snapshot_data' => $data,
@@ -2774,14 +2820,31 @@ class PayrollController extends Controller
                 $deduction->delete();
             }
 
-            // Release only the fines this run charged. Anything the legacy payroll path had
-            // already collected keeps its flag, so unapproving here cannot make it billable again.
-            $chargedViolationIds = $run->snapshot_data['charged_violation_ids'] ?? null;
-            if (! empty($chargedViolationIds)) {
-                Violation::withoutGlobalScopes()
-                    ->whereIn('id', $chargedViolationIds)
-                    ->update(['is_deducted' => false]);
+            // Release exactly what the ledger says this run charged, and nothing else. Anything
+            // the legacy payroll path collected has no ledger row here, so its flag survives and
+            // cannot be made billable again by unapproving this month.
+            $rows = ConsolidatedPayrollDeduction::withoutGlobalScopes()
+                ->where('consolidated_run_id', $run->id)
+                ->get();
+
+            $violationIds = $rows->where('source_type', ConsolidatedPayrollDeduction::SOURCE_VIOLATION)
+                ->pluck('source_id')->filter()->all();
+            if (! empty($violationIds)) {
+                Violation::withoutGlobalScopes()->whereIn('id', $violationIds)->update(['is_deducted' => false]);
             }
+
+            $expenseIds = $rows->where('source_type', ConsolidatedPayrollDeduction::SOURCE_DRIVER_EXPENSE)
+                ->pluck('source_id')->filter()->all();
+            if (! empty($expenseIds)) {
+                \App\Models\DriverExpense::withoutGlobalScopes()->whereIn('id', $expenseIds)->update(['is_deducted' => false]);
+            }
+
+            // Maintenance, custody and leave carry no flag of their own — removing the ledger
+            // rows is what makes them outstanding again. Deleted explicitly rather than relying
+            // on the FK cascade, which is not guaranteed to be enforced on every connection.
+            ConsolidatedPayrollDeduction::withoutGlobalScopes()
+                ->where('consolidated_run_id', $run->id)
+                ->delete();
 
             $run->delete();
         });
