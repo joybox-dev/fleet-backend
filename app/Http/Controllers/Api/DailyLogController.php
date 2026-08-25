@@ -172,10 +172,10 @@ class DailyLogController extends Controller
         $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
             ->where('employee_id', $employeeId)
             ->where('contract_id', $contractId)
-            ->where('start_date', '<=', $logDate)
+            ->whereDate('start_date', '<=', $logDate)
             ->where(function ($q) use ($logDate) {
                 $q->whereNull('end_date')
-                  ->orWhere('end_date', '>=', $logDate);
+                  ->orWhereDate('end_date', '>=', $logDate);
             })
             ->exists();
 
@@ -363,6 +363,11 @@ class DailyLogController extends Controller
         }
 
         $savedLogs = [];
+        // Rows this request refuses to write. Previously each of these was a bare `continue`,
+        // so the endpoint answered "saved successfully" after silently discarding most of the
+        // payload — a driver's whole month could be edited, reported as saved, and left
+        // untouched. Anything not written is now named in the response.
+        $skipped = [];
         $contractIds = array_unique(array_filter(array_column($logs, 'contract_id')));
         $contractsMap = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
 
@@ -370,20 +375,38 @@ class DailyLogController extends Controller
             $employeeId = $logData['employee_id'] ?? null;
             $logDate = $logData['log_date'] ?? null;
             $contractId = $logData['contract_id'] ?? null;
-            if (!$employeeId || !$logDate || !$contractId) continue;
+
+            if (!$employeeId || !$logDate || !$contractId) {
+                $skipped[] = [
+                    'log_date' => $logDate,
+                    'employee_id' => $employeeId,
+                    'reason' => 'incomplete',
+                    'message' => 'السجل ناقص بيانات أساسية (الموظف أو التاريخ أو العقد).',
+                ];
+                continue;
+            }
 
             // Check if driver is assigned to contract on this logDate
             $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
                 ->where('employee_id', $employeeId)
                 ->where('contract_id', $contractId)
-                ->where('start_date', '<=', $logDate)
+                ->whereDate('start_date', '<=', $logDate)
                 ->where(function ($q) use ($logDate) {
                     $q->whereNull('end_date')
-                      ->orWhere('end_date', '>=', $logDate);
+                      ->orWhereDate('end_date', '>=', $logDate);
                 })
                 ->exists();
 
-            if (!$isAssigned) continue;
+            if (!$isAssigned) {
+                $skipped[] = [
+                    'log_date' => $logDate,
+                    'employee_id' => $employeeId,
+                    'contract_id' => $contractId,
+                    'reason' => 'not_assigned',
+                    'message' => 'السائق غير معيّن على هذا العقد في هذا التاريخ.',
+                ];
+                continue;
+            }
 
             $vehicleId = $logData['vehicle_id'] ?? 1;
             $ordersCount = (int) ($logData['orders_count'] ?? 0);
@@ -537,9 +560,26 @@ class DailyLogController extends Controller
             }
         }
 
+        $skippedCount = count($skipped);
+        $savedCount = count($savedLogs);
+
+        // Dates are the thing the user can act on, so name them rather than only counting.
+        $skippedDates = collect($skipped)
+            ->pluck('log_date')
+            ->filter()
+            ->map(fn ($d) => substr((string) $d, 0, 10))
+            ->unique()
+            ->values();
+
         return response()->json([
-            'message' => 'تم حفظ السجلات بنجاح.',
-            'count'   => count($savedLogs)
+            'message' => $skippedCount === 0
+                ? 'تم حفظ السجلات بنجاح.'
+                : "تم حفظ {$savedCount} سجل، ولم يتم حفظ {$skippedCount} سجل.",
+            'count' => $savedCount,
+            'skipped_count' => $skippedCount,
+            'skipped' => $skipped,
+            'skipped_dates' => $skippedDates,
+            'partial' => $skippedCount > 0,
         ]);
     }
 
