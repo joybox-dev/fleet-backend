@@ -135,9 +135,10 @@ class ContractPayrollDeductionsTest extends TestCase
         ]);
     }
 
-    private function makeViolation(string $date, float $amount, float $driverShare): Violation
+    private function makeViolation(string $date, float $amount, float $driverShare, bool $alreadyDeducted = false): Violation
     {
         return Violation::create([
+            'is_deducted' => $alreadyDeducted,
             'employee_id' => $this->driver->id,
             'vehicle_id' => $this->vehicle->id,
             'violation_date' => $date,
@@ -304,6 +305,70 @@ class ContractPayrollDeductionsTest extends TestCase
             'remaining_balance' => 0.000,
             'status' => 'completed',
         ]);
+    }
+
+    /**
+     * Both payroll paths are live. A fine the legacy PayrollRun already collected carries
+     * `is_deducted`, and charging it again on the contract path would take it twice.
+     */
+    public function test_a_violation_already_collected_elsewhere_is_not_charged_again(): void
+    {
+        $contract = $this->makeContract('AlreadyDeducted');
+        $this->assignDriver($contract);
+        $this->logWorkedDay($contract, '2026-03-02');
+
+        $this->makeViolation('2026-03-10', 50.000, 50.000, alreadyDeducted: true);
+        $this->makeViolation('2026-03-12', 12.000, 12.000);
+
+        $driverRow = $this->contractSheet($contract, 2026, 3)['drivers'][0];
+
+        $this->assertSame(12.0, (float) $driverRow['violations_deduction'], 'only the outstanding fine');
+        $this->assertSame(50.0, (float) $driverRow['violations_already_deducted'], 'reported, not charged');
+        $this->assertSame(-2.0, (float) $driverRow['net_payout'], '10 earned − 12 outstanding');
+    }
+
+    /**
+     * The consolidated sheet resolves fines per employee, so it needs the same guard.
+     */
+    public function test_consolidated_sheet_also_skips_already_collected_violations(): void
+    {
+        $contract = $this->makeContract('ConsolidatedAlreadyDeducted');
+        $this->assignDriver($contract);
+        $this->logWorkedDay($contract, '2026-03-02');
+
+        $this->makeViolation('2026-03-10', 50.000, 50.000, alreadyDeducted: true);
+        $this->makeViolation('2026-03-12', 4.000, 4.000);
+
+        $this->approveSheet($contract, 2026, 3);
+        $this->approveConsolidated(2026, 3);
+
+        $row = $this->consolidatedDriverRow(2026, 3);
+
+        $this->assertSame(4.0, (float) $row['violations_deduction']);
+        $this->assertSame(6.0, (float) $row['final_net_payout'], '10 earned − 4 outstanding');
+    }
+
+    /**
+     * Unapproving must release only what this run charged; the legacy run's flag stays put.
+     */
+    public function test_unapproving_does_not_release_a_legacy_payroll_deduction(): void
+    {
+        $contract = $this->makeContract('LegacyFlagSafe');
+        $this->assignDriver($contract);
+        $this->logWorkedDay($contract, '2026-03-02');
+
+        $legacy = $this->makeViolation('2026-03-10', 50.000, 50.000, alreadyDeducted: true);
+        $fresh = $this->makeViolation('2026-03-12', 4.000, 4.000);
+
+        $this->approveSheet($contract, 2026, 3);
+        $this->approveConsolidated(2026, 3);
+
+        $this->assertTrue((bool) $fresh->fresh()->is_deducted, 'this run collected it');
+
+        $this->postJson('/api/payroll/consolidated/2026/3/unapprove')->assertOk();
+
+        $this->assertTrue((bool) $legacy->fresh()->is_deducted, 'legacy deduction must survive');
+        $this->assertFalse((bool) $fresh->fresh()->is_deducted, 'this run released its own');
     }
 
     /**

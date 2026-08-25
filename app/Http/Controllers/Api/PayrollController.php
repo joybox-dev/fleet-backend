@@ -2034,7 +2034,14 @@ class PayrollController extends Controller
 
             // Deductions calculation for contract level (Traffic Violations ONLY).
             // `driver_deduction` mirrors `driver_share`, so a company-liable fine is 0 by design.
-            $violSum = (float) $allViolations->get($empId, collect())->sum('driver_deduction');
+            //
+            // A fine already marked `is_deducted` was collected elsewhere — the legacy payroll
+            // run, or a previously approved consolidated month. Both payroll paths are in use,
+            // so charging it again here would take the same fine off the driver twice.
+            $empViolations = $allViolations->get($empId, collect());
+            $outstandingViolations = $empViolations->filter(fn ($v) => ! $v->is_deducted);
+            $violSum = (float) $outstandingViolations->sum('driver_deduction');
+            $violAlreadyDeducted = (float) $empViolations->filter(fn ($v) => (bool) $v->is_deducted)->sum('driver_deduction');
             $totalContractDeductions = $violSum;
 
             // Manual adjustments calculation for this driver
@@ -2080,6 +2087,7 @@ class PayrollController extends Controller
                 'absence_deduction' => $calcResult['absence_deduction'] ?? 0.0,
                 'gross_contract_earnings' => $grossEarnings,
                 'violations_deduction' => $violSum,
+                'violations_already_deducted' => round($violAlreadyDeducted, 3),
                 'manual_adjustments' => [
                     'total' => $netAdjustment,
                     'additions' => $additionsSum,
@@ -2427,9 +2435,12 @@ class PayrollController extends Controller
                 $advancesMap[$adv->employee_id] = ($advancesMap[$adv->employee_id] ?? 0.0) + $dedAmt;
             }
 
+            // Only fines still outstanding. One already marked `is_deducted` was collected by
+            // the legacy payroll run or an earlier approved month, and must not be taken twice.
             $violationsMap = \App\Models\Violation::withoutGlobalScopes()
                 ->whereIn('employee_id', $allEmpIds)
                 ->whereBetween('violation_date', [$startDate, $endDate])
+                ->where('is_deducted', false)
                 ->get()
                 ->groupBy('employee_id')
                 ->map(fn ($group) => (float) $group->sum('driver_deduction'))
@@ -2643,12 +2654,22 @@ class PayrollController extends Controller
                 $advance->saveQuietly();
             }
 
-            // Mark the fines this month collected so they are not charged twice.
-            Violation::withoutGlobalScopes()
+            // Mark only the fines THIS run collects. Ones already flagged were charged by the
+            // legacy payroll run, so they were never included in the projection above and must
+            // keep their flag — otherwise unapproving would release someone else's deduction.
+            $chargedViolationIds = Violation::withoutGlobalScopes()
                 ->whereIn('employee_id', $employeeIds)
                 ->whereBetween('violation_date', [$startDate, $endDate])
                 ->where('driver_deduction', '>', 0)
-                ->update(['is_deducted' => true]);
+                ->where('is_deducted', false)
+                ->pluck('id')
+                ->all();
+
+            if (! empty($chargedViolationIds)) {
+                Violation::withoutGlobalScopes()
+                    ->whereIn('id', $chargedViolationIds)
+                    ->update(['is_deducted' => true]);
+            }
 
             // Freeze the sheet as it stands AFTER the deductions were applied. Re-projecting
             // an approved month would forget what it collected the moment an advance closes.
@@ -2680,6 +2701,8 @@ class PayrollController extends Controller
             $data['drivers'] = $drivers;
             $data['is_approved'] = true;
             $data['deductions_applied'] = true;
+            // Recorded so unapprove releases exactly these fines and nothing else.
+            $data['charged_violation_ids'] = $chargedViolationIds;
             $data['summary'] = array_merge($data['summary'] ?? [], [
                 'total_violations_deductions' => round($totals['violations'], 3),
                 'total_advances_deductions' => round($totals['advances'], 3),
@@ -2751,11 +2774,12 @@ class PayrollController extends Controller
                 $deduction->delete();
             }
 
-            $employeeIds = collect($run->snapshot_data['drivers'] ?? [])->pluck('employee_id')->filter()->all();
-            if (! empty($employeeIds)) {
+            // Release only the fines this run charged. Anything the legacy payroll path had
+            // already collected keeps its flag, so unapproving here cannot make it billable again.
+            $chargedViolationIds = $run->snapshot_data['charged_violation_ids'] ?? null;
+            if (! empty($chargedViolationIds)) {
                 Violation::withoutGlobalScopes()
-                    ->whereIn('employee_id', $employeeIds)
-                    ->whereBetween('violation_date', [$startDate, $endDate])
+                    ->whereIn('id', $chargedViolationIds)
                     ->update(['is_deducted' => false]);
             }
 
