@@ -1873,6 +1873,77 @@ class PayrollController extends Controller
     }
 
     /**
+     * Price a month one override-segment at a time and add the segments together.
+     *
+     * A driver whose override starts mid-month is paid by the contract rule up to that date and
+     * by the override from it on. Previously one override that merely touched the month repriced
+     * all of it, including days it did not cover.
+     *
+     * @param  array<string, array{override: ?\App\Models\DriverContractOverride, logs: \Illuminate\Support\Collection}>  $segments
+     * @return array<string, mixed>
+     */
+    private static function sumContractPayrollSegments(
+        Employee $employee,
+        Contract $contract,
+        ContractAssignment $assignment,
+        array $segments,
+        ?int $vtId
+    ): array {
+        $numeric = [
+            'orders_count', 'base_salary', 'orders_bonus', 'required_target',
+            'deficit_deduction', 'surplus_bonus', 'absence_deduction', 'gross_contract_earnings',
+        ];
+
+        $totals = array_fill_keys($numeric, 0);
+        $details = [];
+        $multi = count($segments) > 1;
+
+        foreach ($segments as $segment) {
+            $result = \App\Services\ContractPayrollService::calculateDriverContractPayroll(
+                $employee,
+                $contract,
+                $assignment,
+                $segment['override'],
+                $segment['logs'],
+                $vtId
+            );
+
+            foreach ($numeric as $field) {
+                $totals[$field] += (float) ($result[$field] ?? 0);
+            }
+
+            // With more than one segment the reader needs to know which stretch a line belongs to,
+            // otherwise the breakdown reads as one month priced two contradictory ways.
+            $prefix = '';
+            if ($multi) {
+                $dates = $segment['logs']->map(fn ($l) => substr((string) $l->log_date, 0, 10))->sort()->values();
+                $span = $dates->isEmpty()
+                    ? ''
+                    : ($dates->first() === $dates->last() ? $dates->first() : $dates->first().' → '.$dates->last());
+                $label = $segment['override'] ? 'استثناء مخصص' : 'تسعير العقد';
+                $prefix = $span === '' ? "[{$label}] " : "[{$label} {$span}] ";
+            }
+
+            foreach (($result['calculation_details'] ?? []) as $line) {
+                if ($prefix !== '' && isset($line['label'])) {
+                    $line['label'] = $prefix.$line['label'];
+                }
+                $details[] = $line;
+            }
+        }
+
+        $totals['orders_count'] = (int) $totals['orders_count'];
+        $totals['required_target'] = (int) $totals['required_target'];
+        foreach (['base_salary', 'orders_bonus', 'deficit_deduction', 'surplus_bonus', 'absence_deduction', 'gross_contract_earnings'] as $money) {
+            $totals[$money] = round($totals[$money], 3);
+        }
+        $totals['calculation_details'] = $details;
+        $totals['segments'] = count($segments);
+
+        return $totals;
+    }
+
+    /**
      * GET /api/payroll/contract-sheet/{contract}
      * Contract-Centric Payroll Sheet API
      */
@@ -1933,12 +2004,22 @@ class PayrollController extends Controller
             }
         }
 
-        // Fetch logs for all drivers in this contract
+        // Fetch logs for all drivers in this contract.
+        // withoutGlobalScopes() is here to cross the company scope, but it drops SoftDeletes with
+        // it — so the sheet was paying for deleted logs that the dashboard (which uses the scoped
+        // model) does not show. The delete filter is put back explicitly.
         $allLogs = DailyLog::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('log_date', [$startDate, $endDate])
             ->get()
             ->groupBy('employee_id');
+
+        // Vehicle type is decided by the vehicles actually driven, so resolve them all once here
+        // rather than hitting the table per driver inside the loop.
+        $vehicleTypeById = \App\Models\Vehicle::withoutGlobalScopes()
+            ->whereIn('id', $allLogs->flatten(1)->pluck('vehicle_id')->filter()->unique()->values())
+            ->pluck('vehicle_type_id', 'id');
 
         // Traffic violations are the only automatic deduction applied at contract level.
         // Salary advances are deliberately left out here and resolved once per employee in
@@ -1987,25 +2068,70 @@ class PayrollController extends Controller
             }
             $segRatio = $daysInMonth > 0 ? min(1.0, max(0.0, $assignedDays / $daysInMonth)) : 1.0;
 
-            // Driver's logs for this contract
-            $empLogs = $allLogs->get($empId, collect())->where('contract_id', $contractId);
+            // Driver's logs for this contract, bounded by the assignment window.
+            // $effStart/$effEnd were computed above and then never used, so a log dated outside
+            // the driver's own assignment was still paid — which is how a sheet could read
+            // "13 days worked out of 12 assigned". bulkStore already refuses to save those days.
+            $contractLogs = $allLogs->get($empId, collect())->where('contract_id', $contractId);
+            $inWindow = fn ($l) => substr((string) $l->log_date, 0, 10) >= $effStart
+                && substr((string) $l->log_date, 0, 10) <= $effEnd;
 
-            // Active override for this driver
-            $activeOverride = $assignment->overrides ? $assignment->overrides->first(function($ov) use ($startDate, $endDate) {
-                $ovStart = $ov->effective_from ? substr((string)$ov->effective_from, 0, 10) : $startDate;
-                $ovEnd = $ov->effective_to ? substr((string)$ov->effective_to, 0, 10) : null;
-                return $ovStart <= $endDate && (!$ovEnd || $ovEnd >= $startDate);
-            }) : null;
+            $empLogs = $contractLogs->filter($inWindow);
 
-            // Vehicle type resolution
-            $vtId = $employee->vehicle_type_id;
-            if (!$vtId) {
-                $firstLogWithVeh = $empLogs->firstWhere('vehicle_id', '!=', null);
-                if ($firstLogWithVeh) {
-                    $veh = \App\Models\Vehicle::withoutGlobalScopes()->find($firstLogWithVeh->vehicle_id);
-                    if ($veh) $vtId = $veh->vehicle_type_id;
+            // Days that fall outside the window are not paid, but they are named. Dropping a
+            // driver's whole month to 0.000 with no reason on the row is how a real defect gets
+            // mistaken for a rounding error.
+            $outOfWindow = $contractLogs->reject($inWindow);
+            $outOfWindowOrders = (int) $outOfWindow->sum('orders_count');
+            $outOfWindowDates = $outOfWindow->filter(fn ($l) => (int) $l->orders_count > 0)
+                ->map(fn ($l) => substr((string) $l->log_date, 0, 10))
+                ->values()->all();
+
+            // Which override, if any, covers a given day. effective_from/effective_to used to be
+            // treated as a switch: any overlap with the month applied the override to all 31 days,
+            // so an override configured for a single day repriced the whole month.
+            $overridesForAssignment = $assignment->overrides ?: collect();
+            $overrideForDate = function (string $date) use ($overridesForAssignment) {
+                return $overridesForAssignment->first(function ($ov) use ($date) {
+                    $ovStart = $ov->effective_from ? substr((string) $ov->effective_from, 0, 10) : null;
+                    $ovEnd = $ov->effective_to ? substr((string) $ov->effective_to, 0, 10) : null;
+
+                    return (! $ovStart || $ovStart <= $date) && (! $ovEnd || $ovEnd >= $date);
+                });
+            };
+
+            // Split the month into stretches of days that share an override. No override, or one
+            // covering every logged day, yields a single segment and behaves exactly as before.
+            $segments = [];
+            foreach ($empLogs as $segLog) {
+                $segOverride = $overrideForDate(substr((string) $segLog->log_date, 0, 10));
+                $segKey = $segOverride ? 'ov:'.$segOverride->id : 'base';
+                if (! isset($segments[$segKey])) {
+                    $segments[$segKey] = ['override' => $segOverride, 'logs' => collect()];
                 }
+                $segments[$segKey]['logs']->push($segLog);
             }
+            if (empty($segments)) {
+                $segments['base'] = ['override' => $overrideForDate($effStart), 'logs' => collect()];
+            }
+
+            // For labelling and the audit column: the override that priced the most of this month.
+            $activeOverride = collect($segments)
+                ->filter(fn ($seg) => $seg['override'] !== null)
+                ->sortByDesc(fn ($seg) => $seg['logs']->count())
+                ->first()['override'] ?? null;
+
+            // Vehicle type resolution.
+            // `employees` has no vehicle_type_id column, so the old first line was always null and
+            // the type always came from firstWhere() - the first log of the month priced all of it.
+            // A driver who moved from a bike to a car mid-month had the whole month paid at
+            // whichever came first, while the dashboard refused to guess and showed 0. Now both
+            // read every log of the month and neither guesses.
+            $vtIds = $empLogs->pluck('vehicle_id')->filter()
+                ->map(fn ($vid) => $vehicleTypeById[$vid] ?? null)
+                ->filter()->unique()->values();
+            $vehicleTypeIsMixed = $vtIds->count() > 1;
+            $vtId = $vtIds->count() === 1 ? (int) $vtIds->first() : null;
 
             // Determine driver payment method
             $driverPaymentMethod = null;
@@ -2024,15 +2150,37 @@ class PayrollController extends Controller
                 $driverPaymentMethod = $contract->driver_payment_method ?: ($contract->payment_type ?: 'per_order');
             }
 
-            // Route to ContractPayrollService
-            $calcResult = \App\Services\ContractPayrollService::calculateDriverContractPayroll(
+            // Route to ContractPayrollService, once per stretch of days that share an override.
+            // A month with no override, or one override covering all of it, is a single segment
+            // and behaves exactly as before.
+            $calcResult = self::sumContractPayrollSegments(
                 $employee,
                 $contract,
                 $assignment,
-                $activeOverride,
-                $empLogs,
+                $segments,
                 $vtId
             );
+
+            // An override replaces the payment method outright, so the sheet shows a number the
+            // contract's own pricing never produced. Running the same month once more without the
+            // override gives the reader something to check it against.
+            $contractDefaultGross = null;
+            if ($activeOverride) {
+                try {
+                    $defaultCalc = \App\Services\ContractPayrollService::calculateDriverContractPayroll(
+                        $employee,
+                        $contract,
+                        $assignment,
+                        null,
+                        $empLogs,
+                        $vtId
+                    );
+
+                    $contractDefaultGross = round((float) ($defaultCalc['gross_contract_earnings'] ?? 0), 3);
+                } catch (\Throwable $e) {
+                    \Log::warning('Contract-default projection failed for employee ' . $empId . ': ' . $e->getMessage());
+                }
+            }
 
             // Deductions calculation for contract level (Traffic Violations ONLY).
             // `driver_deduction` mirrors `driver_share`, so a company-liable fine is 0 by design.
@@ -2078,6 +2226,14 @@ class PayrollController extends Controller
                 'payment_method' => $driverPaymentMethod,
                 'payment_method_label' => self::getPaymentMethodLabel($driverPaymentMethod),
                 'has_override' => !!$activeOverride,
+                // An inactive assignment is reported, not dropped: this driver logged real work,
+                // and silently removing a month of earned pay is worse than an unexpected row.
+                'assignment_status' => $assignment->status,
+                'out_of_window_logs' => $outOfWindow->count(),
+                'out_of_window_orders' => $outOfWindowOrders,
+                'out_of_window_dates' => $outOfWindowDates,
+                'vehicle_type_is_mixed' => $vehicleTypeIsMixed,
+                'vehicle_type_ids' => $vtIds->all(),
                 'assigned_days' => $assignedDays,
                 'actual_work_days' => $actualWorkDays,
                 'days_ratio' => round($segRatio, 4),
@@ -2109,6 +2265,10 @@ class PayrollController extends Controller
                     'total' => $totalContractDeductions
                 ],
                 'net_payout' => $netPayout,
+                'contract_default_gross' => $contractDefaultGross,
+                'override_delta' => $contractDefaultGross === null
+                    ? null
+                    : round($grossEarnings - $contractDefaultGross, 3),
                 'calculation_details' => $calcDetails
             ];
 
@@ -2126,6 +2286,22 @@ class PayrollController extends Controller
             ->where('month', $month)
             ->where('status', 'approved')
             ->first();
+
+        // An approved month is what was approved. Re-deriving it can only drift: the fine that
+        // was charged here gets flagged `is_deducted` when the consolidated month collects it,
+        // and the next live pass would drop it from a sheet that is supposed to be closed.
+        if ($approvedRun) {
+            $frozen = $approvedRun->snapshot_data;
+            if (is_string($frozen)) {
+                $frozen = json_decode($frozen, true);
+            }
+            if (is_array($frozen) && ! empty($frozen['drivers'])) {
+                $frozen['is_approved'] = true;
+                $frozen['approved_run'] = $approvedRun;
+
+                return response()->json($frozen);
+            }
+        }
 
         return response()->json([
             'contract' => [
@@ -2902,7 +3078,7 @@ class PayrollController extends Controller
         return $due > 0 ? round($due, 3) : 0.0;
     }
 
-    private static function getPaymentMethodLabel($method)
+    public static function getPaymentMethodLabel($method)
     {
         return match ($method) {
             'fixed' => 'راتب ثابت (Fixed)',

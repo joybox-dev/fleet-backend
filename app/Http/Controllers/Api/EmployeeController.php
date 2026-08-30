@@ -358,6 +358,24 @@ class EmployeeController extends Controller
     }
 
     /**
+     * GET /api/employees/{employee}/history
+     * Month by month: what the driver earned, what was deducted, and what was left — with
+     * approved months read from their frozen snapshot rather than recomputed.
+     */
+    public function history(Request $request, Employee $employee): JsonResponse
+    {
+        if (! $request->user()->can('employees.view')) {
+            return response()->json(['message' => 'غير مصرح لك بعرض بيانات الموظفين.'], 403);
+        }
+
+        return response()->json(\App\Services\EmployeeLedgerService::history(
+            $employee,
+            $request->query('from'),
+            $request->query('to')
+        ));
+    }
+
+    /**
      * GET /api/employees/{employee}/balance
      * Employee debit/credit ledger — from meeting: حساب الموظف (مدين ودائن)
      */

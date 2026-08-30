@@ -170,6 +170,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('employees/bulk-delete', [EmployeeController::class, 'bulkDestroy']);
         Route::apiResource('employees', EmployeeController::class);
         Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
+        Route::get('employees/{employee}/history', [EmployeeController::class, 'history']);
+
+        // One search box across contracts, employees, vehicles, clients and violations.
+        Route::get('search', \App\Http\Controllers\Api\GlobalSearchController::class);
 
         // Employee Documents
         Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);

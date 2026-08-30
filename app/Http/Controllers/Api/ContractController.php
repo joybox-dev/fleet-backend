@@ -208,9 +208,82 @@ class ContractController extends Controller
             $validated['default_order_commission'] = $validated['rate_per_order'];
         }
 
+        // Changing a vehicle type's payment method orphans every log recorded under the old one:
+        // switching a contract from `zones` to `zones_tiers` left 962 orders with no zone, and so
+        // with no price, and nothing said so. The switch is still allowed - it is no longer silent.
+        // `dry_run` lets the UI ask what a change would cost before committing to it.
+        $pricingImpact = $this->driverPricingChangeImpact($contract, $validated['driver_pricing_rules'] ?? null);
+
+        if ($request->boolean('dry_run')) {
+            return response()->json([
+                'dry_run' => true,
+                'pricing_change_impact' => $pricingImpact,
+            ]);
+        }
+
         $contract->update($validated);
 
-        return response()->json($contract->fresh());
+        return response()->json(
+            $contract->fresh()->toArray() + ['pricing_change_impact' => $pricingImpact]
+        );
+    }
+
+    /**
+     * What a change of driver payment method would do to logs already recorded.
+     *
+     * Zone-priced methods need `daily_logs.zone` (or a zone_orders map in notes); a log written
+     * under a method with no notion of zones carries neither, so once the method changes those
+     * orders match no zone rule and are worth nothing.
+     *
+     * @param  array<int|string, mixed>|null  $newRules
+     * @return array<int, array<string, mixed>>
+     */
+    private function driverPricingChangeImpact(Contract $contract, $newRules): array
+    {
+        if (! is_array($newRules)) {
+            return [];
+        }
+
+        $oldRules = is_array($contract->driver_pricing_rules) ? $contract->driver_pricing_rules : [];
+        $zoneBased = ['zones', 'zone', 'zones_tiers'];
+        $impact = [];
+
+        foreach ($newRules as $vtId => $rule) {
+            $newMethod = is_array($rule) ? ($rule['payment_method'] ?? null) : null;
+            $oldMethod = $oldRules[$vtId]['payment_method'] ?? null;
+            if (! $newMethod || $newMethod === $oldMethod) {
+                continue;
+            }
+
+            $entry = [
+                'vehicle_type_id' => (int) $vtId,
+                'from' => $oldMethod,
+                'to' => $newMethod,
+                'logs_left_unpriced' => 0,
+                'orders_left_unpriced' => 0,
+            ];
+
+            if (in_array($newMethod, $zoneBased, true) && ! in_array($oldMethod, $zoneBased, true)) {
+                $unzoned = \App\Models\DailyLog::withoutGlobalScopes()
+                    ->whereNull('deleted_at')
+                    ->where('contract_id', $contract->id)
+                    ->where('orders_count', '>', 0)
+                    ->where(function ($q) {
+                        $q->whereNull('zone')->orWhere('zone', '');
+                    })
+                    ->where(function ($q) {
+                        $q->whereNull('notes')->orWhere('notes', 'not like', '%zone_orders%');
+                    })
+                    ->get(['id', 'orders_count']);
+
+                $entry['logs_left_unpriced'] = $unzoned->count();
+                $entry['orders_left_unpriced'] = (int) $unzoned->sum('orders_count');
+            }
+
+            $impact[] = $entry;
+        }
+
+        return $impact;
     }
 
     public function deletionCheck(Contract $contract): JsonResponse
