@@ -20,6 +20,21 @@ class ReportController extends Controller
      * Vehicles + employees with documents expiring within 60 days.
      * From meeting: red = expired, warning = approaching.
      */
+    /**
+     * GET /api/reports/deductions
+     * Every deduction on every employee, and whether it has been taken yet.
+     */
+    public function deductions(Request $request): JsonResponse
+    {
+        if (! $request->user()->can('payroll.view')) {
+            return response()->json(['message' => 'غير مصرح لك بعرض الخصومات.'], 403);
+        }
+
+        return response()->json(
+            \App\Services\DeductionsReportService::build(app('current_company_id'))
+        );
+    }
+
     public function expiringDocs(Request $request): JsonResponse
     {
         $days      = (int) $request->get('days', 60);

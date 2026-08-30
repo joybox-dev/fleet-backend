@@ -54,6 +54,7 @@ class CompanyDeductionService
 
         // Traffic fines — the driver's share only; a company-liable fine stores 0.
         Violation::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('violation_date', [$startDate, $endDate])
             ->where('is_deducted', false)
@@ -71,6 +72,7 @@ class CompanyDeductionService
         // in an earlier month may never have been collected — the ledger is what stops it being
         // charged again once it has.
         MaintenanceRecord::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('liable_employee_id', $employeeIds)
             ->where('status', 'approved')
             ->where('driver_deduction', '>', 0)
@@ -86,6 +88,7 @@ class CompanyDeductionService
 
         // Custody returned damaged or lost.
         CustodyItem::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->where('status', 'returned')
             ->whereIn('return_condition', ['damaged', 'lost'])
@@ -102,6 +105,7 @@ class CompanyDeductionService
 
         // Expenses the driver bears.
         DriverExpense::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->where('driver_amount', '>', 0)
             ->where('is_deducted', false)
@@ -118,6 +122,7 @@ class CompanyDeductionService
         // Approved unpaid leave overlapping this month. Naturally month-scoped, so it cannot
         // repeat across months the way a cumulative charge can.
         EmployeeLeave::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->where('status', 'approved')
             ->where('is_paid', false)
@@ -140,6 +145,7 @@ class CompanyDeductionService
 
         // Salary advance instalments due this month.
         SalaryAdvance::withoutGlobalScopes()
+            ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->where('status', 'active')
             ->whereDate('advance_date', '<=', $endDate)

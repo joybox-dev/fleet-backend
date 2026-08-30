@@ -249,6 +249,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Reports
         Route::prefix('reports')->group(function () {
+            Route::get('deductions', [ReportController::class, 'deductions']);
             Route::get('violations', [ReportController::class, 'violations']);
             Route::get('expiring-docs', [ReportController::class, 'expiringDocs']);
             Route::get('pending-cash', [ReportController::class, 'pendingCash']);
