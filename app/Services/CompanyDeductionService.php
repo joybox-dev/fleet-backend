@@ -23,10 +23,25 @@ use Illuminate\Support\Collection;
 class CompanyDeductionService
 {
     /**
+     * Payroll and a month-by-month history ask different questions of the same rows.
+     *
+     * Payroll asks what is collectable when this month is closed, and a charge that was never
+     * collected is still collectable — so maintenance, custody and expenses stay open-ended above
+     * their month, and the ledger is what stops them being charged twice.
+     *
+     * A history asks which month a charge arose in, and has to answer with exactly one month:
+     * its rows get summed, so an open-ended charge is counted once per open month. A single
+     * 20.000 KWD expense dated 09/07 was reported in July, August and September at once, and the
+     * employee's financial-account tab totalled it to 40.000 and climbing.
+     *
+     * Same rules, same exclusions, same ledger check either way; the only difference is a lower
+     * bound on the three cumulative debts.
+     *
      * @param  array<int>  $employeeIds
+     * @param  bool  $originatedInMonthOnly  History mode. Never set by payroll.
      * @return array<int, array{items: array<int, array{source_type: string, source_id: ?int, amount: float, label: string}>, total: float}>
      */
-    public static function pendingFor(array $employeeIds, string $startDate, string $endDate, int $year, int $month): array
+    public static function pendingFor(array $employeeIds, string $startDate, string $endDate, int $year, int $month, bool $originatedInMonthOnly = false): array
     {
         if (empty($employeeIds)) {
             return [];
@@ -76,7 +91,11 @@ class CompanyDeductionService
             ->whereIn('liable_employee_id', $employeeIds)
             ->where('status', 'approved')
             ->where('driver_deduction', '>', 0)
-            ->whereDate('maintenance_date', '<=', $endDate)
+            ->when(
+                $originatedInMonthOnly,
+                fn ($q) => $q->whereBetween('maintenance_date', [$startDate, $endDate]),
+                fn ($q) => $q->whereDate('maintenance_date', '<=', $endDate)
+            )
             ->get()
             ->each(fn ($m) => $add(
                 (int) $m->liable_employee_id,
@@ -93,7 +112,11 @@ class CompanyDeductionService
             ->where('status', 'returned')
             ->whereIn('return_condition', ['damaged', 'lost'])
             ->where('deduction_amount', '>', 0)
-            ->whereDate('returned_date', '<=', $endDate)
+            ->when(
+                $originatedInMonthOnly,
+                fn ($q) => $q->whereBetween('returned_date', [$startDate, $endDate]),
+                fn ($q) => $q->whereDate('returned_date', '<=', $endDate)
+            )
             ->get()
             ->each(fn ($c) => $add(
                 (int) $c->employee_id,
@@ -109,7 +132,11 @@ class CompanyDeductionService
             ->whereIn('employee_id', $employeeIds)
             ->where('driver_amount', '>', 0)
             ->where('is_deducted', false)
-            ->whereDate('expense_date', '<=', $endDate)
+            ->when(
+                $originatedInMonthOnly,
+                fn ($q) => $q->whereBetween('expense_date', [$startDate, $endDate]),
+                fn ($q) => $q->whereDate('expense_date', '<=', $endDate)
+            )
             ->get()
             ->each(fn ($e) => $add(
                 (int) $e->employee_id,

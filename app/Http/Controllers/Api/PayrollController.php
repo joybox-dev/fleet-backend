@@ -261,23 +261,13 @@ class PayrollController extends Controller
                     'total_contract_bonuses' => $data['total_contract_bonuses'],
                 ]);
 
-                // Mark violations as deducted
-                if ($data['violations_deduction'] > 0) {
-                    Violation::where('employee_id', $employee->id)
-                        ->where('is_driver_liable', true)
-                        ->where('is_deducted', false)
-                        ->whereDate('violation_date', '<=', $endDate)
-                        ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
-                }
-
-                // Mark driver expenses as deducted
-                if (($data['driver_expense_deduction'] ?? 0) > 0) {
-                    \App\Models\DriverExpense::where('employee_id', $employee->id)
-                        ->where('driver_amount', '>', 0)
-                        ->where('is_deducted', false)
-                        ->whereDate('expense_date', '<=', $endDate)
-                        ->update(['is_deducted' => true, 'payroll_slip_id' => $slip->id]);
-                }
+                // Building the sheet is not collecting the money. This used to flag every fine
+                // and expense `is_deducted` here, on a run that is created as a draft and that
+                // nobody has approved — which took the charge out of reach of the consolidated
+                // approval, the only place that actually charges a driver and writes a ledger
+                // row. On one production copy that silently burned 896.000 KWD across 34
+                // charges. The slip below still reports the amounts; what it must not do is
+                // claim they have been taken.
 
                 // Create AdvanceDeduction records & update advances
                 $activeAdvances = $allAdvances->get($employee->id, collect());
@@ -729,45 +719,11 @@ class PayrollController extends Controller
                     'total_contract_bonuses' => $data['total_contract_bonuses'],
                 ]);
 
-                // Re-mark violations as deducted by primary key
-                if ($data['violations_deduction'] > 0) {
-                    $vIds = Violation::withoutGlobalScopes()
-                        ->where('employee_id', $employee->id)
-                        ->where('is_driver_liable', true)
-                        ->where('is_deducted', false)
-                        ->whereDate('violation_date', '<=', $endDate)
-                        ->pluck('id')
-                        ->toArray();
-
-                    if (!empty($vIds)) {
-                        Violation::withoutGlobalScopes()
-                            ->whereIn('id', $vIds)
-                            ->update([
-                                'is_deducted' => true,
-                                'payroll_slip_id' => $slip->id,
-                            ]);
-                    }
-                }
-
-                // Re-mark driver expenses as deducted by primary key
-                if (($data['driver_expense_deduction'] ?? 0) > 0) {
-                    $expIds = \App\Models\DriverExpense::withoutGlobalScopes()
-                        ->where('employee_id', $employee->id)
-                        ->where('driver_amount', '>', 0)
-                        ->where('is_deducted', false)
-                        ->whereDate('expense_date', '<=', $endDate)
-                        ->pluck('id')
-                        ->toArray();
-
-                    if (!empty($expIds)) {
-                        \App\Models\DriverExpense::withoutGlobalScopes()
-                            ->whereIn('id', $expIds)
-                            ->update([
-                                'is_deducted' => true,
-                                'payroll_slip_id' => $slip->id,
-                            ]);
-                    }
-                }
+                // Deliberately does not re-flag anything. A rebuild is triggered by saving a
+                // daily log (DailyLogObserver::recalculateDraftRun), so re-flagging here meant
+                // ordinary daily-log work marked fines and expenses as collected on a draft run.
+                // The unflagging above still runs, so a rebuild now releases whatever an earlier
+                // build had wrongly claimed. Collection belongs to approveConsolidatedSheet().
 
                 // Re-create advance deductions
                 $activeAdvances = $allAdvances->get($employee->id, collect());

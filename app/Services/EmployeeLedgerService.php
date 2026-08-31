@@ -2,11 +2,21 @@
 
 namespace App\Services;
 
+use App\Http\Controllers\Api\PayrollController;
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\ConsolidatedPayrollRun;
+use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\ContractPayrollRun;
+use App\Models\CustodyItem;
 use App\Models\DailyLog;
+use App\Models\DriverExpense;
 use App\Models\Employee;
+use App\Models\EmployeeLeave;
+use App\Models\MaintenanceRecord;
+use App\Models\SalaryAdvance;
+use App\Models\Vehicle;
+use App\Models\Violation;
 use Carbon\Carbon;
 
 /**
@@ -111,22 +121,24 @@ class EmployeeLedgerService
                 $add($r->last_log);
             });
 
-        // Fill the span between the first and last log so an idle month is still listed.
+        // Fill the span between the first and last log so an idle month is still listed. The dates
+        // are reduced to months in PHP rather than by DATE_FORMAT, which is MySQL-only and left
+        // this whole screen impossible to cover with the SQLite test suite.
         $logDates = DailyLog::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('employee_id', $employee->id)
-            ->selectRaw("DISTINCT DATE_FORMAT(log_date, '%Y-%m-01') as ym")
-            ->pluck('ym');
+            ->distinct()
+            ->pluck('log_date');
         foreach ($logDates as $d) {
             $add($d);
         }
 
         foreach ([
-            [\App\Models\Violation::class, 'employee_id', 'violation_date'],
-            [\App\Models\CustodyItem::class, 'employee_id', 'returned_date'],
-            [\App\Models\DriverExpense::class, 'employee_id', 'expense_date'],
-            [\App\Models\EmployeeLeave::class, 'employee_id', 'start_date'],
-            [\App\Models\SalaryAdvance::class, 'employee_id', 'advance_date'],
-            [\App\Models\MaintenanceRecord::class, 'liable_employee_id', 'maintenance_date'],
+            [Violation::class, 'employee_id', 'violation_date'],
+            [CustodyItem::class, 'employee_id', 'returned_date'],
+            [DriverExpense::class, 'employee_id', 'expense_date'],
+            [EmployeeLeave::class, 'employee_id', 'start_date'],
+            [SalaryAdvance::class, 'employee_id', 'advance_date'],
+            [MaintenanceRecord::class, 'liable_employee_id', 'maintenance_date'],
         ] as [$model, $column, $dateColumn]) {
             $model::withoutGlobalScopes()->whereNull('deleted_at')
                 ->where($column, $employee->id)
@@ -247,7 +259,7 @@ class EmployeeLedgerService
             ->get()
             ->keyBy('contract_id');
 
-        $assignments = \App\Models\ContractAssignment::withoutGlobalScopes()
+        $assignments = ContractAssignment::withoutGlobalScopes()
             ->where('employee_id', $employee->id)
             ->whereDate('start_date', '<=', $end)
             ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $start))
@@ -279,6 +291,7 @@ class EmployeeLedgerService
                         'frozen' => true,
                     ];
                 }
+
                 continue;
             }
 
@@ -290,7 +303,10 @@ class EmployeeLedgerService
             $contracts[] = $result;
         }
 
-        $pending = CompanyDeductionService::pendingFor([$employee->id], $start, $end, $year, $month);
+        // A month row on this screen is a period, not a bill: it carries the charges that arose
+        // in it, so the column can be summed. What payroll would collect if this month were
+        // closed is a different number and belongs to the payroll screens.
+        $pending = CompanyDeductionService::pendingFor([$employee->id], $start, $end, $year, $month, true);
         $items = $pending[$employee->id]['items'] ?? [];
 
         $deductions = array_fill_keys(array_keys(self::SOURCES), 0.0);
@@ -339,8 +355,8 @@ class EmployeeLedgerService
      */
     private static function projectContractMonth(
         Employee $employee,
-        \App\Models\Contract $contract,
-        \App\Models\ContractAssignment $assignment,
+        Contract $contract,
+        ContractAssignment $assignment,
         string $start,
         string $end
     ): ?array {
@@ -361,7 +377,7 @@ class EmployeeLedgerService
         }
 
         $vtIds = $logs->pluck('vehicle_id')->filter()->unique()
-            ->map(fn ($vid) => optional(\App\Models\Vehicle::withoutGlobalScopes()->find($vid))->vehicle_type_id)
+            ->map(fn ($vid) => optional(Vehicle::withoutGlobalScopes()->find($vid))->vehicle_type_id)
             ->filter()->unique()->values();
         $vtId = $vtIds->count() === 1 ? (int) $vtIds->first() : null;
 
@@ -392,7 +408,7 @@ class EmployeeLedgerService
             if ($label === '') {
                 $method = $segment['override']?->override_type
                     ?? ($contract->driver_pricing_rules[$vtId]['payment_method'] ?? null);
-                $label = $method ? \App\Http\Controllers\Api\PayrollController::getPaymentMethodLabel($method) : '';
+                $label = $method ? PayrollController::getPaymentMethodLabel($method) : '';
             }
         }
 
