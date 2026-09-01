@@ -76,48 +76,16 @@ class ContractDashboardController extends Controller
         // 4. Actual Revenue
         $logsRevenue = (float) $dailyLogs->sum('income_amount');
 
+        // Priced from client_pricing_rules through the same service the profitability screen
+        // uses, so the two cannot disagree. What this replaced read the single `zone` column —
+        // set on 31 of 902 August logs — and, when no zone matched, charged the client the
+        // AVERAGE of the contract's zone prices: a rate nobody agreed to. It also had no tier
+        // handling, so tier-priced contracts billed nothing at all.
         if ($logsRevenue == 0) {
-            $contractLogsForRevenue = $dailyLogs;
-
-            $clientPricing = is_string($contract->client_pricing_rules)
-                ? json_decode($contract->client_pricing_rules, true)
-                : $contract->client_pricing_rules;
-
-            foreach ($contractLogsForRevenue as $log) {
-                $orders = (int) $log->orders_count;
-                if ($orders <= 0) continue;
-
-                $vTypeId = $log->vehicle?->vehicle_type_id ?? $contract->vehicle_type_id ?? 1;
-                $zoneName = $log->zone;
-
-                $rate = null;
-                if (is_array($clientPricing) && isset($clientPricing[$vTypeId])) {
-                    $rules = $clientPricing[$vTypeId];
-                    $zones = $rules['zones'] ?? [];
-                    if (is_array($zones) && !empty($zones)) {
-                        if ($zoneName) {
-                            foreach ($zones as $z) {
-                                if (($z['name'] ?? $z['zone'] ?? '') == $zoneName) {
-                                    $rate = (float) ($z['price'] ?? $z['rate'] ?? 0);
-                                    break;
-                                }
-                            }
-                        }
-                        if ($rate === null && isset($zones[0])) {
-                            $prices = array_filter(array_map(fn($z) => (float)($z['price'] ?? $z['rate'] ?? 0), $zones));
-                            if (!empty($prices)) {
-                                $rate = array_sum($prices) / count($prices);
-                            }
-                        }
-                    }
-                }
-
-                if ($rate === null || $rate == 0) {
-                    $rate = (float) ($contract->rate_per_order ?: ($contract->default_order_commission ?: 0));
-                }
-
-                $logsRevenue += $orders * $rate;
-            }
+            $billed = \App\Services\ContractRevenueService::forContractMonth($contract, $dailyLogs);
+            $logsRevenue = $billed['revenue'];
+            $unpricedOrders = $billed['unpriced_orders'];
+            $revenueDetails = $billed['details'];
         }
 
         $fixedRevenue = 0;
@@ -125,6 +93,8 @@ class ContractDashboardController extends Controller
             $fixedRevenue = (float)($contract->fixed_monthly ?? 0);
         }
         $actualRevenue = $logsRevenue + $fixedRevenue;
+        $unpricedOrders = $unpricedOrders ?? 0;
+        $revenueDetails = $revenueDetails ?? [];
 
         // 5. Direct Expenses
         // 5a. Driver Commissions & 5b. Allocated Driver Base Salaries

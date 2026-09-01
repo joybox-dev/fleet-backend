@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Models\CashSettlement;
+use App\Services\ContractRevenueService;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 
@@ -432,9 +433,26 @@ class DashboardController extends Controller
         foreach ($contracts as $contract) {
             $expectedProfit = ((float)$contract->expected_monthly_profit) * $monthsCount;
 
+            // The stored per-log income is still the primary figure — a contract billed at a flat
+            // rate_per_order fills it and it is what was actually invoiced. But that rate is
+            // 0.000 on every contract that moved to client_pricing_rules, which is all fourteen
+            // live ones, so the column is 0 on all 2,209 logs and this screen showed no revenue
+            // at all against 1,823.398 of driver cost. When it comes to nothing, price from the
+            // rules instead — that way past months are right without touching stored data, and a
+            // contract that does fill the column keeps billing exactly as before.
             $logsRevenue = (float) DailyLog::where('contract_id', $contract->id)
                 ->whereBetween('log_date', [$startDateStr, $endDateStr])
                 ->sum('income_amount');
+
+            $billed = ['revenue' => $logsRevenue, 'unpriced_orders' => 0, 'details' => []];
+            if ($logsRevenue == 0.0) {
+                $revenueLogs = DailyLog::with('vehicle:id,vehicle_type_id')
+                    ->where('contract_id', $contract->id)
+                    ->whereBetween('log_date', [$startDateStr, $endDateStr])
+                    ->get(['id', 'orders_count', 'zone', 'notes', 'vehicle_id']);
+
+                $billed = ContractRevenueService::forContractMonth($contract, $revenueLogs, $monthsCount);
+            }
 
             $fixedRevenue = 0;
             if ($contract->payment_type === 'fixed' || $contract->payment_type === 'hybrid') {
@@ -449,6 +467,7 @@ class DashboardController extends Controller
                     }
                 }
             }
+            $logsRevenue = $billed['revenue'];
             $actualRevenue = $logsRevenue + $fixedRevenue;
 
             $driverCommissions = (float) DailyLog::where('contract_id', $contract->id)
@@ -486,6 +505,10 @@ class DashboardController extends Controller
                 'expected_monthly_profit' => (float)$contract->expected_monthly_profit,
                 'expected_profit' => $expectedProfit,
                 'actual_revenue' => $actualRevenue,
+                // Orders the client rules could not price. Without this the shortfall looks like
+                // a quiet month rather than a pricing rule that needs filling in.
+                'unpriced_orders' => $billed['unpriced_orders'],
+                'revenue_details' => $billed['details'],
                 'actual_expenses' => $actualExpenses,
                 'actual_profit' => $actualProfit,
                 'variance' => $variance,
