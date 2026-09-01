@@ -225,6 +225,20 @@ class DashboardController extends Controller
      * GET /api/dashboard/summary
      * Main screen: fleet status, pending cash, today's orders.
      */
+    /**
+     * GET /api/dashboard/money-at-risk
+     * What the operation is losing or has not collected this month.
+     */
+    public function moneyAtRisk(\Illuminate\Http\Request $request): JsonResponse
+    {
+        $year = (int) ($request->query('year') ?: now()->year);
+        $month = (int) ($request->query('month') ?: now()->month);
+
+        return response()->json(
+            \App\Services\MoneyAtRiskService::forMonth(app('current_company_id'), $year, $month)
+        );
+    }
+
     public function summary(): JsonResponse
     {
         // Fleet status breakdown — from meeting: available/working/maintenance/idle

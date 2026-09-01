@@ -74,6 +74,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
     Route::get('dashboard/expiry-alerts', [DashboardController::class, 'expiryAlerts']);
     Route::get('dashboard/contracts-profitability', [DashboardController::class, 'contractsProfitability']);
+    Route::get('dashboard/money-at-risk', [DashboardController::class, 'moneyAtRisk']);
 
     // ═══════════════════════════════════════════════════════════════════
     // OPERATOR + ADMIN: Daily operations
