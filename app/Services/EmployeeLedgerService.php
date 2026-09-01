@@ -338,9 +338,11 @@ class EmployeeLedgerService
             'manual_adjustments' => 0.0,
             'deductions' => $deductions,
             'deductions_total' => round(array_sum($deductions), 3),
-            // Nothing is taken until the consolidated month is approved, so the net still carries
-            // the full earnings and the deductions sit beside it as owed.
-            'net_payout' => round($gross, 3),
+            // What the month leaves him if it were approved as it stands. This used to report the
+            // earnings untouched, on the reasoning that nothing is taken until approval — but a
+            // column headed الصافي that equals الأرباح answers no question, and the totals row then
+            // claimed a net of 92.500 beside deductions of 138.000 for the same driver.
+            'net_payout' => round($gross - array_sum($deductions), 3),
             'charged_items' => [],
         ];
     }

@@ -179,7 +179,11 @@ class ViolationController extends Controller
             'violation_type'   => $request->violation_type,
             'reference_number' => $request->reference_number,
             'amount'           => $request->amount,
-            'is_driver_liable' => $request->boolean('is_driver_liable', true),
+            // Derived, never taken on trust: the flag drives what the list column shows and the
+            // share drives what is charged, so a stored disagreement would let the screen say
+            // «الشركة: 100%» while payroll took money off the driver. A split is still
+            // driver-liable.
+            'is_driver_liable' => $driverShare > 0,
             'photo_path'       => $request->photo_path,
             'notes'            => $request->notes,
             'created_by'       => $request->user()->id,
@@ -313,6 +317,7 @@ class ViolationController extends Controller
             $validated['driver_share'] = $driverShare;
             $validated['contract_share'] = $contractShare;
             $validated['driver_deduction'] = $driverShare; // Backwards compatibility
+            $validated['is_driver_liable'] = $driverShare > 0;
         }
 
         $violation->update($validated);

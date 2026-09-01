@@ -67,12 +67,16 @@ class CompanyDeductionService
             $result[$employeeId]['total'] = round($result[$employeeId]['total'] + $amount, 3);
         };
 
-        // Traffic fines — the driver's share only; a company-liable fine stores 0.
+        // Traffic fines — the driver's share only; a company-liable fine stores 0. The liability
+        // flag is checked as well as the share: the controller keeps the two in step, and this
+        // makes a row written around the controller fail closed rather than charge a driver the
+        // record says is not liable.
         Violation::withoutGlobalScopes()
             ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('violation_date', [$startDate, $endDate])
             ->where('is_deducted', false)
+            ->where('is_driver_liable', true)
             ->where('driver_deduction', '>', 0)
             ->get()
             ->each(fn ($v) => $add(

@@ -209,4 +209,36 @@ class EmployeeHistoryCountsEachChargeOnceTest extends TestCase
 
         $this->assertSame(15.0, round((float) ($july[$this->driver->id]['total'] ?? 0), 3));
     }
+
+    /**
+     * The net column used to report the earnings untouched, so a month with 92.500 earned and
+     * 70.000 owed showed a net of 92.500 — and the totals row claimed a net of 92.500 beside
+     * deductions of 138.000 for the same driver.
+     */
+    public function test_the_net_is_earnings_minus_what_is_owed(): void
+    {
+        $this->julyExpense();
+
+        $history = EmployeeLedgerService::history($this->driver);
+        $july = null;
+        foreach ($history['months'] as $m) {
+            if ($m['label'] === '07/2026') {
+                $july = $m;
+            }
+        }
+
+        $this->assertNotNull($july);
+        $this->assertSame(20.0, round((float) $july['deductions_total'], 3));
+        $this->assertSame(
+            round((float) $july['gross_earnings'] - 20.0, 3),
+            round((float) $july['net_payout'], 3),
+            'the net carries the deductions'
+        );
+
+        $this->assertSame(
+            round((float) $history['totals']['gross_earnings'] - 20.0, 3),
+            round((float) $history['totals']['net_payout'], 3),
+            'and so does the totals row'
+        );
+    }
 }

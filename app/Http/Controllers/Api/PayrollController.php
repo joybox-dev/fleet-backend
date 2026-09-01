@@ -110,7 +110,12 @@ class PayrollController extends Controller
                 ->where('is_deducted', false)
                 ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
-                ->selectRaw('employee_id, SUM(CASE WHEN driver_deduction > 0 THEN driver_deduction ELSE amount END) as total')
+                // A driver_share of 0.000 is a decision — the fine was left to the company — and must
+                // charge nothing. This used to read 'the share, or the whole ticket if the share is
+                // zero', which charged such a fine in full. driver_deduction cannot distinguish the
+                // two because its column defaults to 0, but driver_share is nullable and is only
+                // null on rows written before the split fields existed; those keep the old fallback.
+                ->selectRaw('employee_id, SUM(CASE WHEN driver_share IS NULL THEN amount ELSE driver_deduction END) as total')
                 ->pluck('total', 'employee_id');
 
             // 3. Maintenance deductions
@@ -572,7 +577,12 @@ class PayrollController extends Controller
                 })
                 ->whereDate('violation_date', '<=', $endDate)
                 ->groupBy('employee_id')
-                ->selectRaw('employee_id, SUM(CASE WHEN driver_deduction > 0 THEN driver_deduction ELSE amount END) as total')
+                // A driver_share of 0.000 is a decision — the fine was left to the company — and must
+                // charge nothing. This used to read 'the share, or the whole ticket if the share is
+                // zero', which charged such a fine in full. driver_deduction cannot distinguish the
+                // two because its column defaults to 0, but driver_share is nullable and is only
+                // null on rows written before the split fields existed; those keep the old fallback.
+                ->selectRaw('employee_id, SUM(CASE WHEN driver_share IS NULL THEN amount ELSE driver_deduction END) as total')
                 ->pluck('total', 'employee_id');
 
             // 3. Maintenance deductions
