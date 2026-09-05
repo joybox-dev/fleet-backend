@@ -46,11 +46,43 @@ class ContractController extends Controller
         return response()->json($contracts);
     }
 
+    /**
+     * The payment method a contract states per vehicle type IS the contract's payment method.
+     *
+     * It is stored twice: once as a column, and once inside every pricing rule. The edit form only
+     * ever writes the rules, so demanding the column turned "a contract must say how it pays" into
+     * "fill in a field the screen does not show" — and locked the owner out of the very contracts
+     * he was trying to complete. The column is filled from the rules whenever the request leaves it
+     * out, so the requirement below now falls only on a request that states the method NOWHERE.
+     */
+    private function inferPaymentMethods(Request $request): void
+    {
+        foreach (['client', 'driver'] as $side) {
+            $field = $side.'_payment_method';
+            if (filled($request->input($field))) {
+                continue;
+            }
+
+            $methods = collect($request->input($side.'_pricing_rules') ?: [])
+                ->pluck('payment_method')
+                ->filter()
+                ->unique();
+
+            // Only when every priced vehicle type agrees. Two different methods in one contract is
+            // a real disagreement and the caller has to resolve it, not have one picked for them.
+            if ($methods->count() === 1) {
+                $request->merge([$field => $methods->first()]);
+            }
+        }
+    }
+
     public function store(Request $request): JsonResponse
     {
         if (! $request->user()->can('contracts.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة عقد جديد.'], 403);
         }
+
+        $this->inferPaymentMethods($request);
 
         $companyId = app('current_company_id');
 
@@ -164,6 +196,8 @@ class ContractController extends Controller
         if (! $request->user()->can('contracts.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل العقود.'], 403);
         }
+
+        $this->inferPaymentMethods($request);
 
         $companyId = app('current_company_id');
 

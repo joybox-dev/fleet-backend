@@ -249,4 +249,78 @@ class ContractRevenueIsPricedFromRulesTest extends TestCase
         );
         $this->assertSame(175.0, $this->bill($contract)['revenue']);
     }
+
+    /**
+     * A contract set up before the payment method was demanded can still be edited.
+     *
+     * The method is stored twice — a column on the contract, and a `payment_method` inside every
+     * pricing rule — and the edit screen only ever writes the rules. Requiring the COLUMN therefore
+     * rejected the very save that was completing the contract, with "The client payment method
+     * field is required" on a form that shows no such field. The owner hit it on five live
+     * contracts while filling in the working days their payroll could not be computed without.
+     */
+    public function test_a_contract_states_its_payment_method_through_its_pricing_rules(): void
+    {
+        // Shaped as the live rows are: the column blank, the method named only inside the rules.
+        $contract = Contract::create([
+            'client_id' => $this->client->id,
+            'name' => 'عقد قديم',
+            'contract_number' => 'LEGACY-1',
+            'company_id' => $this->company->id,
+            'payment_type' => 'per_order',
+            'start_date' => '2026-01-01',
+            'client_payment_method' => null,
+            'driver_payment_method' => null,
+            'client_pricing_rules' => ['2' => ['payment_method' => 'zones', 'zones' => [['id' => 'z1', 'name' => 'الطلب', 'price' => '1.750']]]],
+            'driver_pricing_rules' => ['2' => ['payment_method' => 'fixed', 'fixed_amount' => '250', 'fixed_target' => '50']],
+        ]);
+
+        $this->assertNull($contract->client_payment_method, 'the fixture must start with the column blank');
+
+        $response = $this->actingAs($this->user)->putJson("/api/contracts/{$contract->id}", [
+            'name' => 'عقد قديم',
+            'client_id' => $this->client->id,
+            'default_required_work_days' => 26,
+            'client_pricing_rules' => ['2' => ['payment_method' => 'zones', 'zones' => [['id' => 'z1', 'name' => 'الطلب', 'price' => '1.750']]]],
+            'driver_pricing_rules' => ['2' => ['payment_method' => 'fixed', 'fixed_amount' => '250', 'fixed_target' => '50']],
+        ]);
+
+        $response->assertOk();
+
+        $contract->refresh();
+        $this->assertSame(26, (int) $contract->default_required_work_days, 'the field being filled in has to save');
+
+        // The column is filled from the rules, so the contract stops disagreeing with itself.
+        $this->assertSame('zones', $contract->client_payment_method);
+        $this->assertSame('fixed', $contract->driver_payment_method);
+    }
+
+    /**
+     * Reading the method off the rules is not a guess: a contract pricing its vehicle types by
+     * DIFFERENT methods has a real disagreement, and has to be told which one it runs on.
+     */
+    public function test_a_contract_pricing_two_types_two_ways_must_still_say_which_it_uses(): void
+    {
+        $contract = Contract::create([
+            'client_id' => $this->client->id,
+            'name' => 'عقد مختلط',
+            'contract_number' => 'LEGACY-2',
+            'company_id' => $this->company->id,
+            'payment_type' => 'per_order',
+            'start_date' => '2026-01-01',
+            'client_payment_method' => null,
+            'driver_payment_method' => null,
+        ]);
+
+        $this->actingAs($this->user)->putJson("/api/contracts/{$contract->id}", [
+            'name' => 'عقد مختلط',
+            'client_id' => $this->client->id,
+            'default_required_work_days' => 26,
+            'client_pricing_rules' => [
+                '2' => ['payment_method' => 'fixed', 'fixed_amount' => '900'],
+                '3' => ['payment_method' => 'tiers', 'tiers' => [['min' => 1, 'max' => null, 'price' => '0.400']]],
+            ],
+            'driver_pricing_rules' => ['2' => ['payment_method' => 'fixed', 'fixed_amount' => '250']],
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_payment_method']);
+    }
 }
