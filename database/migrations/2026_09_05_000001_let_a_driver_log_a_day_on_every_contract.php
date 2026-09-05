@@ -19,11 +19,21 @@ use Illuminate\Support\Facades\Schema;
  */
 return new class extends Migration
 {
+    /**
+     * The new key is added BEFORE the old one is dropped, and that order is required rather than
+     * tidy: MySQL backs the foreign key on employee_id with whatever index starts on that column,
+     * so dropping the old unique while it is the only such index fails with errno 1553. The new
+     * key also starts on employee_id, so once it exists the foreign key has a home and the old one
+     * can go.
+     */
     public function up(): void
     {
         Schema::table('daily_logs', function (Blueprint $table) {
-            $table->dropUnique(['employee_id', 'vehicle_id', 'log_date']);
             $table->unique(['employee_id', 'contract_id', 'log_date'], 'daily_logs_driver_contract_day_unique');
+        });
+
+        Schema::table('daily_logs', function (Blueprint $table) {
+            $table->dropUnique(['employee_id', 'vehicle_id', 'log_date']);
         });
     }
 
@@ -32,8 +42,11 @@ return new class extends Migration
         // Reversing this can fail on purpose: once a driver has logged two contracts on one day,
         // the old constraint has no way to hold them both. Clear the extra rows first.
         Schema::table('daily_logs', function (Blueprint $table) {
-            $table->dropUnique('daily_logs_driver_contract_day_unique');
             $table->unique(['employee_id', 'vehicle_id', 'log_date']);
+        });
+
+        Schema::table('daily_logs', function (Blueprint $table) {
+            $table->dropUnique('daily_logs_driver_contract_day_unique');
         });
     }
 };
