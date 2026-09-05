@@ -1635,8 +1635,54 @@ class PayrollController extends Controller
                 'total_global_deductions' => round($totalDeductionsSum, 3),
                 'total_net_payout' => round($totalNetSum, 3),
             ],
+            // What stands in the way of approving this month, so the screen can say so before
+            // anyone presses the button rather than after.
+            'approval_blockers' => self::approvalBlockers($driversResult),
             'drivers' => $driversResult,
         ]);
+    }
+
+    /**
+     * Work this month that no pricing rule covers — the one thing that must stop a sheet being
+     * approved.
+     *
+     * It happens when a contract's driver payment method is changed part-way through a month: the
+     * rules that arrive describe the new arrangement, and whatever the month already holds that
+     * they do not cover is left with no applicable price. The driver is then paid nothing for those
+     * orders, and approving freezes that as what he was owed. Somebody has to go and complete the
+     * pricing first; this is what makes them.
+     *
+     * The test is ORDERS, not the flag. `unresolved_vehicle_type` is also true for a driver who
+     * simply never worked — no vehicle, so no type — and there is nothing wrong with his month.
+     * Gating on the flag would have blocked every contract carrying an idle driver, which is most
+     * of them. An unpriced line that carries no orders costs nobody anything.
+     *
+     * @param  array<int, array<string, mixed>>  $drivers
+     * @return array<int, array<string, mixed>>
+     */
+    private static function approvalBlockers(array $drivers): array
+    {
+        $blockers = [];
+
+        foreach ($drivers as $driver) {
+            $unpriced = array_filter(
+                $driver['calculation_details'] ?? [],
+                fn ($line) => ! empty($line['is_unpriced']) && (int) ($line['orders'] ?? 0) > 0
+            );
+
+            if (empty($unpriced)) {
+                continue;
+            }
+
+            $blockers[] = [
+                'employee_id' => $driver['employee_id'] ?? null,
+                'employee_name' => $driver['employee_name'] ?? '',
+                'unpriced_orders' => array_sum(array_map(fn ($l) => (int) ($l['orders'] ?? 0), $unpriced)),
+                'reasons' => array_values(array_unique(array_map(fn ($l) => (string) ($l['label'] ?? ''), $unpriced))),
+            ];
+        }
+
+        return $blockers;
     }
 
     /**
@@ -1663,6 +1709,24 @@ class PayrollController extends Controller
 
         $summary = $data['summary'] ?? [];
         $drivers = $data['drivers'] ?? [];
+
+        // Work with no price on it cannot be signed off. Approving freezes what each driver was
+        // owed, and a driver whose orders no rule covers is frozen at nothing for them — a figure
+        // that can only be corrected by reopening the month. The pricing gets completed first.
+        // A month already approved is served from its frozen snapshot, and re-approving it only
+        // rewrites the same figures. It is not re-judged here: this gate is about what is being
+        // frozen now, not about re-opening what somebody already signed.
+        $blockers = empty($data['is_approved']) ? self::approvalBlockers($drivers) : [];
+
+        if (! empty($blockers)) {
+            $totalUnpriced = array_sum(array_column($blockers, 'unpriced_orders'));
+
+            return response()->json([
+                'message' => 'لا يمكن اعتماد الكشف: '.$totalUnpriced.' طلب لدى '.count($blockers)
+                    .' سائق لا تنطبق عليها أي قاعدة تسعير في هذا العقد. أكمل التسعير أولاً — الاعتماد يجمّد أجر هؤلاء عند صفر لهذه الطلبات.',
+                'approval_blockers' => $blockers,
+            ], 422);
+        }
 
         $run = ContractPayrollRun::updateOrCreate(
             [

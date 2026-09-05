@@ -9,6 +9,7 @@ use App\Models\ContractAssignment;
 use App\Models\ContractPayrollAdjustment;
 use App\Models\CustodyItem;
 use App\Models\DailyLog;
+use App\Models\DriverContractOverride;
 use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
@@ -131,9 +132,14 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
      * financial screen read the month as a loss.
      *
      * Each contract prices only the two vehicle types it runs. The third type a driver strays onto
-     * has no rule, which is how an unbillable order is meant to read. Month volumes are 3,850 orders
-     * on the first type (Z1 1,935 · Z2 1,875 · 40 carrying no zone) and 130 on the second (Z1 65 ·
-     * Z2 65).
+     * has no rule, which is how an unbillable order is meant to read.
+     *
+     * Month volumes: 3,750 orders on the first type (Z1 1,885 · Z2 1,825 · 40 carrying no zone),
+     * 130 on the second (Z1 65 · Z2 65), and 50 on the type with no rule — 3,930 in the month,
+     * which is what test_orders_the_client_agreement_does_not_cover_are_reported_never_priced
+     * asserts. These are not free-standing notes: every figure is pinned by expectedClientBilling()
+     * below, so 1,885 × 0.220 = 414.700 on the zones_tiers contract and 1,885 × 0.300 + 1,825 ×
+     * 0.200 = 930.500 on the zones one. Change a volume and those totals must move with it.
      *
      * @return array<string, array<string, mixed>>
      */
@@ -277,6 +283,83 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
                 ],
             ],
         };
+    }
+
+    /**
+     * Finish this contract's pricing so the month can legitimately be approved.
+     *
+     * The scenario deliberately leaves work that no rule covers — a driver on the type the contract
+     * never priced, orders logged with no zone, a zone an override forgot — because those are real
+     * situations the screens have to report, and several tests below assert exactly how.
+     *
+     * That same month must NOT be approvable: approving freezes those drivers at nothing for work
+     * they actually did, which is what `approveContractSheet` refuses. So a test that needs an
+     * APPROVED month has to do first what the responsible person would do — complete the pricing
+     * and the logs. Nothing here touches deductions, which is all those tests assert on.
+     *
+     * @param  array<string, mixed>  $built
+     */
+    private function completePricing(array $built): void
+    {
+        $contract = $built['contract']->fresh();
+
+        // 1. The vehicle type nobody priced.
+        $rules = $contract->driver_pricing_rules ?: [];
+        $rules[(string) $built['unpriced_type']] = $this->driverRule($contract->driver_payment_method, true);
+        $contract->driver_pricing_rules = $rules;
+        $contract->save();
+
+        // 2. A zone an override priced on one side only. The shape differs between zones and
+        //    zones_tiers, so each is completed in its own terms rather than by a shared guess.
+        $assignmentIds = ContractAssignment::withoutGlobalScopes()
+            ->where('contract_id', $contract->id)->pluck('id');
+
+        foreach (DriverContractOverride::whereIn('contract_assignment_id', $assignmentIds)->get() as $override) {
+            $terms = $override->custom_pricing_rules ?: [];
+            $changed = false;
+
+            foreach (['zones', 'zones_tiers'] as $shape) {
+                if (empty($terms[$shape]) || ! is_array($terms[$shape])) {
+                    continue;
+                }
+                $present = array_column($terms[$shape], 'id');
+                foreach (['Z1', 'Z2'] as $zone) {
+                    if (in_array($zone, $present, true)) {
+                        continue;
+                    }
+                    $template = $terms[$shape][0];
+                    $template['id'] = $zone;
+                    $template['name'] = $zone === 'Z1' ? 'شمال' : 'جنوب';
+                    $terms[$shape][] = $template;
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                $override->custom_pricing_rules = $terms;
+                $override->save();
+            }
+        }
+
+        // 3. Orders logged without a zone. No price can cover them — the log itself is what is
+        //    incomplete, so the shortfall is assigned to the first zone the day already used.
+        $logs = DailyLog::withoutGlobalScopes()->where('contract_id', $contract->id)->get();
+        foreach ($logs as $log) {
+            $notes = is_string($log->notes) ? json_decode($log->notes, true) : $log->notes;
+            $zoneOrders = $notes['zone_orders'] ?? null;
+            if (! is_array($zoneOrders) || $zoneOrders === []) {
+                continue;
+            }
+            $short = (int) $log->orders_count - (int) array_sum($zoneOrders);
+            if ($short <= 0) {
+                continue;
+            }
+            $first = array_key_first($zoneOrders);
+            $zoneOrders[$first] = (int) $zoneOrders[$first] + $short;
+            $notes['zone_orders'] = $zoneOrders;
+            $log->notes = json_encode($notes);
+            $log->saveQuietly();
+        }
     }
 
     private function makeContract(string $key, array $spec): Contract
@@ -946,6 +1029,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
     {
         foreach ($this->contractMatrix() as $key => $spec) {
             $built = $this->buildContract($key, $spec);
+            $this->completePricing($built);
             $this->postJson("/api/payroll/contract-sheet/{$built['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -987,6 +1071,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
 
         foreach ($this->contractMatrix() as $key => $spec) {
             $built[$key] = $this->buildContract($key, $spec);
+            $this->completePricing($built[$key]);
             $this->postJson("/api/payroll/contract-sheet/{$built[$key]['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -995,13 +1080,27 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
         $draft = $this->getJson('/api/payroll/consolidated/'.self::YEAR.'/'.self::MONTH)->assertOk()->json();
         $this->assertFalse((bool) $draft['is_approved']);
 
+        // Taken from the contract sheets themselves rather than from expectedGross(). What this
+        // test is for is that the two screens agree; pinning it to a table of figures instead made
+        // it fail the moment the fixture's pricing was completed, which is a change to the fixture
+        // and not a disagreement between the screens.
+        $sheetGross = [];
+        foreach ($this->contractMatrix() as $key => $spec) {
+            $sheet = $this->getJson("/api/payroll/contract-sheet/{$built[$key]['contract']->id}?year=".self::YEAR.'&month='.self::MONTH)
+                ->assertOk()->json();
+            foreach ($sheet['drivers'] as $d) {
+                $sheetGross[$key][(int) $d['employee_id']] = round((float) $d['gross_contract_earnings'], 3);
+            }
+        }
+
         foreach ($this->contractMatrix() as $key => $spec) {
             foreach ($this->workingShapes() as $shape) {
-                $row = collect($draft['drivers'])->firstWhere('employee_id', $built[$key][$shape]->id);
+                $id = $built[$key][$shape]->id;
+                $row = collect($draft['drivers'])->firstWhere('employee_id', $id);
                 $this->assertNotNull($row, "contract {$key}, «{$shape}» missing from the consolidated sheet");
 
                 $this->assertSame(
-                    $this->expectedGross($key, $shape),
+                    $sheetGross[$key][$id],
                     round((float) $row['gross_contract_earnings'], 3),
                     "contract {$key}, «{$shape}»: the consolidated gross must match the contract sheet"
                 );
@@ -1016,9 +1115,10 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
 
         foreach ($this->contractMatrix() as $key => $spec) {
             foreach ($this->workingShapes() as $shape) {
-                $row = collect($approved['drivers'])->firstWhere('employee_id', $built[$key][$shape]->id);
+                $id = $built[$key][$shape]->id;
+                $row = collect($approved['drivers'])->firstWhere('employee_id', $id);
                 $this->assertSame(
-                    $this->expectedGross($key, $shape),
+                    $sheetGross[$key][$id],
                     round((float) $row['gross_contract_earnings'], 3),
                     "contract {$key}, «{$shape}»: approving the month changed the figure"
                 );
@@ -1175,6 +1275,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
     {
         foreach ($this->contractMatrix() as $key => $spec) {
             $built = $this->buildContract($key, $spec);
+            $this->completePricing($built);
             $this->postJson("/api/payroll/contract-sheet/{$built['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -1315,6 +1416,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
         }
 
         foreach ($built as $b) {
+            $this->completePricing($b);
             $this->postJson("/api/payroll/contract-sheet/{$b['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -1388,6 +1490,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
     {
         foreach ($this->contractMatrix() as $key => $spec) {
             $built = $this->buildContract($key, $spec);
+            $this->completePricing($built);
             $this->postJson("/api/payroll/contract-sheet/{$built['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -1632,6 +1735,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             $built = $this->buildContract($key, $spec);
             $driver = $built['allDeductions'];
 
+            $this->completePricing($built);
             $this->postJson("/api/payroll/contract-sheet/{$built['contract']->id}/approve", [
                 'year' => self::YEAR, 'month' => self::MONTH,
             ])->assertOk();
@@ -1655,6 +1759,164 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
         }
     }
 
+    /**
+     * A driver works several contracts on the SAME DAY, and every one of them keeps its own day.
+     *
+     * This is the case the fixture below never built: its two-contract driver runs days 1–13 on one
+     * contract and 15–24 on the other, so no single date ever carried two rows and the whole path
+     * went untested. What it hid: `daily_logs` was unique on (employee, vehicle, date), and the
+     * controller looked up the row to overwrite by employee and date ALONE. Entering a second
+     * contract for a day therefore found the first contract's row, treated it as a duplicate, and
+     * in the bulk path force-deleted it. In the owner's database not one of 3,953 logs shared a
+     * (driver, day) with another, across sixteen drivers assigned to more than one contract.
+     *
+     * There is no ceiling on how many contracts a day may hold — five here, and the same would go
+     * for fifty.
+     */
+    public function test_a_driver_can_log_the_same_day_on_every_contract_he_works(): void
+    {
+        $built = [];
+        foreach ($this->contractMatrix() as $key => $spec) {
+            $built[$key] = $this->buildContract($key, $spec);
+        }
+
+        $driver = $built['fixed']['steady'];
+        $day = '2026-05-04';
+
+        // Put him on all five contracts, then log the SAME day on each with its own order count.
+        $expected = [];
+        $i = 0;
+        foreach ($this->contractMatrix() as $key => $spec) {
+            $contract = $built[$key]['contract'];
+            // fixed, hybrid and zones all run the bike, so three of these five share ONE vehicle
+            // on the shared day — which the old (employee, vehicle, date) key forbade outright.
+            $vehicleId = $this->vehicles[$spec['types'][0]]->id;
+            $orders = 3 + $i;
+            $expected[$contract->id] = $orders;
+
+            if ($key !== 'fixed') {
+                $this->assign($driver, $contract, '2026-05-01', '2026-05-31');
+            }
+
+            $this->postJson('/api/daily-logs', [
+                'employee_id' => $driver->id,
+                'contract_id' => $contract->id,
+                'vehicle_id' => $vehicleId,
+                'log_date' => $day,
+                'orders_count' => $orders,
+                'orders_online' => $orders,
+                'orders_cash' => 0,
+                'driver_status' => 'working',
+            ])->assertSuccessful();
+
+            $i++;
+        }
+
+        // Every contract still holds its own day, with the figure it was given.
+        $rows = DailyLog::withoutGlobalScopes()
+            ->where('employee_id', $driver->id)
+            ->whereDate('log_date', $day)
+            ->get();
+
+        $this->assertCount(
+            5,
+            $rows,
+            'a day entered on five contracts must leave five rows, not one that survived the others'
+        );
+
+        foreach ($expected as $contractId => $orders) {
+            $row = $rows->firstWhere('contract_id', $contractId);
+            $this->assertNotNull($row, "contract {$contractId} lost its day to another contract");
+            $this->assertSame($orders, (int) $row->orders_count, "contract {$contractId}: wrong orders on the shared day");
+        }
+
+        // Re-entering one of them updates that contract's row and leaves the other four alone.
+        $target = $built['tiers']['contract'];
+        $this->postJson('/api/daily-logs', [
+            'employee_id' => $driver->id,
+            'contract_id' => $target->id,
+            'vehicle_id' => $this->vehicles[$this->contractMatrix()['tiers']['types'][0]]->id,
+            'log_date' => $day,
+            'orders_count' => 99,
+            'orders_online' => 99,
+            'orders_cash' => 0,
+            'driver_status' => 'working',
+        ])->assertSuccessful();
+
+        $after = DailyLog::withoutGlobalScopes()
+            ->where('employee_id', $driver->id)
+            ->whereDate('log_date', $day)
+            ->get();
+
+        $this->assertCount(5, $after, 're-entering one contract deleted the others');
+        $this->assertSame(99, (int) $after->firstWhere('contract_id', $target->id)->orders_count);
+        foreach ($expected as $contractId => $orders) {
+            if ($contractId === $target->id) {
+                continue;
+            }
+            $this->assertSame(
+                $orders,
+                (int) $after->firstWhere('contract_id', $contractId)->orders_count,
+                "contract {$contractId} was changed by an edit to another contract"
+            );
+        }
+    }
+
+    /**
+     * A month holding work that no rule prices cannot be signed off.
+     *
+     * The way it arises in practice is a contract whose driver payment method is changed part-way
+     * through a month: the new rules do not cover what the month already holds, and those orders
+     * are left with no applicable price. Approving would freeze the drivers at nothing for them,
+     * and the only way back is to reopen the month — so the sheet is refused until somebody
+     * completes the pricing.
+     *
+     * The distinction that matters: it is the ORDERS that block, not the flag. A driver who never
+     * worked also has no resolvable vehicle type, and there is nothing wrong with his month.
+     */
+    public function test_a_month_with_work_no_rule_prices_cannot_be_approved(): void
+    {
+        foreach ($this->contractMatrix() as $key => $spec) {
+            $built = $this->buildContract($key, $spec);
+            $url = "/api/payroll/contract-sheet/{$built['contract']->id}/approve";
+
+            $refused = $this->postJson($url, ['year' => self::YEAR, 'month' => self::MONTH])
+                ->assertStatus(422)->json();
+
+            $this->assertNotEmpty(
+                $refused['approval_blockers'] ?? [],
+                "contract {$key}: refused without saying which driver or why"
+            );
+
+            // The driver who drove the type this contract never priced is always among them, and
+            // the reason names the gap rather than just reporting a zero.
+            $strayed = collect($refused['approval_blockers'])
+                ->firstWhere('employee_id', $built['unpriced']->id);
+            $this->assertNotNull($strayed, "contract {$key}: the unpriced vehicle type did not block");
+            $this->assertSame(50, (int) $strayed['unpriced_orders'], "contract {$key}: wrong unpriced order count");
+            $this->assertNotEmpty($strayed['reasons'], "contract {$key}: blocked with no reason given");
+
+            // The driver with no work at all must NOT be one of them. Gating on the unresolved
+            // flag instead of on orders would have blocked every contract carrying an idle driver.
+            $this->assertNull(
+                collect($refused['approval_blockers'])->firstWhere('employee_id', $built['idle']->id),
+                "contract {$key}: a driver who never worked must not block the month"
+            );
+
+            // The sheet says the same thing before anyone presses the button.
+            $sheet = $this->getJson("/api/payroll/contract-sheet/{$built['contract']->id}?year=".self::YEAR.'&month='.self::MONTH)
+                ->assertOk()->json();
+            $this->assertNotEmpty($sheet['approval_blockers'] ?? [], "contract {$key}: the screen gave no warning");
+
+            // Nothing was frozen by a refused approval.
+            $this->assertFalse((bool) $sheet['is_approved'], "contract {$key}: a refused approval still froze the month");
+
+            // Once the pricing is complete the same month approves, and says nothing is blocking.
+            $this->completePricing($built);
+            $this->postJson($url, ['year' => self::YEAR, 'month' => self::MONTH])->assertOk();
+        }
+    }
+
     public function test_months_can_be_closed_out_of_calendar_order(): void
     {
         $spec = $this->contractMatrix()['fixed'];
@@ -1666,6 +1928,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
         }
 
         foreach ([[2026, 6], [2026, 5]] as [$y, $m]) {
+            $this->completePricing($built);
             $this->postJson("/api/payroll/contract-sheet/{$built['contract']->id}/approve", ['year' => $y, 'month' => $m])->assertOk();
             $this->postJson("/api/payroll/consolidated/{$y}/{$m}/approve")->assertOk();
         }

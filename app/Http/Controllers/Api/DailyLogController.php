@@ -199,22 +199,14 @@ class DailyLogController extends Controller
             ], 422);
         }
 
-        // Auto-update existing record if log already exists for same employee and date (matching vehicle, contract, or employee+date)
+        // The day this log replaces is the one for THIS contract. Matching on employee and date
+        // alone reached across to whatever other contract the driver had worked that day and
+        // overwrote it — the second contract entered for a day silently took the first one's row.
         $existingLog = DailyLog::withTrashed()->withoutGlobalScopes()
             ->where('employee_id', $validated['employee_id'])
+            ->where('contract_id', $validated['contract_id'])
             ->where('log_date', $validated['log_date'])
-            ->where(function ($q) use ($validated) {
-                $q->where('vehicle_id', $validated['vehicle_id'])
-                    ->orWhere('contract_id', $validated['contract_id']);
-            })
             ->first();
-
-        if (! $existingLog) {
-            $existingLog = DailyLog::withTrashed()->withoutGlobalScopes()
-                ->where('employee_id', $validated['employee_id'])
-                ->where('log_date', $validated['log_date'])
-                ->first();
-        }
 
         // Fetch contract to snapshot rate and auto-calculate income
         $contract = Contract::findOrFail($validated['contract_id']);
@@ -301,17 +293,12 @@ class DailyLogController extends Controller
 
             return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
         } catch (QueryException $e) {
+            // Only this contract's row can be the one that clashed.
             $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                 ->where('employee_id', $validated['employee_id'])
+                ->where('contract_id', $validated['contract_id'])
                 ->where('log_date', $validated['log_date'])
                 ->first();
-            if (! $fallback) {
-                $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
-                    ->where('employee_id', $validated['employee_id'])
-                    ->where('vehicle_id', $validated['vehicle_id'])
-                    ->where('log_date', $validated['log_date'])
-                    ->first();
-            }
             if ($fallback) {
                 if ($fallback->trashed()) {
                     $fallback->restore();
@@ -462,18 +449,13 @@ class DailyLogController extends Controller
             $rate = $contract ? (float) $contract->rate_per_order : 0.0;
             $income = $rate * $ordersCount;
 
+            // Scoped to the contract being saved. Without it this collected the driver's rows
+            // for EVERY contract that day, kept one, and force-deleted the rest.
             $allMatchingLogs = DailyLog::withTrashed()->withoutGlobalScopes()
                 ->where('employee_id', $employeeId)
+                ->where('contract_id', $contractId)
                 ->where('log_date', $logDate)
                 ->get();
-
-            if ($allMatchingLogs->isEmpty()) {
-                $allMatchingLogs = DailyLog::withTrashed()->withoutGlobalScopes()
-                    ->where('employee_id', $employeeId)
-                    ->where('vehicle_id', $vehicleId)
-                    ->where('log_date', $logDate)
-                    ->get();
-            }
 
             $existing = $allMatchingLogs->first();
             if ($allMatchingLogs->count() > 1) {
@@ -546,15 +528,9 @@ class DailyLogController extends Controller
                 } catch (QueryException $e) {
                     $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                         ->where('employee_id', $employeeId)
+                        ->where('contract_id', $contractId)
                         ->where('log_date', $logDate)
                         ->first();
-                    if (! $fallback) {
-                        $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
-                            ->where('employee_id', $employeeId)
-                            ->where('vehicle_id', $vehicleId)
-                            ->where('log_date', $logDate)
-                            ->first();
-                    }
                     if ($fallback) {
                         if ($fallback->trashed()) {
                             $fallback->restore();
