@@ -2,11 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Http\Controllers\Api\PayrollController;
 use App\Models\Company;
 use App\Models\Employee;
-use App\Models\PayrollRun;
-use App\Models\PayrollSlip;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\Violation;
@@ -150,6 +147,7 @@ class ViolationLiabilityIsHonouredTest extends TestCase
             'violation_date' => '2026-07-20',
             'violation_type' => 'وقوف ممنوع',
             'amount' => 30.000,
+            'photo_path' => 'violations/ticket.jpg',
             // Contradicts itself on purpose: says company-liable, hands over a driver share.
             'is_driver_liable' => false,
             'driver_share' => 30.000,
@@ -187,28 +185,8 @@ class ViolationLiabilityIsHonouredTest extends TestCase
             'driver_deduction' => 0.000,
         ]);
 
+        // The full-amount fallback this pins lived in the retired payroll path, which has been
+        // deleted along with the half of this test that exercised it.
         $this->assertSame(0.0, $this->owed(), 'a zero share is zero, not the whole ticket');
-
-        // And through the legacy path itself, which is where the full-amount fallback lived.
-        $run = PayrollRun::create([
-            'company_id' => $this->company->id,
-            'created_by' => $this->user->id,
-            'year' => 2026,
-            'month' => 7,
-            'status' => 'draft',
-        ]);
-
-        PayrollController::recalculateRun($run);
-
-        $charged = PayrollSlip::withoutGlobalScopes()
-            ->where('payroll_run_id', $run->id)
-            ->where('employee_id', $this->driver->id)
-            ->value('violations_deduction');
-
-        $this->assertSame(
-            0.0,
-            round((float) $charged, 3),
-            'the legacy sheet charged the whole 40.000 ticket for a 0.000 driver share'
-        );
     }
 }

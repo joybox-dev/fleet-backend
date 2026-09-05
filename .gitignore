@@ -1,8 +1,10 @@
 *.log
 .DS_Store
+# Every environment file except the template: .env.realbackup was carrying a real APP_KEY
+# and DB_PASSWORD while only three exact names were listed.
 .env
-.env.backup
-.env.production
+.env.*
+!.env.example
 .phpactor.json
 .phpunit.result.cache
 /.codex

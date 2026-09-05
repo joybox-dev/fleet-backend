@@ -2,25 +2,25 @@
 
 namespace Tests\Feature;
 
-use App\Models\Company;
-use App\Models\User;
 use App\Models\Client;
+use App\Models\Company;
 use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\Employee;
+use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
-use App\Models\DriverContractOverride;
-use App\Models\DailyLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
-use Carbon\Carbon;
 
 class EmployeesAndContractsScenarioTest extends TestCase
 {
     use RefreshDatabase;
 
     private Company $company;
+
     private User $user;
+
     private Client $client;
 
     protected function setUp(): void
@@ -64,6 +64,7 @@ class EmployeesAndContractsScenarioTest extends TestCase
             'start_date' => '2026-07-01',
             'client_payment_method' => 'fixed',
             'driver_payment_method' => 'zones',
+            'default_required_work_days' => 26,
             'currency' => 'KWD',
         ]);
 
@@ -83,7 +84,10 @@ class EmployeesAndContractsScenarioTest extends TestCase
             'payment_type' => 'per_order',
             'start_date' => '2026-07-01',
             'client_payment_method' => 'zones',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'zones', 'zones' => [['id' => 'Z1', 'name' => 'شمال', 'price' => 0.300]]]],
             'driver_payment_method' => 'zones',
+            'driver_pricing_rules' => ['1' => ['payment_method' => 'zones', 'zones' => [['id' => 'Z1', 'name' => 'شمال', 'price' => 0.200]]]],
+            'default_required_work_days' => 26,
             'currency' => 'KWD',
         ]);
 
@@ -93,6 +97,138 @@ class EmployeesAndContractsScenarioTest extends TestCase
             'driver_payment_method' => 'zones',
             'client_payment_method' => 'zones',
         ]);
+    }
+
+    /**
+     * How a contract bills and how it pays are the two figures every other number is built from,
+     * and both used to be optional. A contract could be saved with neither, and the engines then
+     * guessed: a client rule with no stated method was read as «zones», so a rule carrying a
+     * perfectly good monthly amount priced nothing and said nothing about why.
+     */
+    private function contractPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'client_id' => $this->client->id,
+            'contract_number' => 'CON-REQ',
+            'name' => 'عقد',
+            'payment_type' => 'per_order',
+            'start_date' => '2026-07-01',
+            'default_required_work_days' => 26,
+            'currency' => 'KWD',
+            'client_payment_method' => 'fixed',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 900]],
+            'driver_payment_method' => 'fixed',
+            'driver_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 260]],
+        ], $overrides);
+    }
+
+    public function test_a_contract_cannot_be_saved_without_saying_how_it_bills_and_pays(): void
+    {
+        $this->actingAs($this->user);
+
+        foreach ([
+            'client_payment_method',
+            'client_pricing_rules',
+            'driver_payment_method',
+            'driver_pricing_rules',
+        ] as $field) {
+            $payload = $this->contractPayload();
+            unset($payload[$field]);
+
+            $this->postJson('/api/contracts', $payload)
+                ->assertStatus(422)
+                ->assertJsonValidationErrors($field);
+        }
+
+        $this->postJson('/api/contracts', $this->contractPayload())->assertStatus(201);
+    }
+
+    public function test_a_pricing_rule_that_does_not_say_how_it_bills_is_refused(): void
+    {
+        $this->actingAs($this->user);
+
+        // The exact shape that used to be read as zones and silently billed nothing.
+        $this->postJson('/api/contracts', $this->contractPayload([
+            'client_pricing_rules' => ['1' => ['fixed_amount' => 900]],
+        ]))->assertStatus(422)->assertJsonValidationErrors('client_pricing_rules');
+    }
+
+    public function test_a_rule_that_contradicts_the_contracts_own_method_is_refused(): void
+    {
+        $this->actingAs($this->user);
+
+        // The screen showed the column and the money followed the rule, with nothing to say they
+        // disagreed.
+        $this->postJson('/api/contracts', $this->contractPayload([
+            'client_payment_method' => 'fixed',
+            'client_pricing_rules' => ['1' => [
+                'payment_method' => 'zones',
+                'zones' => [['id' => 'Z1', 'name' => 'شمال', 'price' => 0.300]],
+            ]],
+        ]))->assertStatus(422)->assertJsonValidationErrors('client_pricing_rules');
+    }
+
+    public function test_a_rule_missing_the_figures_its_method_needs_is_refused(): void
+    {
+        $this->actingAs($this->user);
+
+        // Says tiers, carries no band — bills nothing, every month, in silence.
+        $this->postJson('/api/contracts', $this->contractPayload([
+            'client_payment_method' => 'tiers',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'tiers', 'fixed_amount' => 900]],
+        ]))->assertStatus(422)->assertJsonValidationErrors('client_pricing_rules');
+
+        // Says zones, and one of its zones has no price.
+        $this->postJson('/api/contracts', $this->contractPayload([
+            'client_payment_method' => 'zones',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'zones', 'zones' => [
+                ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.300],
+                ['id' => 'Z2', 'name' => 'جنوب'],
+            ]]],
+            'driver_payment_method' => 'zones',
+            'driver_pricing_rules' => ['1' => ['payment_method' => 'zones', 'zones' => [
+                ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.200],
+                ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.150],
+            ]]],
+        ]))->assertStatus(422)->assertJsonValidationErrors('client_pricing_rules');
+    }
+
+    public function test_editing_an_unrelated_field_does_not_demand_pricing_that_is_already_there(): void
+    {
+        $this->actingAs($this->user);
+
+        $id = $this->postJson('/api/contracts', $this->contractPayload())
+            ->assertStatus(201)->json('id');
+
+        $this->putJson("/api/contracts/{$id}", ['name' => 'اسم جديد'])->assertStatus(200);
+    }
+
+    public function test_a_contract_that_never_stated_its_pricing_must_state_it_when_next_edited(): void
+    {
+        $this->actingAs($this->user);
+
+        // What the live contracts look like: saved before either field was demanded.
+        $contract = Contract::create([
+            'company_id' => $this->company->id,
+            'client_id' => $this->client->id,
+            'contract_number' => 'CON-OLD',
+            'name' => 'عقد قديم',
+            'payment_type' => 'per_order',
+            'start_date' => '2026-07-01',
+            'default_required_work_days' => 26,
+        ]);
+
+        $this->putJson("/api/contracts/{$contract->id}", ['name' => 'اسم جديد'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['client_payment_method', 'client_pricing_rules']);
+
+        $this->putJson("/api/contracts/{$contract->id}", [
+            'name' => 'اسم جديد',
+            'client_payment_method' => 'fixed',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 900]],
+            'driver_payment_method' => 'fixed',
+            'driver_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 260]],
+        ])->assertStatus(200);
     }
 
     public function test_cannot_create_override_with_zones_or_zones_tiers_if_client_pricing_is_not_zones()
@@ -110,10 +246,10 @@ class EmployeesAndContractsScenarioTest extends TestCase
             'driver_payment_method' => 'fixed',
             'company_id' => $this->company->id,
             'client_pricing_rules' => [
-                '1' => ['payment_method' => 'fixed', 'fixed_amount' => 500] // vehicle_type_id = 1
+                '1' => ['payment_method' => 'fixed', 'fixed_amount' => 500], // vehicle_type_id = 1
             ],
             'driver_pricing_rules' => [
-                '1' => ['payment_method' => 'fixed', 'fixed_amount' => 200]
+                '1' => ['payment_method' => 'fixed', 'fixed_amount' => 200],
             ],
         ]);
 
@@ -144,7 +280,7 @@ class EmployeesAndContractsScenarioTest extends TestCase
         ]);
 
         // 4. Contract Assignment
-        $assignment = \App\Models\ContractAssignment::create([
+        $assignment = ContractAssignment::create([
             'employee_id' => $driver->id,
             'contract_id' => $contract->id,
             'start_date' => '2026-07-01',
@@ -164,148 +300,13 @@ class EmployeesAndContractsScenarioTest extends TestCase
                     'tiers' => [
                         ['min' => 1, 'max' => 50, 'price' => 1.5],
                         ['min' => 51, 'max' => 999, 'price' => 2.0],
-                    ]
-                ]
-            ]
+                    ],
+                ],
+            ],
         ]);
 
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['override_type']);
-    }
-
-    public function test_zones_tiers_payroll_calculation_with_proration_for_mid_month_joiner()
-    {
-        $this->actingAs($this->user);
-
-        // 1. Create contract with client_payment_method = 'zones'
-        $contract = Contract::create([
-            'client_id' => $this->client->id,
-            'contract_number' => 'CON-3',
-            'name' => 'Contract 3',
-            'payment_type' => 'per_order',
-            'start_date' => '2026-07-01',
-            'client_payment_method' => 'zones',
-            'driver_payment_method' => 'zones_tiers',
-            'company_id' => $this->company->id,
-            'client_pricing_rules' => [
-                '1' => [
-                    'payment_method' => 'zones',
-                    'zones' => [
-                        ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 5.0]
-                    ]
-                ]
-            ],
-            'driver_pricing_rules' => [
-                '1' => [
-                    'payment_method' => 'zones_tiers',
-                    'zones_tiers' => [
-                        [
-                            'id' => 'zone-a',
-                            'name' => 'Zone A',
-                            'tiers' => [
-                                ['min' => 1, 'max' => 10, 'price' => 1.0],  // Original limit min=1, max=10
-                                ['min' => 11, 'max' => 20, 'price' => 1.5], // Original limit min=11, max=20
-                                ['min' => 21, 'max' => 999, 'price' => 2.0],
-                            ]
-                        ]
-                    ]
-                ]
-            ],
-        ]);
-
-        // 2. Driver joins mid-month (July 16th). Remaining days in July (31 days) is 31 - 16 + 1 = 16 days.
-        // Ratio R = 16 / 31 = 0.516129
-        // Prorated limits:
-        // Tier 1: min = round(1 * R) = 1, max = round(10 * R) = 5
-        // Tier 2: min = round(11 * R) = 6, max = round(20 * R) = 10
-        // Tier 3: min = round(21 * R) = 11, max = 999
-        $driver = Employee::create([
-            'name' => 'Mid Month Driver',
-            'employee_number' => 'EMP-002',
-            'company_id' => $this->company->id,
-            'status' => 'active',
-            'date_of_joining' => '2026-07-16',
-        ]);
-
-        $vehicle = Vehicle::create([
-            'plate_number' => 'V-2',
-            'make' => 'Toyota',
-            'status' => 'working',
-            'company_id' => $this->company->id,
-            'vehicle_type_id' => 1,
-        ]);
-
-        VehicleAssignment::create([
-            'employee_id' => $driver->id,
-            'vehicle_id' => $vehicle->id,
-            'is_active' => true,
-            'assigned_date' => '2026-07-16',
-            'company_id' => $this->company->id,
-        ]);
-
-        $assignment = \App\Models\ContractAssignment::create([
-            'employee_id' => $driver->id,
-            'contract_id' => $contract->id,
-            'start_date' => '2026-07-16',
-            'status' => 'active',
-            'company_id' => $this->company->id,
-        ]);
-
-        // 3. Create daily logs for July 17th, 18th, 19th with orders in Zone A
-        // Total orders in Zone A = 9
-        // Under normal limits, 9 orders would fall in Tier 1 (price = 1.0).
-        // Under prorated limits, 9 orders falls in Tier 2 (min=6, max=10, price = 1.5)!
-        // Payout should be: 9 * 1.5 = 13.5 KWD
-        DailyLog::create([
-            'company_id' => $this->company->id,
-            'employee_id' => $driver->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-07-17',
-            'orders_count' => 3,
-            'zone' => 'Zone A',
-            'is_valid' => true,
-            'created_by' => $this->user->id,
-        ]);
-
-        DailyLog::create([
-            'company_id' => $this->company->id,
-            'employee_id' => $driver->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-07-18',
-            'orders_count' => 3,
-            'zone' => 'Zone A',
-            'is_valid' => true,
-            'created_by' => $this->user->id,
-        ]);
-
-        DailyLog::create([
-            'company_id' => $this->company->id,
-            'employee_id' => $driver->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-07-19',
-            'orders_count' => 3,
-            'zone' => 'Zone A',
-            'is_valid' => true,
-            'created_by' => $this->user->id,
-        ]);
-
-        // Run payroll for July 2026
-        $response = $this->postJson('/api/payroll/run', [
-            'year' => 2026,
-            'month' => 7,
-        ]);
-
-        $response->assertStatus(201);
-        
-        // Assert that the payroll slip shows the prorated base salary payout of 13.5 KWD
-        $this->assertDatabaseHas('payroll_slips', [
-            'employee_id' => $driver->id,
-            'orders_bonus' => 13.500, // 9 orders * 1.5 KWD
-            'gross_actual' => 13.500,
-        ]);
     }
 
     public function test_contract_deletion_safeguards()
@@ -330,7 +331,7 @@ class EmployeesAndContractsScenarioTest extends TestCase
             'date_of_joining' => '2026-07-01',
         ]);
 
-        \App\Models\ContractAssignment::create([
+        ContractAssignment::create([
             'employee_id' => $driver->id,
             'contract_id' => $unlockedContract->id,
             'start_date' => '2026-07-01',

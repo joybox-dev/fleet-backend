@@ -46,7 +46,7 @@ class ContractPayrollService
             'unpaid_leave_days' => $unpaidLeaveDays,
             'total_orders' => $totalOrders,
             'rejected_orders' => $rejectedOrders,
-            'cash_collected' => round($cashCollected, 3)
+            'cash_collected' => round($cashCollected, 3),
         ];
     }
 
@@ -61,8 +61,8 @@ class ContractPayrollService
         Collection $empLogs,
         ?int $vtId = null
     ): array {
-        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) 
-            ? $contract->driver_pricing_rules[$vtId] 
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
+            ? $contract->driver_pricing_rules[$vtId]
             : [];
 
         $method = $override?->override_type ?? $vtPricing['payment_method'] ?? 'fixed';
@@ -95,14 +95,42 @@ class ContractPayrollService
             ];
         }
 
+        // Every month is priced per day against the contract's working days, so a contract that
+        // never named them cannot be priced at all. It used to fall back to a hardcoded 28 — a
+        // number nobody chose, on a field left blank in 15 of the owner's 18 contracts, quietly
+        // deciding what a day of work is worth. A driver on 280.000 was paid 260.000 or 280.000
+        // depending on whether anyone had happened to open the contract's edit form.
+        if ((int) $contract->default_required_work_days <= 0) {
+            $totalOrders = (int) $empLogs->sum('orders_count');
+
+            return [
+                'base_salary' => 0.0,
+                'orders_count' => $totalOrders,
+                'orders_bonus' => 0.0,
+                'deficit_deduction' => 0.0,
+                'surplus_bonus' => 0.0,
+                'absence_deduction' => 0.0,
+                'gross_contract_earnings' => 0.0,
+                'unresolved_working_days' => true,
+                'calculation_details' => [[
+                    'label' => 'أيام العمل المطلوبة غير محددة في العقد — لا يمكن احتساب الراتب',
+                    'orders' => $totalOrders,
+                    'rate' => 0.0,
+                    'amount' => 0.0,
+                    'is_unpriced' => true,
+                    'formula' => 'حدّد «أيام العمل المطلوبة» في إعدادات العقد ثم أعد الاحتساب',
+                ]],
+            ];
+        }
+
         return match ($method) {
             'fixed', 'target' => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'per_order'       => self::calculatePerOrderDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'hybrid'          => self::calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'zones'           => self::calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'zones_tiers'     => self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'tiers'           => self::calculateTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            default           => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'per_order' => self::calculatePerOrderDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'hybrid' => self::calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'zones' => self::calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'zones_tiers' => self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'tiers' => self::calculateTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            default => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
         };
     }
 
@@ -118,32 +146,31 @@ class ContractPayrollService
         Collection $empLogs,
         ?int $vtId = null
     ): array {
-        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) 
-            ? $contract->driver_pricing_rules[$vtId] 
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
+            ? $contract->driver_pricing_rules[$vtId]
             : [];
 
         $stats = self::evaluateDriverAttendance($empLogs);
 
-        $baseSalaryConfig = (float) ($override 
-            ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0) 
+        $baseSalaryConfig = (float) ($override
+            ? ($override->fixed_amount ?? $override->custom_fixed_salary ?? 0)
             : ($vtPricing['fixed_amount'] ?? 0));
 
-        $targetConfig = (int) ($override 
-            ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0) 
+        $targetConfig = (int) ($override
+            ? ($override->fixed_target ?? $override->custom_monthly_target ?? 0)
             : ($vtPricing['fixed_target'] ?? $contract->default_monthly_target ?? 0));
 
-        $deficitRateConfig = (float) ($override 
-            ? ($override->fixed_deficit_rate ?? 0) 
+        $deficitRateConfig = (float) ($override
+            ? ($override->fixed_deficit_rate ?? 0)
             : ($vtPricing['fixed_deficit_rate'] ?? 0));
 
-        $surplusRateConfig = (float) ($override 
-            ? ($override->fixed_surplus_rate ?? $deficitRateConfig) 
+        $surplusRateConfig = (float) ($override
+            ? ($override->fixed_surplus_rate ?? $deficitRateConfig)
             : ($vtPricing['fixed_surplus_rate'] ?? $deficitRateConfig));
 
-        $contractWorkingDays = (int) ($contract->default_required_work_days ?? 28);
-        if ($contractWorkingDays <= 0) {
-            $contractWorkingDays = 28;
-        }
+        // Guaranteed to be set: calculateDriverContractPayroll refuses the month without it,
+        // rather than deciding for itself what a day of this contract is worth.
+        $contractWorkingDays = (int) $contract->default_required_work_days;
 
         // Daily rates
         $dailySalaryRate = $baseSalaryConfig / $contractWorkingDays;
@@ -177,8 +204,8 @@ class ContractPayrollService
             [
                 'label' => 'الراتب المستحق عن أيام الدوام الفعلي',
                 'amount' => $earnedBaseSalary,
-                'formula' => "{$paidDays} يوم دوام × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم عمل = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك"
-            ]
+                'formula' => "{$paidDays} يوم دوام × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم عمل = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك",
+            ],
         ];
 
         if ($requiredTarget > 0) {
@@ -191,7 +218,7 @@ class ContractPayrollService
                     'type' => 'deficit',
                     'rate' => $deficitRateConfig,
                     'amount' => -$deficitDeduction,
-                    'formula' => "نقص " . ($requiredTarget - $totalOrders) . " طلب × {$deficitRateConfig} د.ك = -{$deficitDeduction} د.ك"
+                    'formula' => 'نقص '.($requiredTarget - $totalOrders)." طلب × {$deficitRateConfig} د.ك = -{$deficitDeduction} د.ك",
                 ];
             } elseif ($surplusBonus > 0) {
                 $details[] = [
@@ -202,7 +229,7 @@ class ContractPayrollService
                     'type' => 'surplus',
                     'rate' => $surplusRateConfig,
                     'amount' => $surplusBonus,
-                    'formula' => "زيادة " . ($totalOrders - $requiredTarget) . " طلب × {$surplusRateConfig} د.ك = {$surplusBonus} د.ك"
+                    'formula' => 'زيادة '.($totalOrders - $requiredTarget)." طلب × {$surplusRateConfig} د.ك = {$surplusBonus} د.ك",
                 ];
             }
         }
@@ -216,7 +243,7 @@ class ContractPayrollService
             'surplus_bonus' => $surplusBonus,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => $gross,
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 
@@ -231,12 +258,12 @@ class ContractPayrollService
         Collection $empLogs,
         ?int $vtId = null
     ): array {
-        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) 
-            ? $contract->driver_pricing_rules[$vtId] 
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
+            ? $contract->driver_pricing_rules[$vtId]
             : [];
 
-        $rate = (float) ($override 
-            ? ($override->order_commission ?? 0) 
+        $rate = (float) ($override
+            ? ($override->order_commission ?? 0)
             : ($vtPricing['order_commission'] ?? $contract->rate_per_order ?? 0.0));
 
         $stats = self::evaluateDriverAttendance($empLogs);
@@ -249,8 +276,8 @@ class ContractPayrollService
                 'orders' => $ordersCount,
                 'rate' => $rate,
                 'amount' => $ordersBonus,
-                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك"
-            ]
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك",
+            ],
         ];
 
         return [
@@ -261,7 +288,7 @@ class ContractPayrollService
             'surplus_bonus' => 0.0,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => $ordersBonus,
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 
@@ -276,8 +303,8 @@ class ContractPayrollService
         Collection $empLogs,
         ?int $vtId = null
     ): array {
-        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId]) 
-            ? $contract->driver_pricing_rules[$vtId] 
+        $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
+            ? $contract->driver_pricing_rules[$vtId]
             : [];
 
         $stats = self::evaluateDriverAttendance($empLogs);
@@ -294,10 +321,9 @@ class ContractPayrollService
             ? ($override->hybrid_tiers ?? [])
             : ($vtPricing['hybrid_tiers'] ?? []);
 
-        $contractWorkingDays = (int) ($contract->default_required_work_days ?? 28);
-        if ($contractWorkingDays <= 0) {
-            $contractWorkingDays = 28;
-        }
+        // Guaranteed to be set: calculateDriverContractPayroll refuses the month without it,
+        // rather than deciding for itself what a day of this contract is worth.
+        $contractWorkingDays = (int) $contract->default_required_work_days;
 
         $dailySalaryRate = $baseSalaryConfig / $contractWorkingDays;
         $paidDays = min($stats['paid_days'], $contractWorkingDays);
@@ -334,7 +360,7 @@ class ContractPayrollService
             [
                 'label' => 'الراتب الأساسي عن أيام الدوام الفعلي',
                 'amount' => $earnedBaseSalary,
-                'formula' => "{$paidDays} يوم دوام × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك"
+                'formula' => "{$paidDays} يوم دوام × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك",
             ],
             [
                 'label' => $tierLabel ? "عمولة الطلبات - {$tierLabel}" : 'عمولة الطلبات المنجزة',
@@ -342,8 +368,8 @@ class ContractPayrollService
                 'rate' => $rate,
                 'amount' => $ordersBonus,
                 'is_unpriced' => $rate <= 0.0 && $ordersCount > 0,
-                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك"
-            ]
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$ordersBonus} د.ك",
+            ],
         ];
 
         return [
@@ -354,7 +380,7 @@ class ContractPayrollService
             'surplus_bonus' => 0.0,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => $gross,
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 
@@ -413,23 +439,36 @@ class ContractPayrollService
         $totalOrders = 0;
 
         foreach ($empLogs as $l) {
-            $cOrders = (int)$l->orders_count;
-            if ($cOrders <= 0) continue;
+            $cOrders = (int) $l->orders_count;
+            if ($cOrders <= 0) {
+                continue;
+            }
             $totalOrders += $cOrders;
 
             $notesData = $l->notes ? json_decode($l->notes, true) : null;
             $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders'])) ? $notesData['zone_orders'] : [];
 
-            if (!empty($zoneOrdersMap)) {
+            if (! empty($zoneOrdersMap)) {
                 foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
-                    $zCount = (int)$zCount;
-                    if ($zCount <= 0) continue;
+                    $zCount = (int) $zCount;
+                    if ($zCount <= 0) {
+                        continue;
+                    }
                     $zoneOrdersTotals[$zIdOrName] = ($zoneOrdersTotals[$zIdOrName] ?? 0) + $zCount;
                 }
             } else {
                 $zName = $l->zone ?: 'افتراضي';
                 $zoneOrdersTotals[$zName] = ($zoneOrdersTotals[$zName] ?? 0) + $cOrders;
             }
+        }
+
+        // Orders a day recorded but never attributed to a zone. They were dropped out of the map
+        // entirely, so the sheet paid for 60 of a driver's 100 orders with nothing on the row
+        // saying where the other 40 went. They are worth nothing — no zone, no price — but they
+        // are reported, because a silent reduction is how a real fault gets mistaken for the rate.
+        $attributed = array_sum($zoneOrdersTotals);
+        if ($totalOrders > $attributed) {
+            $zoneOrdersTotals['افتراضي'] = ($zoneOrdersTotals['افتراضي'] ?? 0) + ($totalOrders - $attributed);
         }
 
         $gross = 0.0;
@@ -441,7 +480,7 @@ class ContractPayrollService
                 $zRate = 0.0;
                 foreach ($pricingRules as $rule) {
                     if (is_array($rule) && (
-                        (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                        (isset($rule['id']) && (string) $rule['id'] === (string) $zIdOrName) ||
                         (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
                         (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
                     )) {
@@ -463,7 +502,7 @@ class ContractPayrollService
                     'rate' => $zRate,
                     'amount' => $amt,
                     'is_unpriced' => $isUnpriced,
-                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك"
+                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك",
                 ];
             }
         }
@@ -482,10 +521,9 @@ class ContractPayrollService
         $zoneTargetBonus = (float) ($targetCfg['zone_target_bonus'] ?? 0);
         $zoneSurplusRate = (float) ($targetCfg['zone_surplus_rate'] ?? 0);
 
-        $contractWorkingDays = (int) ($contract->default_required_work_days ?? 28);
-        if ($contractWorkingDays <= 0) {
-            $contractWorkingDays = 28;
-        }
+        // Guaranteed to be set: calculateDriverContractPayroll refuses the month without it,
+        // rather than deciding for itself what a day of this contract is worth.
+        $contractWorkingDays = (int) $contract->default_required_work_days;
         // Capped the same way as the fixed strategy: a driver cannot be judged against more than
         // the contract's own working days.
         $paidDays = min(self::evaluateDriverAttendance($empLogs)['paid_days'], $contractWorkingDays);
@@ -507,7 +545,7 @@ class ContractPayrollService
                         'type' => 'deficit',
                         'rate' => $zoneDeficitRate,
                         'amount' => -$deficitDeduction,
-                        'formula' => "نقص " . ($zoneTarget - $totalOrders) . " طلب × {$zoneDeficitRate} د.ك = -{$deficitDeduction} د.ك"
+                        'formula' => 'نقص '.($zoneTarget - $totalOrders)." طلب × {$zoneDeficitRate} د.ك = -{$deficitDeduction} د.ك",
                     ];
                 }
             } else {
@@ -526,7 +564,7 @@ class ContractPayrollService
                         'amount' => $surplusBonus,
                         'formula' => $zoneBonusType === 'per_order'
                             ? "زيادة {$surplusCount} طلب × {$zoneSurplusRate} د.ك = {$surplusBonus} د.ك"
-                            : "بونص مقطوع لتجاوز التارغت = {$surplusBonus} د.ك"
+                            : "بونص مقطوع لتجاوز التارغت = {$surplusBonus} د.ك",
                     ];
                 }
             }
@@ -543,7 +581,7 @@ class ContractPayrollService
             'surplus_bonus' => $surplusBonus,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => $gross,
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 
@@ -579,23 +617,36 @@ class ContractPayrollService
         $totalOrders = 0;
 
         foreach ($empLogs as $l) {
-            $cOrders = (int)$l->orders_count;
-            if ($cOrders <= 0) continue;
+            $cOrders = (int) $l->orders_count;
+            if ($cOrders <= 0) {
+                continue;
+            }
             $totalOrders += $cOrders;
 
             $notesData = $l->notes ? json_decode($l->notes, true) : null;
             $zoneOrdersMap = (is_array($notesData) && isset($notesData['zone_orders']) && is_array($notesData['zone_orders'])) ? $notesData['zone_orders'] : [];
 
-            if (!empty($zoneOrdersMap)) {
+            if (! empty($zoneOrdersMap)) {
                 foreach ($zoneOrdersMap as $zIdOrName => $zCount) {
-                    $zCount = (int)$zCount;
-                    if ($zCount <= 0) continue;
+                    $zCount = (int) $zCount;
+                    if ($zCount <= 0) {
+                        continue;
+                    }
                     $zoneOrdersTotals[$zIdOrName] = ($zoneOrdersTotals[$zIdOrName] ?? 0) + $zCount;
                 }
             } else {
                 $zName = $l->zone ?: 'افتراضي';
                 $zoneOrdersTotals[$zName] = ($zoneOrdersTotals[$zName] ?? 0) + $cOrders;
             }
+        }
+
+        // Orders a day recorded but never attributed to a zone. They were dropped out of the map
+        // entirely, so the sheet paid for 60 of a driver's 100 orders with nothing on the row
+        // saying where the other 40 went. They are worth nothing — no zone, no price — but they
+        // are reported, because a silent reduction is how a real fault gets mistaken for the rate.
+        $attributed = array_sum($zoneOrdersTotals);
+        if ($totalOrders > $attributed) {
+            $zoneOrdersTotals['افتراضي'] = ($zoneOrdersTotals['افتراضي'] ?? 0) + ($totalOrders - $attributed);
         }
 
         $gross = 0.0;
@@ -607,7 +658,7 @@ class ContractPayrollService
                 $zTiers = [];
                 foreach ($pricingRules as $rule) {
                     if (is_array($rule) && (
-                        (isset($rule['id']) && (string)$rule['id'] === (string)$zIdOrName) ||
+                        (isset($rule['id']) && (string) $rule['id'] === (string) $zIdOrName) ||
                         (isset($rule['name']) && $rule['name'] === $zIdOrName) ||
                         (isset($rule['zone']) && $rule['zone'] === $zIdOrName)
                     )) {
@@ -621,10 +672,10 @@ class ContractPayrollService
                 // Not a tier - the placeholder shown when no tier matched. Naming it "الأساسية"
                 // made a pricing failure read like a configured band.
                 $tierLabel = 'لا تنطبق شريحة';
-                if (!empty($zTiers)) {
+                if (! empty($zTiers)) {
                     foreach ($zTiers as $t) {
                         $min = (int) ($t['min'] ?? 1);
-                        $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int)$t['max'] : INF;
+                        $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int) $t['max'] : INF;
                         if ($zCount >= $min && $zCount <= $max) {
                             $zRate = (float) ($t['price'] ?? 0.0);
                             $maxText = $max === INF ? 'فأكثر' : "إلى {$max}";
@@ -649,7 +700,7 @@ class ContractPayrollService
                     // Stated by the backend rather than inferred from rate === 0 on the frontend,
                     // which fired on every legitimately zero-rate line.
                     'is_unpriced' => $isUnpriced,
-                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك"
+                    'formula' => "{$zCount} طلب × {$zRate} د.ك = {$amt} د.ك",
                 ];
             }
         }
@@ -662,7 +713,7 @@ class ContractPayrollService
             'surplus_bonus' => 0.0,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => round($gross, 3),
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 
@@ -704,12 +755,12 @@ class ContractPayrollService
         $stats = self::evaluateDriverAttendance($empLogs);
         $ordersCount = $stats['total_orders'];
         $rate = 0.0;
-        $tierLabel = "الأساسية";
+        $tierLabel = 'الأساسية';
 
-        if (!empty($tiers)) {
+        if (! empty($tiers)) {
             foreach ($tiers as $t) {
                 $min = (int) ($t['min'] ?? 1);
-                $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int)$t['max'] : INF;
+                $max = isset($t['max']) && $t['max'] !== null && $t['max'] !== '' ? (int) $t['max'] : INF;
                 if ($ordersCount >= $min && $ordersCount <= $max) {
                     $rate = (float) ($t['price'] ?? 0.0);
                     $maxText = $max === INF ? 'فأكثر' : "إلى {$max}";
@@ -726,8 +777,8 @@ class ContractPayrollService
                 'orders' => $ordersCount,
                 'rate' => $rate,
                 'amount' => $gross,
-                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$gross} د.ك"
-            ]
+                'formula' => "{$ordersCount} طلب × {$rate} د.ك = {$gross} د.ك",
+            ],
         ];
 
         return [
@@ -738,7 +789,7 @@ class ContractPayrollService
             'surplus_bonus' => 0.0,
             'absence_deduction' => 0.0,
             'gross_contract_earnings' => $gross,
-            'calculation_details' => $details
+            'calculation_details' => $details,
         ];
     }
 }

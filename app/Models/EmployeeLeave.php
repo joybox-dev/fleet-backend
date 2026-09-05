@@ -4,12 +4,12 @@ namespace App\Models;
 
 use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class EmployeeLeave extends Model
 {
-    use SoftDeletes, BelongsToCompany;
+    use BelongsToCompany, SoftDeletes;
 
     protected $fillable = [
         'employee_id', 'leave_type_id',
@@ -21,40 +21,14 @@ class EmployeeLeave extends Model
     ];
 
     protected $casts = [
-        'start_date'         => 'date',
-        'end_date'           => 'date',
-        'is_paid'            => 'boolean',
-        'daily_rate'         => 'decimal:3',
+        'start_date' => 'date',
+        'end_date' => 'date',
+        'is_paid' => 'boolean',
+        'daily_rate' => 'decimal:3',
         'penalty_multiplier' => 'decimal:1',
-        'total_deduction'    => 'decimal:3',
-        'approved_at'        => 'datetime',
+        'total_deduction' => 'decimal:3',
+        'approved_at' => 'datetime',
     ];
-
-    protected static function booted(): void
-    {
-        static::saved(function ($leave) {
-            self::recalculatePayroll($leave->employee_id, $leave->start_date);
-        });
-        static::deleted(function ($leave) {
-            self::recalculatePayroll($leave->employee_id, $leave->start_date);
-        });
-    }
-
-    private static function recalculatePayroll($employeeId, $dateStr): void
-    {
-        try {
-            $date = \Carbon\Carbon::parse($dateStr);
-            $run = \App\Models\PayrollRun::where('year', $date->year)
-                ->where('month', $date->month)
-                ->where('status', 'draft')
-                ->first();
-            if ($run) {
-                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
-            }
-        } catch (\Throwable $e) {
-            \Log::error("Recalculate draft payroll failed in EmployeeLeave: " . $e->getMessage());
-        }
-    }
 
     /* ── Relationships ── */
 

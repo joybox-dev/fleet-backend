@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\DailyLog;
-use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\Violation;
 use Carbon\Carbon;
@@ -205,28 +204,51 @@ class MoneyAtRiskService
      * Charges that have been resolved against a driver but never taken off a payslip. Deliberately
      * not month-bound: the question is what is outstanding, not what this month would collect.
      *
+     * This counted only fines and driver expenses, and reported 5,210.000 while the consolidated
+     * sheet — reading the same drivers and the same month — listed 10,110.000. The 4,900.000 it left
+     * out was driver-liable maintenance, damaged custody and salary-advance instalments: charges the
+     * payroll path collects and this card did not know existed. It now asks the same service payroll
+     * asks, so the card and the sheet cannot drift apart again.
+     *
      * @return array<string, mixed>
      */
     private static function uncollectedCharges(int $companyId): array
     {
-        $fines = Violation::withoutGlobalScopes()->whereNull('deleted_at')
+        $employeeIds = Employee::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
-            ->where('is_deducted', false)->where('is_driver_liable', true)
-            ->where('driver_deduction', '>', 0)
-            ->get(['employee_id', 'driver_deduction']);
+            ->pluck('id')->all();
 
-        $expenses = DriverExpense::withoutGlobalScopes()->whereNull('deleted_at')
-            ->where('company_id', $companyId)
-            ->where('is_deducted', false)->where('driver_amount', '>', 0)
-            ->get(['employee_id', 'driver_amount']);
+        if (! $employeeIds) {
+            return ['amount' => 0.0, 'items' => 0, 'employees' => 0];
+        }
 
-        $employees = $fines->pluck('employee_id')
-            ->merge($expenses->pluck('employee_id'))
-            ->unique()->filter()->count();
+        // Open-ended on purpose: everything outstanding, whenever it arose.
+        $today = Carbon::today();
+        $pending = CompanyDeductionService::pendingFor(
+            $employeeIds,
+            '1970-01-01',
+            $today->copy()->endOfMonth()->toDateString(),
+            (int) $today->year,
+            (int) $today->month
+        );
+
+        $amount = 0.0;
+        $items = 0;
+        $employees = 0;
+
+        foreach ($pending as $row) {
+            $total = (float) ($row['total'] ?? 0);
+            if ($total <= 0) {
+                continue;
+            }
+            $amount += $total;
+            $items += count($row['items'] ?? []);
+            $employees++;
+        }
 
         return [
-            'amount' => round((float) $fines->sum('driver_deduction') + (float) $expenses->sum('driver_amount'), 3),
-            'items' => $fines->count() + $expenses->count(),
+            'amount' => round($amount, 3),
+            'items' => $items,
             'employees' => $employees,
         ];
     }

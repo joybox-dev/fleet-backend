@@ -4,23 +4,35 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\DriverExpense;
-use Illuminate\Http\Request;
+use App\Services\ContractScopeService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class DriverExpenseController extends Controller
 {
+    /** The screens are Arabic throughout; the framework's own messages are not. */
+    private const MESSAGES = [
+        'employee_id.required' => 'اختر السائق.',
+        'expense_type.required' => 'نوع المصروف مطلوب.',
+        'amount.required' => 'المبلغ مطلوب.',
+        'amount.min' => 'المبلغ يجب أن يكون أكبر من صفر.',
+        'borne_by.required' => 'حدّد من يتحمّل المصروف.',
+        'expense_date.required' => 'تاريخ المصروف مطلوب.',
+        'receipt_path.required_if' => 'الإيصال مطلوب — لا يُخصم مصروف على سائق بدون إيصاله.',
+    ];
+
     public function index(Request $request): JsonResponse
     {
-        if (!$request->user()->can('driver_expenses.view') && !$request->user()->can('employees.view') && !$request->user()->can('payroll.view')) {
+        if (! $request->user()->can('driver_expenses.view') && ! $request->user()->can('employees.view') && ! $request->user()->can('payroll.view')) {
             return response()->json(['message' => 'غير مصرح لك باستعراض مصاريف السائقين.'], 403);
         }
 
         $companyId = app('current_company_id');
-        $allowedDriverIds = \App\Services\ContractScopeService::getAllocatedDriverIds($request->user());
+        $allowedDriverIds = ContractScopeService::getAllocatedDriverIds($request->user());
 
         $query = DriverExpense::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
             ->where('company_id', $companyId)
-            ->when($allowedDriverIds !== null, fn($q) => $q->whereIn('employee_id', $allowedDriverIds));
+            ->when($allowedDriverIds !== null, fn ($q) => $q->whereIn('employee_id', $allowedDriverIds));
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->employee_id);
@@ -37,7 +49,7 @@ class DriverExpenseController extends Controller
         if ($request->filled('expense_type')) {
             $query->where(function ($q) use ($request) {
                 $q->where('expense_type', $request->expense_type)
-                  ->orWhere('expense_type_id', $request->expense_type);
+                    ->orWhere('expense_type_id', $request->expense_type);
             });
         }
 
@@ -53,13 +65,13 @@ class DriverExpenseController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('description', 'like', "%{$search}%")
-                  ->orWhere('notes', 'like', "%{$search}%")
-                  ->orWhere('vendor', 'like', "%{$search}%")
-                  ->orWhereHas('employee', function ($eq) use ($search) {
-                      $eq->where('name', 'like', "%{$search}%")
-                         ->orWhere('name_ar', 'like', "%{$search}%")
-                         ->orWhere('employee_number', 'like', "%{$search}%");
-                  });
+                    ->orWhere('notes', 'like', "%{$search}%")
+                    ->orWhere('vendor', 'like', "%{$search}%")
+                    ->orWhereHas('employee', function ($eq) use ($search) {
+                        $eq->where('name', 'like', "%{$search}%")
+                            ->orWhere('name_ar', 'like', "%{$search}%")
+                            ->orWhere('employee_number', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -78,35 +90,37 @@ class DriverExpenseController extends Controller
             'last_page' => $expenses->lastPage(),
             'total' => $expenses->total(),
             'summary' => [
-                'total_amount'        => round($totalAmount, 3),
+                'total_amount' => round($totalAmount, 3),
                 'total_company_share' => round($totalCompanyShare, 3),
-                'total_driver_share'  => round($totalDriverShare, 3),
+                'total_driver_share' => round($totalDriverShare, 3),
             ],
         ]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('driver_expenses.create') && !$request->user()->can('employees.create') && !$request->user()->can('payroll.create')) {
+        if (! $request->user()->can('driver_expenses.create') && ! $request->user()->can('employees.create') && ! $request->user()->can('payroll.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة مصاريف السائقين.'], 403);
         }
 
         $companyId = app('current_company_id');
         $validated = $request->validate([
-            'employee_id'     => 'required|exists:employees,id',
-            'vehicle_id'      => 'nullable|exists:vehicles,id',
+            'employee_id' => 'required|exists:employees,id',
+            'vehicle_id' => 'nullable|exists:vehicles,id',
             'expense_type_id' => 'nullable|exists:vehicle_expense_types,id',
-            'expense_type'    => 'required|string|max:255',
-            'amount'          => 'required|numeric|min:0.001',
-            'borne_by'        => 'required|in:company,driver,split',
-            'company_amount'  => 'nullable|numeric|min:0',
-            'driver_amount'   => 'nullable|numeric|min:0',
-            'expense_date'    => 'required|date',
-            'vendor'          => 'nullable|string|max:255',
-            'receipt_path'    => 'nullable|string|max:255',
-            'description'     => 'nullable|string|max:1000',
-            'notes'           => 'nullable|string|max:1000',
-        ]);
+            'expense_type' => 'required|string|max:255',
+            'amount' => 'required|numeric|min:0.001',
+            'borne_by' => 'required|in:company,driver,split',
+            'company_amount' => 'nullable|numeric|min:0',
+            'driver_amount' => 'nullable|numeric|min:0',
+            'expense_date' => 'required|date',
+            'vendor' => 'nullable|string|max:255',
+            // An expense the driver pays part of needs its receipt. Every one of the owner's seven
+            // recorded expenses had none, and each was still deducted.
+            'receipt_path' => 'nullable|string|max:255|required_if:borne_by,driver,split',
+            'description' => 'nullable|string|max:1000',
+            'notes' => 'nullable|string|max:1000',
+        ], self::MESSAGES);
 
         $amount = (float) $validated['amount'];
         $borneBy = $validated['borne_by'];
@@ -135,30 +149,33 @@ class DriverExpenseController extends Controller
     public function show(DriverExpense $driverExpense): JsonResponse
     {
         $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+
         return response()->json($driverExpense);
     }
 
     public function update(Request $request, DriverExpense $driverExpense): JsonResponse
     {
-        if (!$request->user()->can('driver_expenses.edit') && !$request->user()->can('employees.edit') && !$request->user()->can('payroll.edit')) {
+        if (! $request->user()->can('driver_expenses.edit') && ! $request->user()->can('employees.edit') && ! $request->user()->can('payroll.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل مصاريف السائقين.'], 403);
         }
 
         $validated = $request->validate([
-            'employee_id'     => 'required|exists:employees,id',
-            'vehicle_id'      => 'nullable|exists:vehicles,id',
+            'employee_id' => 'required|exists:employees,id',
+            'vehicle_id' => 'nullable|exists:vehicles,id',
             'expense_type_id' => 'nullable|exists:vehicle_expense_types,id',
-            'expense_type'    => 'required|string|max:255',
-            'amount'          => 'required|numeric|min:0.001',
-            'borne_by'        => 'required|in:company,driver,split',
-            'company_amount'  => 'nullable|numeric|min:0',
-            'driver_amount'   => 'nullable|numeric|min:0',
-            'expense_date'    => 'required|date',
-            'vendor'          => 'nullable|string|max:255',
-            'receipt_path'    => 'nullable|string|max:255',
-            'description'     => 'nullable|string|max:1000',
-            'notes'           => 'nullable|string|max:1000',
-        ]);
+            'expense_type' => 'required|string|max:255',
+            'amount' => 'required|numeric|min:0.001',
+            'borne_by' => 'required|in:company,driver,split',
+            'company_amount' => 'nullable|numeric|min:0',
+            'driver_amount' => 'nullable|numeric|min:0',
+            'expense_date' => 'required|date',
+            'vendor' => 'nullable|string|max:255',
+            // An expense the driver pays part of needs its receipt. Every one of the owner's seven
+            // recorded expenses had none, and each was still deducted.
+            'receipt_path' => 'nullable|string|max:255|required_if:borne_by,driver,split',
+            'description' => 'nullable|string|max:1000',
+            'notes' => 'nullable|string|max:1000',
+        ], self::MESSAGES);
 
         $amount = (float) $validated['amount'];
         $borneBy = $validated['borne_by'];
@@ -185,7 +202,7 @@ class DriverExpenseController extends Controller
 
     public function destroy(Request $request, DriverExpense $driverExpense): JsonResponse
     {
-        if (!$request->user()->can('driver_expenses.delete') && !$request->user()->can('employees.delete') && !$request->user()->can('payroll.delete')) {
+        if (! $request->user()->can('driver_expenses.delete') && ! $request->user()->can('employees.delete') && ! $request->user()->can('payroll.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف مصاريف السائقين.'], 403);
         }
 
@@ -194,6 +211,7 @@ class DriverExpenseController extends Controller
         }
 
         $driverExpense->delete();
+
         return response()->json(['message' => 'تم حذف مصروف السائق بنجاح.']);
     }
 }

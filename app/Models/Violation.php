@@ -4,12 +4,12 @@ namespace App\Models;
 
 use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Violation extends Model
 {
-    use SoftDeletes, BelongsToCompany;
+    use BelongsToCompany, SoftDeletes;
 
     protected $fillable = [
         'employee_id', 'vehicle_id', 'created_by', 'violation_date',
@@ -21,46 +21,39 @@ class Violation extends Model
     ];
 
     protected $casts = [
-        'amount'           => 'decimal:3',
+        'amount' => 'decimal:3',
         'driver_deduction' => 'decimal:3',
         'is_driver_liable' => 'boolean',
-        'is_deducted'      => 'boolean',
-        'driver_share'     => 'decimal:3',
-        'contract_share'   => 'decimal:3',
+        'is_deducted' => 'boolean',
+        'driver_share' => 'decimal:3',
+        'contract_share' => 'decimal:3',
         'charge_contract_id' => 'integer',
         'is_driver_override' => 'boolean',
         'is_contract_override' => 'boolean',
     ];
 
-    protected static function booted(): void
+    public function employee(): BelongsTo
     {
-        static::saved(function ($violation) {
-            self::recalculatePayroll($violation->employee_id, $violation->violation_date);
-        });
-        static::deleted(function ($violation) {
-            self::recalculatePayroll($violation->employee_id, $violation->violation_date);
-        });
+        return $this->belongsTo(Employee::class)->withTrashed();
     }
 
-    private static function recalculatePayroll($employeeId, $dateStr): void
+    public function vehicle(): BelongsTo
     {
-        try {
-            $date = \Carbon\Carbon::parse($dateStr);
-            $run = \App\Models\PayrollRun::where('year', $date->year)
-                ->where('month', $date->month)
-                ->where('status', 'draft')
-                ->first();
-            if ($run) {
-                \App\Http\Controllers\Api\PayrollController::recalculateRun($run);
-            }
-        } catch (\Throwable $e) {
-            \Log::error("Recalculate draft payroll failed in Violation: " . $e->getMessage());
-        }
+        return $this->belongsTo(Vehicle::class)->withTrashed();
     }
 
-    public function employee(): BelongsTo    { return $this->belongsTo(Employee::class)->withTrashed(); }
-    public function vehicle(): BelongsTo     { return $this->belongsTo(Vehicle::class)->withTrashed(); }
-    public function createdBy(): BelongsTo   { return $this->belongsTo(User::class, 'created_by'); }
-    public function payrollSlip(): BelongsTo { return $this->belongsTo(PayrollSlip::class); }
-    public function chargeContract(): BelongsTo { return $this->belongsTo(Contract::class, 'charge_contract_id'); }
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function payrollSlip(): BelongsTo
+    {
+        return $this->belongsTo(PayrollSlip::class);
+    }
+
+    public function chargeContract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class, 'charge_contract_id');
+    }
 }

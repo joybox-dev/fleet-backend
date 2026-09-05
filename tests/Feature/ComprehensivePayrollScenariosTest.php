@@ -2,16 +2,16 @@
 
 namespace Tests\Feature;
 
-use App\Models\Company;
-use App\Models\User;
 use App\Models\Client;
+use App\Models\Company;
 use App\Models\Contract;
+use App\Models\ContractAssignment;
+use App\Models\DailyLog;
+use App\Models\DriverContractOverride;
 use App\Models\Employee;
+use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
-use App\Models\ContractAssignment;
-use App\Models\DriverContractOverride;
-use App\Models\DailyLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -20,7 +20,9 @@ class ComprehensivePayrollScenariosTest extends TestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private User $user;
+
     private Client $client;
 
     protected function setUp(): void
@@ -67,10 +69,22 @@ class ComprehensivePayrollScenariosTest extends TestCase
     ) {
         $this->actingAs($this->user);
 
+        // 0. The retired path read a fixed driver's salary off employees.actual_salary whenever the
+        //    pricing rule named no amount. The contract sheet reads the rule, which is how all 18
+        //    real contracts are written — none of them leaves the amount off. So the scenarios say
+        //    it in the rule; the figures they assert are unchanged.
+        $salaryInRule = (float) ($contractExtraFields['actual_salary'] ?? 0);
+        foreach ($driverPricingRules as $vehicleType => $rule) {
+            if (in_array($rule['payment_method'] ?? '', ['fixed', 'hybrid'], true)
+                && ! isset($rule['fixed_amount'])) {
+                $driverPricingRules[$vehicleType]['fixed_amount'] = $salaryInRule;
+            }
+        }
+
         // 1. Create Contract
         $contractFields = array_merge([
             'client_id' => $this->client->id,
-            'contract_number' => 'CON-' . uniqid(),
+            'contract_number' => 'CON-'.uniqid(),
             'name' => 'Scenario Contract',
             'payment_type' => 'per_order',
             'start_date' => '2026-11-01',
@@ -90,8 +104,8 @@ class ComprehensivePayrollScenariosTest extends TestCase
 
         // 2. Create Employee
         $driver = Employee::create([
-            'name' => 'Driver ' . uniqid(),
-            'employee_number' => 'EMP-' . rand(1000, 9999),
+            'name' => 'Driver '.uniqid(),
+            'employee_number' => 'EMP-'.rand(1000, 9999),
             'company_id' => $this->company->id,
             'status' => 'active',
             'date_of_joining' => '2026-11-01',
@@ -100,7 +114,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
 
         // 3. Create Vehicle
         $vehicle = Vehicle::create([
-            'plate_number' => 'V-' . rand(1000, 9999),
+            'plate_number' => 'V-'.rand(1000, 9999),
             'make' => 'Toyota Bike',
             'status' => 'working',
             'company_id' => $this->company->id,
@@ -138,7 +152,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
 
         // 6. Create Daily Logs for November 2026 (30 Days)
         for ($d = 1; $d <= 30; $d++) {
-            $date = sprintf("2026-11-%02d", $d);
+            $date = sprintf('2026-11-%02d', $d);
             $dayOrders = $ordersByDay[$d] ?? 0;
 
             if (is_array($dayOrders)) {
@@ -147,10 +161,14 @@ class ComprehensivePayrollScenariosTest extends TestCase
                         // Calculate client rate for this zone
                         $clientRate = 0.0;
                         if ($clientPaymentMethod === 'zones') {
-                            if ($zone === 'Zone A') $clientRate = 1.200;
-                            if ($zone === 'Zone B') $clientRate = 1.800;
+                            if ($zone === 'Zone A') {
+                                $clientRate = 1.200;
+                            }
+                            if ($zone === 'Zone B') {
+                                $clientRate = 1.800;
+                            }
                         }
-                        
+
                         DailyLog::create([
                             'company_id' => $this->company->id,
                             'employee_id' => $driver->id,
@@ -172,7 +190,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                     $clientRate = 0.0;
                     if ($clientPaymentMethod === 'tiers') {
                         // Tiers rate is 1.500 if total orders >= 201, else 1.000
-                        $totalOrders = array_sum(array_map(function($val) {
+                        $totalOrders = array_sum(array_map(function ($val) {
                             return is_array($val) ? array_sum($val) : $val;
                         }, $ordersByDay));
                         $clientRate = $totalOrders >= 201 ? 1.500 : 1.000;
@@ -196,22 +214,25 @@ class ComprehensivePayrollScenariosTest extends TestCase
             }
         }
 
-        // 7. Run Payroll
-        $response = $this->postJson('/api/payroll/run', [
-            'year' => 2026,
-            'month' => 11,
-        ]);
-        $response->assertStatus(201);
+        // 7. Read the contract sheet. These scenarios exist to pin the commission, incentive, zone
+        //    and tier maths, which is unchanged — only the screen that used to display it is gone,
+        //    so the assertion moves from the retired payroll slip to the sheet that replaced it.
+        $response = $this->getJson("/api/payroll/contract-sheet/{$contract->id}?year=2026&month=11");
+        $response->assertOk();
 
-        // 8. Assert Driver Payout in payroll slips
-        $this->assertDatabaseHas('payroll_slips', [
-            'employee_id' => $driver->id,
-            'gross_actual' => $expectedDriverPayout,
-        ]);
+        // 8. Assert the driver's gross earnings for the contract.
+        $row = collect($response->json('drivers'))->firstWhere('employee_id', $driver->id);
+        $this->assertNotNull($row, 'driver missing from the contract sheet');
+        $this->assertEqualsWithDelta(
+            $expectedDriverPayout,
+            (float) $row['gross_contract_earnings'],
+            0.001,
+            'gross contract earnings'
+        );
 
         // 9. Assert Client Revenue
         if ($clientPaymentMethod === 'fixed') {
-            $this->assertEqualsWithDelta($expectedClientRevenue, (float)($contract->fixed_monthly ?? 300.000), 0.001);
+            $this->assertEqualsWithDelta($expectedClientRevenue, (float) ($contract->fixed_monthly ?? 300.000), 0.001);
         } else {
             $logsRevenue = (float) DailyLog::where('contract_id', $contract->id)->sum('income_amount');
             $fixedRevenue = 0.0;
@@ -261,7 +282,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 0.500],
                     ['min' => 201, 'max' => 9999, 'price' => 0.750],
-                ]
+                ],
             ]],
             null,
             $orders,
@@ -287,7 +308,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             [
                 'fixed_monthly' => 300,
                 'actual_salary' => 100,
-                'default_order_commission' => 0.200
+                'default_order_commission' => 0.200,
             ]
         );
     }
@@ -330,7 +351,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'custom_pricing_rules' => [
                     ['min' => 1, 'max' => 150, 'price' => 0.600],
                     ['min' => 151, 'max' => 9999, 'price' => 0.800],
-                ]
+                ],
             ],
             $orders,
             160.000,
@@ -375,7 +396,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -402,7 +423,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'tiers',
             ['1' => [
@@ -410,7 +431,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 0.400],
                     ['min' => 201, 'max' => 9999, 'price' => 0.600],
-                ]
+                ],
             ]],
             null,
             $orders,
@@ -430,7 +451,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'hybrid',
             ['1' => ['payment_method' => 'hybrid']],
@@ -456,7 +477,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -483,7 +504,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -492,7 +513,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'custom_pricing_rules' => [
                     ['min' => 1, 'max' => 180, 'price' => 0.500],
                     ['min' => 181, 'max' => 9999, 'price' => 0.700],
-                ]
+                ],
             ],
             $orders,
             154.000,
@@ -511,7 +532,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 1.000],
                     ['min' => 201, 'max' => 9999, 'price' => 1.500],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -539,7 +560,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -564,7 +585,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'tiers',
             ['1' => [
@@ -572,7 +593,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 180, 'price' => 0.450],
                     ['min' => 181, 'max' => 9999, 'price' => 0.550],
-                ]
+                ],
             ]],
             null,
             $orders,
@@ -590,7 +611,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'hybrid',
             ['1' => ['payment_method' => 'hybrid']],
@@ -614,7 +635,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -639,7 +660,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -648,7 +669,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'custom_pricing_rules' => [
                     ['min' => 1, 'max' => 170, 'price' => 0.480],
                     ['min' => 171, 'max' => 9999, 'price' => 0.600],
-                ]
+                ],
             ],
             $orders,
             108.000,
@@ -665,7 +686,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
             ['1' => [
                 'payment_method' => 'hybrid',
                 'fixed_amount' => 200,
-                'order_commission' => 0.500
+                'order_commission' => 0.500,
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -695,7 +716,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -722,7 +743,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'zones',
             ['1' => [
@@ -730,7 +751,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     'Zone A' => 0.500,
                     'Zone B' => 0.700,
-                ]
+                ],
             ]],
             null,
             $orders,
@@ -750,7 +771,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'tiers',
             ['1' => [
@@ -758,7 +779,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'tiers' => [
                     ['min' => 1, 'max' => 200, 'price' => 0.450],
                     ['min' => 201, 'max' => 9999, 'price' => 0.650],
-                ]
+                ],
             ]],
             null,
             $orders,
@@ -778,7 +799,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'hybrid',
             ['1' => ['payment_method' => 'hybrid']],
@@ -804,7 +825,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'zones_tiers',
             ['1' => [
@@ -815,16 +836,16 @@ class ComprehensivePayrollScenariosTest extends TestCase
                         'tiers' => [
                             ['min' => 1, 'max' => 100, 'price' => 0.400],
                             ['min' => 101, 'max' => 9999, 'price' => 0.600],
-                        ]
+                        ],
                     ],
                     [
                         'zone' => 'Zone B',
                         'tiers' => [
                             ['min' => 1, 'max' => 80, 'price' => 0.500],
                             ['min' => 81, 'max' => 9999, 'price' => 0.800],
-                        ]
-                    ]
-                ]
+                        ],
+                    ],
+                ],
             ]],
             null,
             $orders,
@@ -844,7 +865,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -871,7 +892,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -880,7 +901,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'custom_pricing_rules' => [
                     'Zone A' => 0.550,
                     'Zone B' => 0.750,
-                ]
+                ],
             ],
             $orders,
             159.500,
@@ -899,7 +920,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -908,7 +929,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'custom_pricing_rules' => [
                     ['min' => 1, 'max' => 210, 'price' => 0.500],
                     ['min' => 211, 'max' => 9999, 'price' => 0.700],
-                ]
+                ],
             ],
             $orders,
             161.000,
@@ -927,7 +948,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -953,7 +974,7 @@ class ComprehensivePayrollScenariosTest extends TestCase
                 'zones' => [
                     ['id' => 'zone-a', 'name' => 'Zone A', 'price' => 1.200],
                     ['id' => 'zone-b', 'name' => 'Zone B', 'price' => 1.800],
-                ]
+                ],
             ]],
             'fixed',
             ['1' => ['payment_method' => 'fixed']],
@@ -965,16 +986,16 @@ class ComprehensivePayrollScenariosTest extends TestCase
                         'tiers' => [
                             ['min' => 1, 'max' => 90, 'price' => 0.450],
                             ['min' => 91, 'max' => 9999, 'price' => 0.650],
-                        ]
+                        ],
                     ],
                     [
                         'zone' => 'Zone B',
                         'tiers' => [
                             ['min' => 1, 'max' => 70, 'price' => 0.550],
                             ['min' => 71, 'max' => 9999, 'price' => 0.850],
-                        ]
-                    ]
-                ]
+                        ],
+                    ],
+                ],
             ],
             $orders,
             139.500,

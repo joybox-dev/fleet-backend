@@ -3,10 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-
 use App\Models\SalaryAdvance;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class SalaryAdvanceController extends Controller
 {
@@ -34,16 +33,19 @@ class SalaryAdvanceController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('salary_advances.create')) {
+        if (! $request->user()->can('salary_advances.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة سلفة جـديدة.'], 403);
         }
 
         $validated = $request->validate([
-            'employee_id'         => 'required|exists:employees,id',
-            'amount'              => 'required|numeric|min:1',
+            'employee_id' => 'required|exists:employees,id',
+            'amount' => 'required|numeric|min:1',
             'monthly_installment' => 'required|numeric|min:0.001',
-            'advance_date'        => 'required|date',
-            'reason'              => 'nullable|string|max:500',
+            'advance_date' => 'required|date',
+            'reason' => 'nullable|string|max:500',
+            // Cash leaves the company here. The only record that the driver received it used to be
+            // the row created by whoever handed it over; now the signed voucher goes with it.
+            'voucher_path' => 'required|string|max:255',
         ]);
 
         // Check for existing active advance for same employee
@@ -57,18 +59,16 @@ class SalaryAdvanceController extends Controller
             ], 422);
         }
 
-        $amount      = (float) $validated['amount'];
+        $amount = (float) $validated['amount'];
         $installment = (float) $validated['monthly_installment'];
 
         $validated['total_installments'] = (int) ceil($amount / $installment);
-        $validated['paid_installments']  = 0;
-        $validated['remaining_balance']  = $amount;
-        $validated['status']             = 'active';
-        $validated['approved_by']        = $request->user()->id;
+        $validated['paid_installments'] = 0;
+        $validated['remaining_balance'] = $amount;
+        $validated['status'] = 'active';
+        $validated['approved_by'] = $request->user()->id;
 
         $advance = SalaryAdvance::create($validated);
-
-
 
         $advance->load(['employee:id,name', 'approver:id,name']);
 
@@ -83,7 +83,7 @@ class SalaryAdvanceController extends Controller
         $salaryAdvance->load([
             'employee:id,name',
             'approver:id,name',
-            'deductions' => fn($q) => $q->orderByDesc('deduction_date'),
+            'deductions' => fn ($q) => $q->orderByDesc('deduction_date'),
         ]);
 
         return response()->json($salaryAdvance);
@@ -94,7 +94,7 @@ class SalaryAdvanceController extends Controller
      */
     public function cancel(Request $request, SalaryAdvance $salaryAdvance): JsonResponse
     {
-        if (!$request->user()->can('salary_advances.edit')) {
+        if (! $request->user()->can('salary_advances.edit')) {
             return response()->json(['message' => 'غير مصرح لك بإلغاء السلف.'], 403);
         }
 
@@ -108,7 +108,7 @@ class SalaryAdvanceController extends Controller
 
         return response()->json([
             'message' => 'تم إلغاء السلفة.',
-            'data'    => $salaryAdvance,
+            'data' => $salaryAdvance,
         ]);
     }
 }

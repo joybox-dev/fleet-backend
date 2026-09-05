@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\CustodyItem;
 use App\Models\DriverExpense;
-use App\Models\EmployeeLeave;
 use App\Models\MaintenanceRecord;
 use App\Models\SalaryAdvance;
 use App\Models\Violation;
@@ -150,29 +149,14 @@ class CompanyDeductionService
                 'مصروف على السائق'.($e->expense_type ? " ({$e->expense_type})" : '')
             ));
 
-        // Approved unpaid leave overlapping this month. Naturally month-scoped, so it cannot
-        // repeat across months the way a cumulative charge can.
-        EmployeeLeave::withoutGlobalScopes()
-            ->whereNull('deleted_at')
-            ->whereIn('employee_id', $employeeIds)
-            ->where('status', 'approved')
-            ->where('is_paid', false)
-            ->where('total_deduction', '>', 0)
-            ->where(function ($q) use ($startDate, $endDate) {
-                $q->whereBetween('start_date', [$startDate, $endDate])
-                    ->orWhereBetween('end_date', [$startDate, $endDate])
-                    ->orWhere(function ($q2) use ($startDate, $endDate) {
-                        $q2->where('start_date', '<=', $startDate)->where('end_date', '>=', $endDate);
-                    });
-            })
-            ->get()
-            ->each(fn ($l) => $add(
-                (int) $l->employee_id,
-                ConsolidatedPayrollDeduction::SOURCE_LEAVE,
-                (int) $l->id,
-                (float) $l->total_deduction,
-                'إجازة بدون راتب'.($l->days_count ? " ({$l->days_count} يوم)" : '')
-            ));
+        // Unpaid leave is deliberately NOT a deduction. A driver's month is priced from the days he
+        // actually worked, so a day of leave already costs him that day's pay — charging the leave
+        // record on top of it took the same day off him twice. Leave stays a record of attendance
+        // and nothing more.
+        //
+        // TODO: administrative staff are paid a flat monthly salary that no attendance record
+        // reduces, so unpaid leave will have to be deducted for them. Build it when their payroll
+        // is built; do not put it back on this path, which prices drivers by the day.
 
         // Salary advance instalments due this month.
         SalaryAdvance::withoutGlobalScopes()
@@ -181,22 +165,26 @@ class CompanyDeductionService
             ->where('status', 'active')
             ->whereDate('advance_date', '<=', $endDate)
             ->get()
-            ->each(function ($advance) use ($add, $year, $month, $settled) {
+            ->each(function ($advance) use ($add, $year, $month, $settled, $originatedInMonthOnly) {
                 if (isset($settled['advance:'.$advance->id.":{$year}-{$month}"])) {
                     return;
                 }
-                $due = self::advanceInstallmentForMonth($advance, $year, $month);
-                $due = min($due, (float) $advance->remaining_balance);
+                // Payroll collects what is owed by the time the month closes; the statement reports
+                // what each month carries on its own schedule.
+                $due = self::advanceInstallmentForMonth($advance, $year, $month, ! $originatedInMonthOnly);
                 if ($due <= 0) {
                     return;
                 }
-                $index = self::advanceInstallmentIndex($advance, $year, $month);
+                // Numbered by instalments actually taken, not by months elapsed — a driver holding
+                // two advances at once, or a month closed out of turn, must still read true.
+                $index = (int) $advance->paid_installments + 1;
+                $total = max((int) $advance->total_installments, $index);
                 $add(
                     (int) $advance->employee_id,
                     ConsolidatedPayrollDeduction::SOURCE_ADVANCE,
                     (int) $advance->id,
                     $due,
-                    "قسط سلفة {$index} من ".(int) ($advance->total_installments ?: 1)
+                    "قسط سلفة {$index} من {$total}"
                 );
             });
 
@@ -242,31 +230,49 @@ class CompanyDeductionService
     }
 
     /**
-     * How much of an advance falls due in a given month, derived from its own schedule so the
-     * projection is identical whether or not the month has been approved yet.
+     * How much of an advance falls due in a given month: one instalment, or whatever is left of it.
+     *
+     * The instalment belongs to the act of closing a month, not to a square on the calendar. It
+     * used to be counted off the months elapsed since the advance was taken, which quietly assumed
+     * every month in between had been closed, in order. It need not have been: months are closed in
+     * whatever order suits, and some are never closed at all. Under that assumption a month that
+     * was skipped had its instalment written off — and once the count ran past the last scheduled
+     * instalment the advance stopped charging altogether, leaving a live balance nobody could
+     * collect and an advance stuck 'active' for good, which also blocks the driver from ever being
+     * deleted.
+     *
+     * Counting instalments off the balance instead makes the order irrelevant: every month that
+     * closes takes one, the schedule simply runs on for as many months as it takes, and the advance
+     * finishes when the balance does.
      */
-    public static function advanceInstallmentForMonth(SalaryAdvance $advance, int $year, int $month): float
+    public static function advanceInstallmentForMonth(SalaryAdvance $advance, int $year, int $month, bool $forCollection = true): float
     {
-        $amount = (float) $advance->amount;
         $installment = (float) $advance->monthly_installment;
+        $remaining = (float) $advance->remaining_balance;
 
-        if ($amount <= 0 || $installment <= 0 || ! $advance->advance_date) {
+        if ($installment <= 0 || $remaining <= 0 || ! $advance->advance_date) {
             return 0.0;
         }
 
+        // An advance dated ahead of this month has not started yet. This is also what keeps a
+        // settlement advance out of the very month whose approval created it.
         $index = self::advanceInstallmentIndex($advance, $year, $month);
         if ($index < 1) {
             return 0.0;
         }
 
-        $totalInstallments = (int) ($advance->total_installments ?: ceil($amount / $installment));
-        if ($totalInstallments > 0 && $index > $totalInstallments) {
-            return 0.0;
+        if ($forCollection) {
+            return round(min($installment, $remaining), 3);
         }
 
-        $due = min($installment, $amount - (($index - 1) * $installment));
+        // The statement is answering a different question, and the balance is the wrong input for
+        // it: nothing repays an advance until a month is approved, so a balance-driven figure puts
+        // a full instalment in every open month for ever — a 300.000 advance read as 900.000 of
+        // debt across nine untouched months. Here the schedule bounds it: the month gets the
+        // instalment its own position in the schedule calls for, and nothing past the last one.
+        $scheduled = min($installment, (float) $advance->amount - (($index - 1) * $installment));
 
-        return $due > 0 ? round($due, 3) : 0.0;
+        return $scheduled > 0 ? round(min($scheduled, $remaining), 3) : 0.0;
     }
 
     /** Group a driver's pending items by source type, for display. */

@@ -2,11 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\Company;
-use App\Models\User;
 use App\Models\Client;
+use App\Models\Company;
 use App\Models\Contract;
 use App\Models\Employee;
+use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use App\Models\Violation;
@@ -18,9 +18,13 @@ class ViolationAssignmentTest extends TestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private User $user;
+
     private Employee $driver;
+
     private Vehicle $vehicle;
+
     private Contract $contract;
 
     protected function setUp(): void
@@ -111,7 +115,7 @@ class ViolationAssignmentTest extends TestCase
             'employee' => [
                 'id' => $this->driver->id,
                 'name' => 'John Driver',
-            ]
+            ],
         ]);
 
         // Date falls outside assignment period (before May 10)
@@ -119,7 +123,7 @@ class ViolationAssignmentTest extends TestCase
         $responseOutsideBefore->assertStatus(404);
         $responseOutsideBefore->assertJson([
             'success' => false,
-            'message' => 'No active driver found for this vehicle on the specified date/time.'
+            'message' => 'No active driver found for this vehicle on the specified date/time.',
         ]);
 
         // Date falls outside assignment period (after May 20)
@@ -132,11 +136,12 @@ class ViolationAssignmentTest extends TestCase
         $this->actingAs($this->user);
 
         // Create violation at datetime within assignment (May 15)
-        $response = $this->postJson("/api/violations", [
+        $response = $this->postJson('/api/violations', [
             'vehicle_id' => $this->vehicle->id,
             'violation_date' => '2026-05-15 11:20:00',
             'violation_type' => 'تجاوز السرعة',
             'amount' => 50,
+            'photo_path' => 'violations/ticket.jpg',
             'is_driver_liable' => true,
             'reference_number' => 'TX-98765',
         ]);
@@ -163,16 +168,17 @@ class ViolationAssignmentTest extends TestCase
         $this->actingAs($this->user);
 
         // Attempt to create violation at datetime outside assignment (May 25)
-        $response = $this->postJson("/api/violations", [
+        $response = $this->postJson('/api/violations', [
             'vehicle_id' => $this->vehicle->id,
             'violation_date' => '2026-05-25 10:00:00',
             'violation_type' => 'إشارة حمراء',
             'amount' => 100,
+            'photo_path' => 'violations/ticket.jpg',
         ]);
 
         $response->assertStatus(422);
         $response->assertJson([
-            'message' => 'No active driver was assigned to this vehicle at the specified date/time.'
+            'message' => 'No active driver was assigned to this vehicle at the specified date/time.',
         ]);
     }
 }

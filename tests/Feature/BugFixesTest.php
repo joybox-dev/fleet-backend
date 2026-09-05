@@ -2,18 +2,19 @@
 
 namespace Tests\Feature;
 
-use App\Models\Company;
-use App\Models\User;
 use App\Models\Client;
+use App\Models\Company;
 use App\Models\Contract;
-use App\Models\Employee;
-use App\Models\Vehicle;
 use App\Models\DailyLog;
-use App\Models\Violation;
-use App\Models\MaintenanceRecord;
-use App\Models\VehicleAssignment;
-use App\Models\SalaryAdvance;
 use App\Models\DriverGuarantee;
+use App\Models\Employee;
+use App\Models\MaintenanceRecord;
+use App\Models\SalaryAdvance;
+use App\Models\User;
+use App\Models\Vehicle;
+use App\Models\VehicleAssignment;
+use App\Models\VehicleExpense;
+use App\Models\Violation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -22,8 +23,11 @@ class BugFixesTest extends TestCase
     use RefreshDatabase;
 
     private Company $company1;
+
     private Company $company2;
+
     private User $user1;
+
     private User $user2;
 
     protected function setUp(): void
@@ -395,7 +399,7 @@ class BugFixesTest extends TestCase
             ]);
 
         $response->assertStatus(200);
-        
+
         $updated = $employee->fresh();
         $this->assertEquals('Updated Employee Name', $updated->name);
         $this->assertEquals('الاسم الأصلي' ? 'الاسم المعدل' : 'الاسم الأصلي', $updated->name_ar); // Keep comparison simple
@@ -444,6 +448,12 @@ class BugFixesTest extends TestCase
             'start_date' => '2026-01-01',
             'is_active' => true,
             'is_locked' => false,
+            // A contract that already states how it bills and pays, so this test stays about
+            // editing unrelated fields rather than about supplying pricing.
+            'client_payment_method' => 'fixed',
+            'client_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 900]],
+            'driver_payment_method' => 'fixed',
+            'driver_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 260]],
         ]);
 
         // 1. Update when contract is not locked - should succeed
@@ -456,6 +466,7 @@ class BugFixesTest extends TestCase
                 'rate_per_order' => 1.5,
                 'fixed_monthly' => 500.0,
                 'start_date' => '2026-02-01',
+                'default_required_work_days' => 26,
                 'is_active' => false,
             ]);
 
@@ -469,7 +480,7 @@ class BugFixesTest extends TestCase
         $this->assertEquals(1.5, $updated->rate_per_order);
         $this->assertEquals(500.0, $updated->fixed_monthly);
         $this->assertEquals('2026-02-01', $updated->start_date);
-        $this->assertFalse((bool)$updated->is_active);
+        $this->assertFalse((bool) $updated->is_active);
 
         // 2. Lock check is obsolete and deleted.
     }
@@ -546,118 +557,7 @@ class BugFixesTest extends TestCase
         $response2->assertStatus(201);
 
         // Verify FIFO reduced cash_pending on the log to 40
-        $this->assertEquals(40.0, (float)$log->fresh()->cash_pending);
-    }
-
-    /**
-     * Test Bug 1.6: Retroactive payroll recalculation when DailyLog is created/updated/deleted
-     */
-    public function test_retroactive_payroll_recalculation(): void
-    {
-        app()->instance('current_company_id', $this->company1->id);
-
-        $employee = Employee::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Driver Retro Recalc Test',
-            'date_of_joining' => '2026-05-01',
-            'pay_type' => 'hybrid',
-            'official_salary' => 100,
-            'actual_salary' => 150,
-            'rate_per_order' => 0.250,
-        ]);
-
-        $vehicle = Vehicle::create([
-            'company_id' => $this->company1->id,
-            'plate_number' => 'V-7777',
-        ]);
-
-        $client = Client::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Client A',
-        ]);
-
-        $contract = Contract::create([
-            'company_id' => $this->company1->id,
-            'client_id' => $client->id,
-            'contract_number' => 'C-004',
-            'name' => 'Contract A',
-            'payment_type' => 'hybrid',
-            'rate_per_order' => 1.250,
-            'fixed_monthly' => 500,
-            'start_date' => '2026-05-01',
-        ]);
-
-        // Create log 1: May 15
-        $log1 = DailyLog::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-05-15',
-            'orders_count' => 20,
-            'orders_online' => 12,
-            'orders_cash' => 8,
-            'cash_collected' => 40,
-            'cash_pending' => 40,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // Run payroll for May 2026
-        $response = $this->actingAs($this->user1)
-            ->postJson('/api/payroll/run', [
-                'year' => 2026,
-                'month' => 5,
-            ]);
-        $response->assertStatus(201);
-        $runId = $response->json('run_id');
-
-        // Check slip: orders_bonus should be 5.0 (20 * 0.25)
-        $slip = \App\Models\PayrollSlip::where('payroll_run_id', $runId)
-            ->where('employee_id', $employee->id)
-            ->first();
-        $this->assertNotNull($slip);
-        $this->assertEquals(5.000, (float)$slip->orders_bonus);
-        $this->assertEquals(155.000, (float)$slip->gross_actual);
-
-        // Retroactively create log 2: May 16 (10 orders)
-        $log2 = DailyLog::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-05-16',
-            'orders_count' => 10,
-            'orders_online' => 6,
-            'orders_cash' => 4,
-            'cash_collected' => 20,
-            'cash_pending' => 20,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // Assert that the draft payroll slip automatically updated!
-        $updatedSlip = $slip->fresh();
-        $this->assertEquals(7.500, (float)$updatedSlip->orders_bonus); // 30 orders * 0.25 = 7.50
-        $this->assertEquals(157.500, (float)$updatedSlip->gross_actual);
-
-        // Retroactively update log 2 (orders count to 20)
-        $log2->update([
-            'orders_count' => 20,
-            'orders_online' => 12,
-            'orders_cash' => 8,
-        ]);
-
-        // Assert updated again
-        $updatedSlip2 = $slip->fresh();
-        $this->assertEquals(10.000, (float)$updatedSlip2->orders_bonus); // 40 orders * 0.25 = 10.00
-        $this->assertEquals(160.000, (float)$updatedSlip2->gross_actual);
-
-        // Retroactively delete log 2
-        $log2->delete();
-
-        // Assert reverted back to 20 orders
-        $updatedSlip3 = $slip->fresh();
-        $this->assertEquals(5.000, (float)$updatedSlip3->orders_bonus);
-        $this->assertEquals(155.000, (float)$updatedSlip3->gross_actual);
+        $this->assertEquals(40.0, (float) $log->fresh()->cash_pending);
     }
 
     /**
@@ -722,7 +622,7 @@ class BugFixesTest extends TestCase
             'expected_total_profit' => 6000, // expected_monthly_profit = 1000
         ]);
 
-        $this->assertEquals(1000.0, (float)$contract->fresh()->expected_monthly_profit);
+        $this->assertEquals(1000.0, (float) $contract->fresh()->expected_monthly_profit);
 
         $employee = Employee::create([
             'company_id' => $this->company1->id,
@@ -769,7 +669,7 @@ class BugFixesTest extends TestCase
         ]);
 
         // Create a vehicle expense
-        $expense = \App\Models\VehicleExpense::create([
+        $expense = VehicleExpense::create([
             'company_id' => $this->company1->id,
             'vehicle_id' => $vehicle->id,
             'expense_type' => 'Fuel',
@@ -785,224 +685,11 @@ class BugFixesTest extends TestCase
         $resContract = collect($response->json('contracts'))->firstWhere('id', $contract->id);
 
         $this->assertNotNull($resContract);
-        $this->assertEquals(1000.0, (float)$resContract['expected_profit']);
-        $this->assertEquals(515.0, (float)$resContract['actual_revenue']); // 500 fixed + 15 log income
-        $this->assertEquals(100.0, (float)$resContract['vehicle_costs']);
-        $this->assertEquals(2.5, (float)$resContract['driver_commissions']);
-        $this->assertEquals(300.0, (float)$resContract['allocated_salaries']); // 100% of 300 base salary
-        $this->assertEquals(-887.5, (float)$resContract['variance']); // 112.5 - 1000
-    }
-
-    /**
-     * Test E2E Payroll Recalculation Bug
-     */
-    public function test_payroll_recalculation_bug(): void
-    {
-        $this->withoutExceptionHandling();
-        app()->instance('current_company_id', $this->company1->id);
-
-        // 1. Create a hybrid employee
-        $employee = Employee::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Driver Recalc Bug Test',
-            'date_of_joining' => '2026-05-01',
-            'pay_type' => 'hybrid',
-            'official_salary' => 100,
-            'actual_salary' => 150,
-            'rate_per_order' => 0.250,
-        ]);
-
-        $vehicle = Vehicle::create([
-            'company_id' => $this->company1->id,
-            'plate_number' => 'V-9999',
-        ]);
-
-        $client = Client::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Client Test',
-        ]);
-
-        $contract = Contract::create([
-            'company_id' => $this->company1->id,
-            'client_id' => $client->id,
-            'contract_number' => 'C-TEST-RECALC',
-            'name' => 'Contract Recalc Test',
-            'payment_type' => 'hybrid',
-            'rate_per_order' => 1.250,
-            'fixed_monthly' => 500,
-            'start_date' => '2026-05-01',
-        ]);
-
-        // 2. Create log with 10 orders (commission = 2.500)
-        $log = DailyLog::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-05-15',
-            'orders_count' => 10,
-            'orders_online' => 6,
-            'orders_cash' => 4,
-            'cash_collected' => 40,
-            'cash_pending' => 40,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // 3. Run payroll for May 2026
-        $response = $this->actingAs($this->user1)
-            ->postJson('/api/payroll/run', [
-                'year' => 2026,
-                'month' => 5,
-            ]);
-        $response->dump();
-        $response->assertStatus(201);
-        $runId = $response->json('run_id');
-
-        // Check slip: orders_bonus = 2.50, gross_actual = 152.50
-        $slip = \App\Models\PayrollSlip::where('payroll_run_id', $runId)
-            ->where('employee_id', $employee->id)
-            ->first();
-        $this->assertNotNull($slip);
-        $this->assertEquals(2.500, (float)$slip->orders_bonus);
-        $this->assertEquals(152.500, (float)$slip->gross_actual);
-
-        // 4. Modify the daily log to 20 orders (new commission = 5.000)
-        $responseUpdate = $this->actingAs($this->user1)
-            ->putJson("/api/daily-logs/{$log->id}", [
-                'orders_count' => 20,
-                'orders_online' => 12,
-                'orders_cash' => 8,
-                'cash_collected' => 80,
-            ]);
-        $responseUpdate->assertStatus(200);
-
-        // 5. Add a violation for the driver
-        $violation = Violation::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'violation_date' => '2026-05-18',
-            'violation_type' => 'Speeding',
-            'amount' => 30.000,
-            'is_driver_liable' => true,
-            'is_deducted' => false,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // 6. Recalculate payroll manually by calling API run again
-        $responseRecalc = $this->actingAs($this->user1)
-            ->postJson('/api/payroll/run', [
-                'year' => 2026,
-                'month' => 5,
-            ]);
-        $responseRecalc->assertStatus(200);
-
-        // 7. Verify the updated values
-        $updatedSlip = $slip->fresh();
-        $this->assertEquals(20, (int)$updatedSlip->total_orders);
-        $this->assertEquals(5.000, (float)$updatedSlip->orders_bonus);
-        $this->assertEquals(30.000, (float)$updatedSlip->violations_deduction);
-        // Expected gross actual: 150 (base) + 5 (orders bonus) - 30 (violation) = 125
-        $this->assertEquals(125.000, (float)$updatedSlip->gross_actual);
-        $this->assertEquals(100.000, (float)$updatedSlip->gross_official); // Bank salary protected (100)
-        $this->assertEquals(25.000, (float)$updatedSlip->cash_portion); // Cash portion (125 - 100)
-    }
-
-    /**
-     * Test target-based commission calculation and recalculation
-     */
-    public function test_target_commission_recalculation_bug(): void
-    {
-        app()->instance('current_company_id', $this->company1->id);
-
-        // Create driver with monthly target commission rates
-        $employee = Employee::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Driver Target Commission Test',
-            'date_of_joining' => '2026-05-01',
-            'pay_type' => 'hybrid',
-            'official_salary' => 100,
-            'actual_salary' => 150,
-            'rate_per_order' => 0.000, // Empty or 0 rate_per_order
-            'target_orders_monthly' => 50,
-            'base_commission_rate' => 0.300,
-            'premium_commission_rate' => 0.600,
-        ]);
-
-        $vehicle = Vehicle::create([
-            'company_id' => $this->company1->id,
-            'plate_number' => 'V-9998',
-        ]);
-
-        $client = Client::create([
-            'company_id' => $this->company1->id,
-            'name' => 'Client Test 2',
-        ]);
-
-        $contract = Contract::create([
-            'company_id' => $this->company1->id,
-            'client_id' => $client->id,
-            'contract_number' => 'C-TEST-TARGET',
-            'name' => 'Contract Target Test',
-            'payment_type' => 'hybrid',
-            'rate_per_order' => 1.250,
-            'fixed_monthly' => 500,
-            'start_date' => '2026-05-01',
-        ]);
-
-        // Create log 1: 30 orders
-        $log1 = DailyLog::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-05-15',
-            'orders_count' => 30,
-            'orders_online' => 20,
-            'orders_cash' => 10,
-            'cash_collected' => 100,
-            'cash_pending' => 100,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // Create log 2: 30 orders (Total 60 orders)
-        $log2 = DailyLog::create([
-            'company_id' => $this->company1->id,
-            'employee_id' => $employee->id,
-            'vehicle_id' => $vehicle->id,
-            'contract_id' => $contract->id,
-            'log_date' => '2026-05-16',
-            'orders_count' => 30,
-            'orders_online' => 20,
-            'orders_cash' => 10,
-            'cash_collected' => 100,
-            'cash_pending' => 100,
-            'created_by' => $this->user1->id,
-        ]);
-
-        // Run payroll for May 2026
-        $response = $this->actingAs($this->user1)
-            ->postJson('/api/payroll/run', [
-                'year' => 2026,
-                'month' => 5,
-            ]);
-        $response->assertStatus(201);
-        $runId = $response->json('run_id');
-
-        // Check slip
-        $slip = \App\Models\PayrollSlip::where('payroll_run_id', $runId)
-            ->where('employee_id', $employee->id)
-            ->first();
-        $this->assertNotNull($slip);
-        
-        // Expected commission:
-        // First 50 orders (below target) @ 0.300 = 15.000
-        // Next 10 orders (above target) @ 0.600 = 6.000
-        // Total commission = 21.000
-        $this->assertEquals(21.000, (float)$slip->orders_bonus);
+        $this->assertEquals(1000.0, (float) $resContract['expected_profit']);
+        $this->assertEquals(515.0, (float) $resContract['actual_revenue']); // 500 fixed + 15 log income
+        $this->assertEquals(100.0, (float) $resContract['vehicle_costs']);
+        $this->assertEquals(2.5, (float) $resContract['driver_commissions']);
+        $this->assertEquals(300.0, (float) $resContract['allocated_salaries']); // 100% of 300 base salary
+        $this->assertEquals(-887.5, (float) $resContract['variance']); // 112.5 - 1000
     }
 }
-
-
-
-

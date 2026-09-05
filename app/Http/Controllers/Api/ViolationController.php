@@ -3,26 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-
+use App\Models\ContractAssignment;
+use App\Models\VehicleAssignment;
 use App\Models\Violation;
-use Illuminate\Http\Request;
+use App\Services\ContractScopeService;
+use App\Services\WhatsAppService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class ViolationController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $allowedDriverIds = \App\Services\ContractScopeService::getAllocatedDriverIds($request->user());
+        $allowedDriverIds = ContractScopeService::getAllocatedDriverIds($request->user());
 
         $violations = Violation::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'chargeContract:id,name'])
-            ->when($allowedDriverIds !== null, fn($q) => $q->whereIn('employee_id', $allowedDriverIds))
-            ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
-            ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
-            ->when($request->date_from, fn($q) => $q->whereDate('violation_date', '>=', $request->date_from))
-            ->when($request->date_to, fn($q) => $q->whereDate('violation_date', '<=', $request->date_to))
-            ->when($request->has('is_driver_liable'), fn($q) => $q->where('is_driver_liable', $request->boolean('is_driver_liable')))
-            ->when($request->boolean('undeducted'), fn($q) => $q->where('is_deducted', false)->where('is_driver_liable', true))
+            ->when($allowedDriverIds !== null, fn ($q) => $q->whereIn('employee_id', $allowedDriverIds))
+            ->when($request->employee_id, fn ($q) => $q->where('employee_id', $request->employee_id))
+            ->when($request->vehicle_id, fn ($q) => $q->where('vehicle_id', $request->vehicle_id))
+            ->when($request->date_from, fn ($q) => $q->whereDate('violation_date', '>=', $request->date_from))
+            ->when($request->date_to, fn ($q) => $q->whereDate('violation_date', '<=', $request->date_to))
+            ->when($request->has('is_driver_liable'), fn ($q) => $q->where('is_driver_liable', $request->boolean('is_driver_liable')))
+            ->when($request->boolean('undeducted'), fn ($q) => $q->where('is_deducted', false)->where('is_driver_liable', true))
             ->orderByDesc('violation_date')
             ->paginate(50);
 
@@ -40,61 +43,69 @@ class ViolationController extends Controller
         $violationDate = $request->violation_date;
         $dateOnly = date('Y-m-d', strtotime($violationDate));
 
-        $assignment = \App\Models\VehicleAssignment::with('employee:id,name')
+        $assignment = VehicleAssignment::with('employee:id,name')
             ->where('vehicle_id', $vehicleId)
             ->where('assigned_date', '<=', $dateOnly)
-            ->where(function($query) use ($dateOnly) {
+            ->where(function ($query) use ($dateOnly) {
                 $query->where('unassigned_date', '>=', $dateOnly)
-                      ->orWhereNull('unassigned_date');
+                    ->orWhereNull('unassigned_date');
             })
             ->first();
 
-        if (!$assignment) {
+        if (! $assignment) {
             return response()->json([
                 'success' => false,
-                'message' => 'No active driver found for this vehicle on the specified date/time.'
+                'message' => 'No active driver found for this vehicle on the specified date/time.',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
             'employee' => $assignment->employee,
-            'assignment' => $assignment
+            'assignment' => $assignment,
         ]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('violations.create')) {
+        if (! $request->user()->can('violations.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة مخالفات.'], 403);
         }
 
         $companyId = app('current_company_id');
 
         $request->validate([
-            'vehicle_id'       => 'required|exists:vehicles,id',
-            'violation_date'   => 'required',
-            'violation_type'   => 'required|string|max:255',
+            'vehicle_id' => 'required|exists:vehicles,id',
+            'violation_date' => 'required',
+            'violation_type' => 'required|string|max:255',
             'reference_number' => [
                 'nullable',
                 'string',
                 'max:100',
                 Rule::unique('violations', 'reference_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
-            'amount'           => 'required|numeric|min:0',
+            'amount' => 'required|numeric|min:0',
             'is_driver_liable' => 'boolean',
-            'photo_path'       => 'nullable|string',
-            'notes'            => 'nullable|string',
-            
+            // A fine the driver pays for needs the ticket attached. It is the cheapest evidence in
+            // the system to capture and the one most often disputed; a company-borne fine does not
+            // need it because nothing reaches the driver.
+            'photo_path' => [
+                'nullable',
+                'string',
+                Rule::requiredIf(fn () => $request->boolean('is_driver_liable', true)
+                    || (float) $request->input('driver_share', 0) > 0),
+            ],
+            'notes' => 'nullable|string',
+
             // New Phase 16 fields
-            'split_mode'       => 'nullable|in:percentage,manual',
-            'driver_share'     => 'nullable|numeric|min:0',
-            'contract_share'   => 'nullable|numeric|min:0',
+            'split_mode' => 'nullable|in:percentage,manual',
+            'driver_share' => 'nullable|numeric|min:0',
+            'contract_share' => 'nullable|numeric|min:0',
             'charge_contract_id' => 'nullable|exists:contracts,id',
             'manual_audit_reason' => 'nullable|string',
-            
+
             // Overrides
-            'employee_id'      => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|exists:employees,id',
             'assignment_override_reason' => 'nullable|string',
         ]);
 
@@ -103,17 +114,17 @@ class ViolationController extends Controller
         $dateOnly = date('Y-m-d', strtotime($violationDate));
 
         // Resolve driver automatically
-        $assignment = \App\Models\VehicleAssignment::where('vehicle_id', $vehicleId)
+        $assignment = VehicleAssignment::where('vehicle_id', $vehicleId)
             ->where('assigned_date', '<=', $dateOnly)
-            ->where(function($query) use ($dateOnly) {
+            ->where(function ($query) use ($dateOnly) {
                 $query->where('unassigned_date', '>=', $dateOnly)
-                      ->orWhereNull('unassigned_date');
+                    ->orWhereNull('unassigned_date');
             })
             ->first();
 
-        if (!$assignment && !$request->has('employee_id')) {
+        if (! $assignment && ! $request->has('employee_id')) {
             return response()->json([
-                'message' => 'No active driver was assigned to this vehicle at the specified date/time.'
+                'message' => 'No active driver was assigned to this vehicle at the specified date/time.',
             ], 422);
         }
 
@@ -123,11 +134,11 @@ class ViolationController extends Controller
         // Auto-resolve contract
         $autoResolvedContractId = null;
         if ($autoResolvedEmployeeId) {
-            $contractAssign = \App\Models\ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
+            $contractAssign = ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
                 ->where('start_date', '<=', $dateOnly)
-                ->where(function($query) use ($dateOnly) {
+                ->where(function ($query) use ($dateOnly) {
                     $query->where('end_date', '>=', $dateOnly)
-                          ->orWhereNull('end_date');
+                        ->orWhereNull('end_date');
                 })
                 ->first();
             if ($contractAssign) {
@@ -146,7 +157,7 @@ class ViolationController extends Controller
             if (empty($request->assignment_override_reason)) {
                 return response()->json([
                     'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز السائق.',
-                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']],
                 ], 422);
             }
         }
@@ -156,42 +167,42 @@ class ViolationController extends Controller
             if (empty($request->assignment_override_reason)) {
                 return response()->json([
                     'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز العقد.',
-                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']],
                 ], 422);
             }
         }
 
         // Validate splits
-        $driverShare = $request->has('driver_share') ? (float)$request->driver_share : ($request->boolean('is_driver_liable', true) ? (float)$request->amount : 0.0);
-        $contractShare = $request->has('contract_share') ? (float)$request->contract_share : ($request->boolean('is_driver_liable', true) ? 0.0 : (float)$request->amount);
+        $driverShare = $request->has('driver_share') ? (float) $request->driver_share : ($request->boolean('is_driver_liable', true) ? (float) $request->amount : 0.0);
+        $contractShare = $request->has('contract_share') ? (float) $request->contract_share : ($request->boolean('is_driver_liable', true) ? 0.0 : (float) $request->amount);
 
-        if (abs(($driverShare + $contractShare) - (float)$request->amount) > 0.0001) {
+        if (abs(($driverShare + $contractShare) - (float) $request->amount) > 0.0001) {
             return response()->json([
                 'message' => 'مجموع حصة السائق وحصة الشركة يجب أن يساوي القيمة الإجمالية للمخالفة.',
-                'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']]
+                'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']],
             ], 422);
         }
 
         $violationData = [
-            'employee_id'      => $employeeId,
-            'vehicle_id'       => $vehicleId,
-            'violation_date'   => $violationDate,
-            'violation_type'   => $request->violation_type,
+            'employee_id' => $employeeId,
+            'vehicle_id' => $vehicleId,
+            'violation_date' => $violationDate,
+            'violation_type' => $request->violation_type,
             'reference_number' => $request->reference_number,
-            'amount'           => $request->amount,
+            'amount' => $request->amount,
             // Derived, never taken on trust: the flag drives what the list column shows and the
             // share drives what is charged, so a stored disagreement would let the screen say
             // «الشركة: 100%» while payroll took money off the driver. A split is still
             // driver-liable.
             'is_driver_liable' => $driverShare > 0,
-            'photo_path'       => $request->photo_path,
-            'notes'            => $request->notes,
-            'created_by'       => $request->user()->id,
+            'photo_path' => $request->photo_path,
+            'notes' => $request->notes,
+            'created_by' => $request->user()->id,
 
             // New fields
-            'split_mode'       => $request->split_mode ?? 'percentage',
-            'driver_share'     => $driverShare,
-            'contract_share'   => $contractShare,
+            'split_mode' => $request->split_mode ?? 'percentage',
+            'driver_share' => $driverShare,
+            'contract_share' => $contractShare,
             'charge_contract_id' => $chargeContractId,
             'manual_audit_reason' => $request->manual_audit_reason,
             'is_driver_override' => $isDriverOverride,
@@ -206,11 +217,11 @@ class ViolationController extends Controller
         $employee = $violation->employee;
         if ($employee?->has_whatsapp && $employee?->phone) {
             try {
-                app(\App\Services\WhatsAppService::class)->sendMessage(
+                app(WhatsAppService::class)->sendMessage(
                     $employee->phone,
                     "⚠️ مخالفة مرورية\nالتاريخ: {$violation->violation_date}\n"
-                    . "النوع: {$violation->violation_type}\n"
-                    . "المبلغ: {$violation->amount} د.ك"
+                    ."النوع: {$violation->violation_type}\n"
+                    ."المبلغ: {$violation->amount} د.ك"
                 );
             } catch (\Throwable $e) {
                 \Log::warning('WhatsApp send failed for violation', [
@@ -230,7 +241,7 @@ class ViolationController extends Controller
 
     public function update(Request $request, Violation $violation): JsonResponse
     {
-        if (!$request->user()->can('violations.edit')) {
+        if (! $request->user()->can('violations.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل المخالفات.'], 403);
         }
 
@@ -239,42 +250,50 @@ class ViolationController extends Controller
         }
 
         $validated = $request->validate([
-            'violation_type'   => 'sometimes|string|max:255',
-            'amount'           => 'sometimes|numeric|min:0',
+            'violation_type' => 'sometimes|string|max:255',
+            'amount' => 'sometimes|numeric|min:0',
             'is_driver_liable' => 'sometimes|boolean',
-            'photo_path'       => 'nullable|string',
-            'notes'            => 'nullable|string',
+            // A fine the driver pays for needs the ticket attached. It is the cheapest evidence in
+            // the system to capture and the one most often disputed; a company-borne fine does not
+            // need it because nothing reaches the driver.
+            'photo_path' => [
+                'nullable',
+                'string',
+                Rule::requiredIf(fn () => $request->boolean('is_driver_liable', true)
+                    || (float) $request->input('driver_share', 0) > 0),
+            ],
+            'notes' => 'nullable|string',
 
             // New Phase 16 fields
-            'split_mode'       => 'nullable|in:percentage,manual',
-            'driver_share'     => 'nullable|numeric|min:0',
-            'contract_share'   => 'nullable|numeric|min:0',
+            'split_mode' => 'nullable|in:percentage,manual',
+            'driver_share' => 'nullable|numeric|min:0',
+            'contract_share' => 'nullable|numeric|min:0',
             'charge_contract_id' => 'nullable|exists:contracts,id',
             'manual_audit_reason' => 'nullable|string',
 
             // Overrides
-            'employee_id'      => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|exists:employees,id',
             'assignment_override_reason' => 'nullable|string',
         ]);
 
         // Auto-resolve check for overrides
         $dateOnly = date('Y-m-d', strtotime($violation->violation_date));
-        $assignment = \App\Models\VehicleAssignment::where('vehicle_id', $violation->vehicle_id)
+        $assignment = VehicleAssignment::where('vehicle_id', $violation->vehicle_id)
             ->where('assigned_date', '<=', $dateOnly)
-            ->where(function($query) use ($dateOnly) {
+            ->where(function ($query) use ($dateOnly) {
                 $query->where('unassigned_date', '>=', $dateOnly)
-                      ->orWhereNull('unassigned_date');
+                    ->orWhereNull('unassigned_date');
             })
             ->first();
         $autoResolvedEmployeeId = $assignment ? $assignment->employee_id : null;
 
         $autoResolvedContractId = null;
         if ($autoResolvedEmployeeId) {
-            $contractAssign = \App\Models\ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
+            $contractAssign = ContractAssignment::where('employee_id', $autoResolvedEmployeeId)
                 ->where('start_date', '<=', $dateOnly)
-                ->where(function($query) use ($dateOnly) {
+                ->where(function ($query) use ($dateOnly) {
                     $query->where('end_date', '>=', $dateOnly)
-                          ->orWhereNull('end_date');
+                        ->orWhereNull('end_date');
                 })
                 ->first();
             if ($contractAssign) {
@@ -287,7 +306,7 @@ class ViolationController extends Controller
             if (empty($request->assignment_override_reason)) {
                 return response()->json([
                     'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز السائق.',
-                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']],
                 ], 422);
             }
         }
@@ -297,21 +316,21 @@ class ViolationController extends Controller
             if (empty($request->assignment_override_reason)) {
                 return response()->json([
                     'message' => 'سبب التعديل يدوياً مطلوب لحفظ تجاوز العقد.',
-                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']]
+                    'errors' => ['assignment_override_reason' => ['يجب إدخال سبب التعديل يدوياً لحفظ التجاوز.']],
                 ], 422);
             }
         }
 
         // Validate splits
-        $newAmount = $request->has('amount') ? (float)$request->amount : (float)$violation->amount;
-        $driverShare = $request->has('driver_share') ? (float)$request->driver_share : (float)$violation->driver_share;
-        $contractShare = $request->has('contract_share') ? (float)$request->contract_share : (float)$violation->contract_share;
+        $newAmount = $request->has('amount') ? (float) $request->amount : (float) $violation->amount;
+        $driverShare = $request->has('driver_share') ? (float) $request->driver_share : (float) $violation->driver_share;
+        $contractShare = $request->has('contract_share') ? (float) $request->contract_share : (float) $violation->contract_share;
 
         if ($request->has('driver_share') || $request->has('contract_share') || $request->has('amount')) {
             if (abs(($driverShare + $contractShare) - $newAmount) > 0.0001) {
                 return response()->json([
                     'message' => 'مجموع حصة السائق وحصة الشركة يجب أن يساوي القيمة الإجمالية للمخالفة.',
-                    'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']]
+                    'errors' => ['driver_share' => ['مجموع الحصص غير مطابق لإجمالي المخالفة.']],
                 ], 422);
             }
             $validated['driver_share'] = $driverShare;
@@ -327,7 +346,7 @@ class ViolationController extends Controller
 
     public function destroy(Request $request, Violation $violation): JsonResponse
     {
-        if (!$request->user()->can('violations.delete')) {
+        if (! $request->user()->can('violations.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف المخالفات.'], 403);
         }
 
@@ -335,6 +354,7 @@ class ViolationController extends Controller
             return response()->json(['message' => 'Cannot delete a deducted violation.'], 403);
         }
         $violation->delete();
+
         return response()->json(['message' => 'Violation deleted.']);
     }
 }

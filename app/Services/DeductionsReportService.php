@@ -6,7 +6,6 @@ use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\CustodyItem;
 use App\Models\DriverExpense;
 use App\Models\Employee;
-use App\Models\EmployeeLeave;
 use App\Models\MaintenanceRecord;
 use App\Models\SalaryAdvance;
 use App\Models\Violation;
@@ -30,7 +29,6 @@ class DeductionsReportService
         ConsolidatedPayrollDeduction::SOURCE_MAINTENANCE => 'صيانة بمسؤولية السائق',
         ConsolidatedPayrollDeduction::SOURCE_CUSTODY => 'عهدة تالفة أو مفقودة',
         ConsolidatedPayrollDeduction::SOURCE_DRIVER_EXPENSE => 'مصاريف على السائق',
-        ConsolidatedPayrollDeduction::SOURCE_LEAVE => 'إجازة بدون راتب',
         ConsolidatedPayrollDeduction::SOURCE_ADVANCE => 'أقساط السلف',
     ];
 
@@ -214,14 +212,9 @@ class DeductionsReportService
                 'مصروف'.($e->expense_type ? " ({$e->expense_type})" : ''),
                 $e->expense_date));
 
-        EmployeeLeave::withoutGlobalScopes()->whereNull('deleted_at')->where('company_id', $companyId)
-            ->where('status', 'approved')->where('is_paid', false)
-            ->where('total_deduction', '>', 0)
-            ->get()
-            ->each(fn ($l) => $add($l->employee_id, ConsolidatedPayrollDeduction::SOURCE_LEAVE, $l->id,
-                $l->total_deduction,
-                'إجازة بدون راتب'.($l->days_count ? " ({$l->days_count} يوم)" : ''),
-                $l->start_date));
+        // Unpaid leave is not a deduction — a driver is paid for the days he worked, so a day of
+        // leave already costs him that day. See CompanyDeductionService for the note on
+        // administrative staff, whose flat salary will need it.
 
         // An advance is outstanding for whatever is left on it, not for one month's instalment —
         // this report answers "what does this driver still owe", not "what comes off this month".

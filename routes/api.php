@@ -1,43 +1,47 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\ClientController;
-use App\Http\Controllers\Api\ContractController;
-use App\Http\Controllers\Api\EmployeeController;
-use App\Http\Controllers\Api\VehicleController;
-use App\Http\Controllers\Api\DailyLogController;
-use App\Http\Controllers\Api\ViolationController;
-use App\Http\Controllers\Api\MaintenanceController;
-use App\Http\Controllers\Api\CustodyController;
 use App\Http\Controllers\Api\CashSettlementController;
-use App\Http\Controllers\Api\PayrollController;
-use App\Http\Controllers\Api\LeaveController;
-use App\Http\Controllers\Api\DashboardController;
-use App\Http\Controllers\Api\ReportController;
-use App\Http\Controllers\Api\UploadController;
+use App\Http\Controllers\Api\ClientCollectionController;
+use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CompanyController;
-use App\Http\Controllers\Api\SuperAdminCompanyController;
-use App\Http\Controllers\Api\DriverGuaranteeController;
-use App\Http\Controllers\Api\DriverExpenseController;
-use App\Http\Controllers\Api\VehicleExpenseController;
-use App\Http\Controllers\Api\VehicleExpenseTypeController;
-use App\Http\Controllers\Api\SalaryAdvanceController;
-use App\Http\Controllers\Api\OperationsController;
-use App\Http\Controllers\Api\EmployeeDocumentController;
-use App\Http\Controllers\Api\EvaluationController;
-use App\Http\Controllers\Api\ImportController;
-use App\Http\Controllers\Api\VehicleHandoverController;
 use App\Http\Controllers\Api\ContractAssignmentController;
-use App\Http\Controllers\Api\SupervisorAllocationController;
-use App\Http\Controllers\Api\KetaImportController;
+use App\Http\Controllers\Api\ContractController;
 use App\Http\Controllers\Api\ContractDashboardController;
 use App\Http\Controllers\Api\CurrencyExchangeRateController;
-use App\Http\Controllers\Api\RoleController;
-use App\Http\Controllers\Api\ClientCollectionController;
-use App\Http\Controllers\Api\PayrollPaymentController;
+use App\Http\Controllers\Api\CustodyController;
+use App\Http\Controllers\Api\CustodyTypeController;
+use App\Http\Controllers\Api\DailyLogController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DriverExpenseController;
+use App\Http\Controllers\Api\DriverGuaranteeController;
+use App\Http\Controllers\Api\EmployeeController;
+use App\Http\Controllers\Api\EmployeeDocumentController;
+use App\Http\Controllers\Api\EvaluationController;
+use App\Http\Controllers\Api\ExpenseLedgerController;
+use App\Http\Controllers\Api\GlobalSearchController;
+use App\Http\Controllers\Api\ImportController;
+use App\Http\Controllers\Api\KetaImportController;
+use App\Http\Controllers\Api\LeaveController;
+use App\Http\Controllers\Api\MaintenanceController;
 use App\Http\Controllers\Api\OperationalAdvanceController;
+use App\Http\Controllers\Api\OperationsController;
+use App\Http\Controllers\Api\PayrollController;
+use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\RoleController;
+use App\Http\Controllers\Api\SalaryAdvanceController;
+use App\Http\Controllers\Api\SettingsController;
+use App\Http\Controllers\Api\SuperAdminCompanyController;
+use App\Http\Controllers\Api\SupervisorAllocationController;
+use App\Http\Controllers\Api\UploadController;
+use App\Http\Controllers\Api\VehicleController;
+use App\Http\Controllers\Api\VehicleExpenseController;
+use App\Http\Controllers\Api\VehicleExpenseTypeController;
+use App\Http\Controllers\Api\VehicleHandoverController;
 use App\Http\Controllers\Api\VehicleTypeController;
+use App\Http\Controllers\Api\ViolationController;
+use App\Http\Controllers\Api\WhatsAppController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -133,7 +137,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('vehicles/{vehicle}/deletion-check', [VehicleController::class, 'deletionCheck']);
         Route::get('clients/{client}/deletion-check', [ClientController::class, 'deletionCheck']);
         Route::get('contracts/{contract}/deletion-check', [ContractController::class, 'deletionCheck']);
-        Route::get('custody-types/{custody_type}/deletion-check', [\App\Http\Controllers\Api\CustodyTypeController::class, 'deletionCheck']);
+        Route::get('custody-types/{custody_type}/deletion-check', [CustodyTypeController::class, 'deletionCheck']);
 
         // Clients — full CRUD
         Route::apiResource('clients', ClientController::class);
@@ -150,7 +154,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Contract Assignments & Overrides
         Route::apiResource('contract-assignments', ContractAssignmentController::class)->parameters([
-            'contract-assignments' => 'assignment'
+            'contract-assignments' => 'assignment',
         ]);
         Route::post('contract-assignments/{assignment}/overrides', [ContractAssignmentController::class, 'storeOverride']);
         Route::put('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'updateOverride']);
@@ -174,7 +178,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('employees/{employee}/history', [EmployeeController::class, 'history']);
 
         // One search box across contracts, employees, vehicles, clients and violations.
-        Route::get('search', \App\Http\Controllers\Api\GlobalSearchController::class);
+        Route::get('search', GlobalSearchController::class);
 
         // Employee Documents
         Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);
@@ -208,10 +212,14 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('custody/{custody}/return', [CustodyController::class, 'returnItem']);
 
         // Custody Types — manage types
-        Route::apiResource('custody-types', \App\Http\Controllers\Api\CustodyTypeController::class)->except(['show']);
+        Route::apiResource('custody-types', CustodyTypeController::class)->except(['show']);
 
         // Driver Expenses
         Route::apiResource('driver-expenses', DriverExpenseController::class);
+
+        // Read-only view over all six spending screens at once. Adds nothing and changes nothing:
+        // each row links back to the screen that owns it.
+        Route::get('expenses', [ExpenseLedgerController::class, 'index']);
 
         // ── Import/Export ─────────────────────────────────────
         Route::prefix('import')->group(function () {
@@ -233,7 +241,6 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Payroll
         Route::prefix('payroll')->group(function () {
-            Route::post('run', [PayrollController::class, 'run']);
             Route::get('consolidated/{year}/{month}', [PayrollController::class, 'consolidatedSheet']);
             Route::post('consolidated/{year}/{month}/approve', [PayrollController::class, 'approveConsolidatedSheet']);
             Route::post('consolidated/{year}/{month}/unapprove', [PayrollController::class, 'unapproveConsolidatedSheet']);
@@ -243,9 +250,6 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('contract-sheet/{contract}/adjustments', [PayrollController::class, 'getContractAdjustments']);
             Route::post('contract-sheet/{contract}/adjustments', [PayrollController::class, 'storeContractAdjustment']);
             Route::delete('contract-sheet/adjustments/{adjustment}', [PayrollController::class, 'destroyContractAdjustment']);
-            Route::get('{year}/{month}', [PayrollController::class, 'show']);
-            Route::get('{year}/{month}/{employee}', [PayrollController::class, 'slip']);
-            Route::post('{year}/{month}/approve', [PayrollController::class, 'approve']);
         });
 
         // Reports
@@ -263,12 +267,12 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         });
 
         // Settings
-        Route::get('settings', [\App\Http\Controllers\Api\SettingsController::class, 'index']);
-        Route::put('settings', [\App\Http\Controllers\Api\SettingsController::class, 'update']);
+        Route::get('settings', [SettingsController::class, 'index']);
+        Route::put('settings', [SettingsController::class, 'update']);
 
         // WhatsApp
-        Route::post('whatsapp/test-connection', [\App\Http\Controllers\Api\WhatsAppController::class, 'testConnection']);
-        Route::post('whatsapp/send', [\App\Http\Controllers\Api\WhatsAppController::class, 'sendMessage']);
+        Route::post('whatsapp/test-connection', [WhatsAppController::class, 'testConnection']);
+        Route::post('whatsapp/send', [WhatsAppController::class, 'sendMessage']);
 
         // ── Phase 2: New Modules ──────────────────────────────
 
@@ -281,7 +285,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::apiResource('vehicle-expenses', VehicleExpenseController::class);
 
         // Salary Advances
-        Route::apiResource('salary-advances', SalaryAdvanceController::class)->except(['update']);
+        // No destroy: an advance is written off through cancel, which keeps the record. The route
+        // was registered without a method behind it and answered 500 to anyone who found it.
+        Route::apiResource('salary-advances', SalaryAdvanceController::class)->except(['update', 'destroy']);
         Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
 
         // Operational Advances (Phase 16)
@@ -295,10 +301,6 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('contracts/{contractId}/collections', [ClientCollectionController::class, 'store']);
         Route::delete('contracts/{contractId}/collections/{id}', [ClientCollectionController::class, 'destroy']);
 
-        // Payroll Payments & Write-offs (Phase 16)
-        Route::get('payroll-slips/{slipId}/payments', [PayrollPaymentController::class, 'index']);
-        Route::post('payroll-slips/{slipId}/payments', [PayrollPaymentController::class, 'store']);
-        Route::delete('payroll-slips/{slipId}/payments/{id}', [PayrollPaymentController::class, 'destroy']);
     });
 
     // ═══════════════════════════════════════════════════════════════════
@@ -316,5 +318,3 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('dashboard', [SuperAdminCompanyController::class, 'dashboard']);
     });
 });
-
-

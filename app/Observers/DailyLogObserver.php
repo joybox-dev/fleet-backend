@@ -5,7 +5,6 @@ namespace App\Observers;
 use App\Helpers\ErpSync;
 use App\Http\Controllers\Api\PayrollController;
 use App\Models\DailyLog;
-use App\Models\PayrollRun;
 use App\Services\ErpNext\Jobs\SyncDailyLogJob;
 use Carbon\Carbon;
 
@@ -97,15 +96,8 @@ class DailyLogObserver
         self::$deferring = false;
         self::$pending = [];
 
-        $months = [];
         foreach ($pending as [$employeeId, $year, $month]) {
             self::recalculateCommissions($employeeId, $year, $month);
-            $months[$year.'-'.$month] = [$year, $month];
-        }
-
-        // One rebuild per month — not one per employee, and certainly not one per row.
-        foreach ($months as [$year, $month]) {
-            self::recalculateDraftRun($year, $month);
         }
     }
 
@@ -131,7 +123,6 @@ class DailyLogObserver
         }
 
         self::recalculateCommissions((int) $log->employee_id, $date->year, $date->month);
-        self::recalculateDraftRun($date->year, $date->month);
     }
 
     /**
@@ -141,22 +132,6 @@ class DailyLogObserver
     {
         try {
             PayrollController::recalculateEmployeeCommissions($employeeId, $year, $month);
-        } catch (\Throwable $e) {
-            \Log::error('Retroactive recalculation in DailyLogObserver failed: '.$e->getMessage());
-        }
-    }
-
-    private static function recalculateDraftRun(int $year, int $month): void
-    {
-        try {
-            $run = PayrollRun::where('year', $year)
-                ->where('month', $month)
-                ->where('status', 'draft')
-                ->first();
-
-            if ($run) {
-                PayrollController::recalculateRun($run);
-            }
         } catch (\Throwable $e) {
             \Log::error('Retroactive recalculation in DailyLogObserver failed: '.$e->getMessage());
         }

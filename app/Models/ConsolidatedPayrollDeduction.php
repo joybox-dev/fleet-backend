@@ -23,7 +23,10 @@ class ConsolidatedPayrollDeduction extends Model
 
     public const SOURCE_CUSTODY = 'custody';
 
-    public const SOURCE_LEAVE = 'leave';
+    // There was a SOURCE_LEAVE. Unpaid leave is no longer deducted from a driver: he is paid for the
+    // days he worked, so a day of leave already costs him that day, and charging the leave record on
+    // top took it off him twice. Administrative staff, on a flat monthly salary, will need it —
+    // see the note in CompanyDeductionService.
 
     public const SOURCE_DRIVER_EXPENSE = 'driver_expense';
 

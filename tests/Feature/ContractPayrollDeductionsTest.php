@@ -195,6 +195,28 @@ class ContractPayrollDeductionsTest extends TestCase
      * Fix #1: the sheet summed a non-existent `driver_deduction_amount` column, so the driver's
      * share of a traffic fine was silently always 0.
      */
+    /**
+     * A fine entered against the wrong driver and then deleted was still taken off him here. The
+     * projection that feeds every other screen had always excluded it; this sheet has its own
+     * violation query, and withoutGlobalScopes() strips the soft-delete scope along with the
+     * company one — so the deleted row came back, and an approval froze it into the month.
+     */
+    public function test_contract_sheet_does_not_deduct_a_deleted_violation(): void
+    {
+        $contract = $this->makeContract('Deleted Fine');
+        $this->assignDriver($contract);
+        $this->logWorkedDay($contract, '2026-03-02');
+        $violation = $this->makeViolation('2026-03-10', 30.000, 30.000);
+
+        $this->assertSame(30.0, (float) $this->contractSheet($contract, 2026, 3)['drivers'][0]['violations_deduction']);
+
+        $violation->delete();
+
+        $row = $this->contractSheet($contract, 2026, 3)['drivers'][0];
+        $this->assertSame(0.0, (float) $row['violations_deduction'], 'a deleted fine is not owed');
+        $this->assertSame(10.0, (float) $row['net_payout'], 'the net returns to the full earnings');
+    }
+
     public function test_contract_sheet_deducts_the_driver_share_of_a_traffic_violation(): void
     {
         $contract = $this->makeContract('Violations');

@@ -12,6 +12,7 @@ use App\Models\DailyLog;
 use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
+use App\Models\LeaveType;
 use App\Models\MaintenanceRecord;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -19,9 +20,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * The contract payroll path replaces the legacy PayrollRun, so it has to collect everything
- * the legacy path did: driver-liable maintenance, damaged or lost custody, driver-borne
- * expenses and unpaid leave — on top of fines and advance instalments.
+ * The contract payroll path replaces the legacy PayrollRun, so it has to collect what the legacy
+ * path collected: driver-liable maintenance, damaged or lost custody and driver-borne expenses, on
+ * top of fines and advance instalments.
+ *
+ * Unpaid leave is the one thing it must NOT collect. A driver is paid for the days he worked, so a
+ * day of leave already costs him that day; charging the leave record on top took the same day off
+ * him twice.
  *
  * Maintenance and custody carry no `is_deducted` column of their own, which is why the legacy
  * path re-collected them every single month. The deduction ledger is what stops that here.
@@ -191,7 +196,7 @@ class CompanyDeductionsTest extends TestCase
 
     private function addUnpaidLeave(float $deduction): EmployeeLeave
     {
-        $type = \App\Models\LeaveType::firstOrCreate(
+        $type = LeaveType::firstOrCreate(
             ['company_id' => $this->company->id, 'name' => 'Unpaid Leave'],
             ['name_ar' => 'إجازة بدون راتب', 'is_paid' => false]
         );
@@ -209,7 +214,7 @@ class CompanyDeductionsTest extends TestCase
         ]);
     }
 
-    public function test_all_four_new_sources_are_reported_as_pending_and_not_charged(): void
+    public function test_the_company_sources_are_reported_as_pending_and_not_charged(): void
     {
         $this->addMaintenance(40.000);
         $this->addCustody(25.000);
@@ -221,8 +226,7 @@ class CompanyDeductionsTest extends TestCase
         $this->assertSame(40.0, (float) $row['pending_maintenance_deduction']);
         $this->assertSame(25.0, (float) $row['pending_custody_deduction']);
         $this->assertSame(12.0, (float) $row['pending_driver_expenses_deduction']);
-        $this->assertSame(30.0, (float) $row['pending_leaves_deduction']);
-        $this->assertSame(107.0, (float) $row['pending_deductions_total']);
+        $this->assertSame(77.0, (float) $row['pending_deductions_total'], 'the 30.000 of unpaid leave is not among them');
 
         // Nothing charged before approval.
         $this->assertSame(0.0, (float) $row['maintenance_deduction']);
@@ -231,7 +235,7 @@ class CompanyDeductionsTest extends TestCase
         $this->assertSame(300.0, (float) $row['final_net_payout']);
     }
 
-    public function test_approval_charges_all_four_and_records_them_in_the_ledger(): void
+    public function test_approval_charges_the_company_sources_and_records_them_in_the_ledger(): void
     {
         $this->addMaintenance(40.000);
         $this->addCustody(25.000);
@@ -243,13 +247,40 @@ class CompanyDeductionsTest extends TestCase
 
         $row = $this->driverRow($this->getJson('/api/payroll/consolidated/2026/3')->assertOk()->json());
 
-        $this->assertSame(107.0, (float) $row['deductions_total']);
-        $this->assertSame(193.0, (float) $row['final_net_payout'], '300 − 107');
+        $this->assertSame(77.0, (float) $row['deductions_total']);
+        $this->assertSame(223.0, (float) $row['final_net_payout'], '300 − 77; the unpaid leave is not deducted');
 
         $this->assertSame(1, ConsolidatedPayrollDeduction::where('source_type', 'maintenance')->count());
         $this->assertSame(1, ConsolidatedPayrollDeduction::where('source_type', 'custody')->count());
-        $this->assertSame(1, ConsolidatedPayrollDeduction::where('source_type', 'leave')->count());
         $this->assertSame(1, ConsolidatedPayrollDeduction::where('source_type', 'driver_expense')->count());
+        $this->assertSame(0, ConsolidatedPayrollDeduction::where('source_type', 'leave')->count(), 'unpaid leave never reaches the ledger');
+    }
+
+    /**
+     * A driver is paid for the days he actually worked. A day of unpaid leave is a day he was not
+     * paid for, so deducting the leave record on top of that took the same day off him twice.
+     *
+     * Administrative staff are a different case — a flat monthly salary that no attendance record
+     * reduces — and their unpaid leave will have to be deducted when their payroll is built.
+     */
+    public function test_unpaid_leave_is_never_taken_from_a_driver(): void
+    {
+        $this->addUnpaidLeave(30.000);
+
+        $row = $this->driverRow($this->sheet());
+
+        $this->assertSame(0.0, (float) $row['pending_deductions_total'], 'nothing pending');
+        $this->assertSame(300.0, (float) $row['final_net_payout'], 'the full month, untouched');
+        $this->assertEmpty(
+            array_filter($row['deduction_items'] ?? [], fn ($i) => ($i['source_type'] ?? '') === 'leave'),
+            'no leave item is listed'
+        );
+
+        $this->postJson('/api/payroll/consolidated/2026/3/approve')->assertOk();
+
+        $after = $this->driverRow($this->getJson('/api/payroll/consolidated/2026/3')->assertOk()->json());
+        $this->assertSame(300.0, (float) $after['final_net_payout'], 'approval changes nothing');
+        $this->assertSame(0, ConsolidatedPayrollDeduction::count());
     }
 
     /**

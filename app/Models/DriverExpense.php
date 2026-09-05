@@ -5,12 +5,12 @@ namespace App\Models;
 use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class DriverExpense extends Model
 {
-    use HasFactory, SoftDeletes, BelongsToCompany;
+    use BelongsToCompany, HasFactory, SoftDeletes;
 
     protected $fillable = [
         'company_id',
@@ -32,11 +32,11 @@ class DriverExpense extends Model
     ];
 
     protected $casts = [
-        'amount'         => 'decimal:3',
+        'amount' => 'decimal:3',
         'company_amount' => 'decimal:3',
-        'driver_amount'  => 'decimal:3',
-        'expense_date'   => 'date',
-        'is_deducted'    => 'boolean',
+        'driver_amount' => 'decimal:3',
+        'expense_date' => 'date',
+        'is_deducted' => 'boolean',
     ];
 
     public function employee(): BelongsTo
@@ -59,13 +59,28 @@ class DriverExpense extends Model
         return $this->belongsTo(PayrollSlip::class, 'payroll_slip_id');
     }
 
+    /**
+     * The `expenseType` relation serialises under the same key as the `expense_type` column and
+     * overwrites it. The guard here only caught the case where the relation had loaded a row; when
+     * `expense_type_id` is null the relation serialises as null, and that null replaced a column
+     * that held a perfectly good value — so an expense saved with a typed-in name came back from
+     * the endpoint with no name, and reopening it for edit showed the field blank.
+     */
     public function toArray(): array
     {
         $array = parent::toArray();
-        if (isset($array['expense_type']) && is_array($array['expense_type'])) {
-            $array['expense_type_details'] = $array['expense_type'];
-            $array['expense_type'] = $this->attributes['expense_type'] ?? ($array['expense_type']['name_ar'] ?? $array['expense_type']['name'] ?? '');
+
+        if (array_key_exists('expense_type', $array) && ! is_string($array['expense_type'])) {
+            $relation = $array['expense_type'];
+
+            if (is_array($relation)) {
+                $array['expense_type_details'] = $relation;
+            }
+
+            $array['expense_type'] = $this->attributes['expense_type']
+                ?? (is_array($relation) ? ($relation['name_ar'] ?? $relation['name'] ?? '') : null);
         }
+
         return $array;
     }
 }

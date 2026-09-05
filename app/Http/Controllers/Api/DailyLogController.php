@@ -3,14 +3,18 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-
-use App\Models\DailyLog;
+use App\Models\ConsolidatedPayrollRun;
 use App\Models\Contract;
+use App\Models\ContractAssignment;
+use App\Models\ContractPayrollRun;
+use App\Models\DailyLog;
+use App\Models\Vehicle;
 use App\Observers\DailyLogObserver;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-
 use App\Services\ContractScopeService;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class DailyLogController extends Controller
 {
@@ -24,18 +28,18 @@ class DailyLogController extends Controller
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
 
         $logs = DailyLog::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'contract:id,name,payment_type'])
-            ->when($allowedIds !== null, fn($q) => $q->whereIn('contract_id', $allowedIds))
-            ->when($request->employee_id, fn($q) => $q->where('employee_id', $request->employee_id))
-            ->when($request->vehicle_id, fn($q) => $q->where('vehicle_id', $request->vehicle_id))
-            ->when($request->contract_id, fn($q) => $q->where('contract_id', $request->contract_id))
-            ->when($request->date_from, fn($q) => $q->whereDate('log_date', '>=', $request->date_from))
-            ->when($request->date_to, fn($q) => $q->whereDate('log_date', '<=', $request->date_to))
+            ->when($allowedIds !== null, fn ($q) => $q->whereIn('contract_id', $allowedIds))
+            ->when($request->employee_id, fn ($q) => $q->where('employee_id', $request->employee_id))
+            ->when($request->vehicle_id, fn ($q) => $q->where('vehicle_id', $request->vehicle_id))
+            ->when($request->contract_id, fn ($q) => $q->where('contract_id', $request->contract_id))
+            ->when($request->date_from, fn ($q) => $q->whereDate('log_date', '>=', $request->date_from))
+            ->when($request->date_to, fn ($q) => $q->whereDate('log_date', '<=', $request->date_to))
             ->when($request->search, function ($q) use ($request) {
                 $search = $request->search;
                 $q->where(function ($query) use ($search) {
-                    $query->whereHas('employee', fn($el) => $el->where('name', 'like', "%{$search}%"))
-                          ->orWhereHas('vehicle', fn($vl) => $vl->where('plate_number', 'like', "%{$search}%"))
-                          ->orWhereHas('contract', fn($cl) => $cl->where('name', 'like', "%{$search}%"));
+                    $query->whereHas('employee', fn ($el) => $el->where('name', 'like', "%{$search}%"))
+                        ->orWhereHas('vehicle', fn ($vl) => $vl->where('plate_number', 'like', "%{$search}%"))
+                        ->orWhereHas('contract', fn ($cl) => $cl->where('name', 'like', "%{$search}%"));
                 });
             })
             ->orderByDesc('log_date')
@@ -52,7 +56,7 @@ class DailyLogController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('daily_logs.create')) {
+        if (! $request->user()->can('daily_logs.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة سجلات تشغيل.'], 403);
         }
 
@@ -64,7 +68,7 @@ class DailyLogController extends Controller
         if ($total === 0) {
             $request->merge([
                 'orders_online' => 0,
-                'orders_cash' => 0
+                'orders_cash' => 0,
             ]);
         } else {
             $contract = Contract::find($request->input('contract_id'));
@@ -83,48 +87,48 @@ class DailyLogController extends Controller
             if ($isZones) {
                 $request->merge([
                     'orders_online' => $total,
-                    'orders_cash' => 0
+                    'orders_cash' => 0,
                 ]);
             } else {
                 $online = $request->input('orders_online');
                 $cash = $request->input('orders_cash');
-                if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
+                if (($online === null || (int) $online === 0) && ($cash === null || (int) $cash === 0)) {
                     $request->merge([
                         'orders_online' => $total,
-                        'orders_cash' => 0
+                        'orders_cash' => 0,
                     ]);
                 }
             }
         }
 
         $validator = \Validator::make($request->all(), [
-            'employee_id'         => [
+            'employee_id' => [
                 'required',
-                \Illuminate\Validation\Rule::exists('employees', 'id')
+                Rule::exists('employees', 'id')
                     ->where('company_id', $companyId)
                     ->where('role_category', 'driver'),
             ],
-            'vehicle_id'          => 'required|exists:vehicles,id',
-            'contract_id'         => 'required|exists:contracts,id',
-            'log_date'            => 'required|date',
-            'orders_count'          => 'required|integer|min:0',
-            'orders_online'         => 'nullable|integer|min:0',
-            'orders_cash'           => 'nullable|integer|min:0',
+            'vehicle_id' => 'required|exists:vehicles,id',
+            'contract_id' => 'required|exists:contracts,id',
+            'log_date' => 'required|date',
+            'orders_count' => 'required|integer|min:0',
+            'orders_online' => 'nullable|integer|min:0',
+            'orders_cash' => 'nullable|integer|min:0',
             'rejected_orders_count' => 'nullable|integer|min:0',
-            'cash_collected'        => 'nullable|numeric|min:0',
-            'odometer_start'      => 'nullable|integer|min:0',
-            'odometer_end'        => 'nullable|integer|min:0|gte:odometer_start',
+            'cash_collected' => 'nullable|numeric|min:0',
+            'odometer_start' => 'nullable|integer|min:0',
+            'odometer_end' => 'nullable|integer|min:0|gte:odometer_start',
             'odometer_photo_path' => 'nullable|string',
-            'notes'               => 'nullable|string|max:500',
-            'online_hours'        => 'nullable|numeric|min:0',
-            'ontime_rate'         => 'nullable|numeric|min:0|max:100',
-            'avg_delivery_time'   => 'nullable|integer|min:0',
-            'late_login'          => 'nullable|boolean',
-            'early_logout'        => 'nullable|boolean',
-            'is_valid'            => 'nullable|boolean',
-            'shift_valid'         => 'nullable|boolean',
-            'zone'                => 'nullable|string|max:255',
-            'driver_status'       => 'nullable|string|max:50',
+            'notes' => 'nullable|string|max:500',
+            'online_hours' => 'nullable|numeric|min:0',
+            'ontime_rate' => 'nullable|numeric|min:0|max:100',
+            'avg_delivery_time' => 'nullable|integer|min:0',
+            'late_login' => 'nullable|boolean',
+            'early_logout' => 'nullable|boolean',
+            'is_valid' => 'nullable|boolean',
+            'shift_valid' => 'nullable|boolean',
+            'zone' => 'nullable|string|max:255',
+            'driver_status' => 'nullable|string|max:50',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -136,7 +140,7 @@ class DailyLogController extends Controller
                 $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
             }
 
-            if ($request->filled('odometer_end') && !$request->filled('odometer_photo_path')) {
+            if ($request->filled('odometer_end') && ! $request->filled('odometer_photo_path')) {
                 $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
             }
         });
@@ -148,20 +152,28 @@ class DailyLogController extends Controller
         $logYear = (int) date('Y', $logTime);
         $logMonth = (int) date('n', $logTime);
         $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
-        $isPayrollLocked = \App\Models\PayrollRun::where('company_id', $companyId)
+        // The consolidated month is the only lock that covers every contract at once, and it is the
+        // one that matters: once approved it is frozen and serves a snapshot forever, so a log added
+        // afterwards is earnings the driver is never paid for. The contract-level check below cannot
+        // stand in for it — it only sees the one contract named in the request.
+        $isPayrollLocked = ConsolidatedPayrollRun::where('company_id', $companyId)
             ->where('year', $logYear)
             ->where('month', $logMonth)
             ->where('status', 'approved')
             ->exists();
 
-        $isContractPayrollLocked = \App\Models\ContractPayrollRun::where('company_id', $companyId)
+        if ($isPayrollLocked) {
+            return response()->json(['message' => 'تم اعتماد كشف الرواتب المجمّع لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+        }
+
+        $isContractPayrollLocked = ContractPayrollRun::where('company_id', $companyId)
             ->where('contract_id', $request->input('contract_id'))
             ->where('year', $logYear)
             ->where('month', $logMonth)
             ->where('status', 'approved')
             ->exists();
 
-        if ($isPayrollLocked || $isContractPayrollLocked) {
+        if ($isContractPayrollLocked) {
             return response()->json(['message' => 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
         }
 
@@ -170,20 +182,20 @@ class DailyLogController extends Controller
         $contractId = $validated['contract_id'];
         $employeeId = $validated['employee_id'];
 
-        $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
+        $isAssigned = ContractAssignment::withoutGlobalScopes()
             ->where('employee_id', $employeeId)
             ->where('contract_id', $contractId)
             ->whereDate('start_date', '<=', $logDate)
             ->where(function ($q) use ($logDate) {
                 $q->whereNull('end_date')
-                  ->orWhereDate('end_date', '>=', $logDate);
+                    ->orWhereDate('end_date', '>=', $logDate);
             })
             ->exists();
 
-        if (!$isAssigned) {
+        if (! $isAssigned) {
             return response()->json([
                 'message' => 'لا يمكن إدخال أو تعديل سجل يومي للسائق في تاريخ خارج فترة تعيينه الرسمية على هذا العقد.',
-                'errors' => ['log_date' => ['السائق غير معين على هذا العقد في هذا التاريخ.']]
+                'errors' => ['log_date' => ['السائق غير معين على هذا العقد في هذا التاريخ.']],
             ], 422);
         }
 
@@ -193,11 +205,11 @@ class DailyLogController extends Controller
             ->where('log_date', $validated['log_date'])
             ->where(function ($q) use ($validated) {
                 $q->where('vehicle_id', $validated['vehicle_id'])
-                  ->orWhere('contract_id', $validated['contract_id']);
+                    ->orWhere('contract_id', $validated['contract_id']);
             })
             ->first();
 
-        if (!$existingLog) {
+        if (! $existingLog) {
             $existingLog = DailyLog::withTrashed()->withoutGlobalScopes()
                 ->where('employee_id', $validated['employee_id'])
                 ->where('log_date', $validated['log_date'])
@@ -206,28 +218,28 @@ class DailyLogController extends Controller
 
         // Fetch contract to snapshot rate and auto-calculate income
         $contract = Contract::findOrFail($validated['contract_id']);
-        $vehicle  = \App\Models\Vehicle::findOrFail($validated['vehicle_id']);
+        $vehicle = Vehicle::findOrFail($validated['vehicle_id']);
 
         if ($contract->vehicle_type_id !== null && $vehicle->vehicle_type_id !== null) {
             if ($contract->vehicle_type_id !== $vehicle->vehicle_type_id) {
                 return response()->json([
                     'message' => 'فئة هذه المركبة غير مدعومة في هذا العقد.',
-                    'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                    'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']],
                 ], 422);
             }
         }
 
-        $rate     = $contract->rate_per_order;
-        $income   = $rate * $validated['orders_count'];
+        $rate = $contract->rate_per_order;
+        $income = $rate * $validated['orders_count'];
 
         // Auto-calculate daily validity if not explicitly passed
-        $lateLogin = isset($validated['late_login']) ? (bool)$validated['late_login'] : false;
-        $earlyLogout = isset($validated['early_logout']) ? (bool)$validated['early_logout'] : false;
-        $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : 0.0;
-        $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : 0.0;
-        $ordersCount = (int)$validated['orders_count'];
-        $rejectedOrdersCount = (int)($validated['rejected_orders_count'] ?? 0);
-        $cashCollected = (float)($validated['cash_collected'] ?? 0);
+        $lateLogin = isset($validated['late_login']) ? (bool) $validated['late_login'] : false;
+        $earlyLogout = isset($validated['early_logout']) ? (bool) $validated['early_logout'] : false;
+        $onlineHours = isset($validated['online_hours']) ? (float) $validated['online_hours'] : 0.0;
+        $ontimeRate = isset($validated['ontime_rate']) ? (float) $validated['ontime_rate'] : 0.0;
+        $ordersCount = (int) $validated['orders_count'];
+        $rejectedOrdersCount = (int) ($validated['rejected_orders_count'] ?? 0);
+        $cashCollected = (float) ($validated['cash_collected'] ?? 0);
 
         if ($ordersCount > 0 || $rejectedOrdersCount > 0 || $cashCollected > 0) {
             $driverStatus = 'working';
@@ -241,10 +253,10 @@ class DailyLogController extends Controller
         }
 
         if (isset($validated['is_valid'])) {
-            $isValid = (bool)$validated['is_valid'];
+            $isValid = (bool) $validated['is_valid'];
         } else {
             if ($contract->is_validity_enabled) {
-                $isValid = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && !$lateLogin && !$earlyLogout;
+                $isValid = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && ! $lateLogin && ! $earlyLogout;
             } else {
                 $isValid = true;
             }
@@ -258,40 +270,42 @@ class DailyLogController extends Controller
             }
             $settled = $existingLog->cash_settled ?? 0;
             $existingLog->update(array_merge($validated, [
-                'company_id'     => $companyId,
+                'company_id' => $companyId,
                 'rate_per_order' => $rate,
-                'income_amount'  => $income,
-                'orders_online'  => $validated['orders_online'] ?? $ordersCount,
-                'orders_cash'    => $validated['orders_cash'] ?? 0,
+                'income_amount' => $income,
+                'orders_online' => $validated['orders_online'] ?? $ordersCount,
+                'orders_cash' => $validated['orders_cash'] ?? 0,
                 'cash_collected' => $cashCollected,
-                'cash_pending'   => max(0, $cashCollected - $settled),
-                'is_valid'       => $isValid,
-                'driver_status'  => $driverStatus,
+                'cash_pending' => max(0, $cashCollected - $settled),
+                'is_valid' => $isValid,
+                'driver_status' => $driverStatus,
             ]));
+
             return response()->json($existingLog->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
         }
 
         try {
             $log = DailyLog::create(array_merge($validated, [
-                'company_id'      => $companyId,
-                'created_by'      => $request->user()?->id ?? 1,
-                'rate_per_order'  => $rate,
-                'income_amount'   => $income,
-                'orders_online'   => $validated['orders_online'] ?? 0,
-                'orders_cash'     => $validated['orders_cash'] ?? 0,
-                'cash_collected'  => $cashCollected,
-                'cash_settled'    => 0,
-                'cash_pending'    => $cashCollected,
-                'is_valid'        => $isValid,
-                'driver_status'  => $driverStatus,
+                'company_id' => $companyId,
+                'created_by' => $request->user()?->id ?? 1,
+                'rate_per_order' => $rate,
+                'income_amount' => $income,
+                'orders_online' => $validated['orders_online'] ?? 0,
+                'orders_cash' => $validated['orders_cash'] ?? 0,
+                'cash_collected' => $cashCollected,
+                'cash_settled' => 0,
+                'cash_pending' => $cashCollected,
+                'is_valid' => $isValid,
+                'driver_status' => $driverStatus,
             ]));
+
             return response()->json($log->load(['employee:id,name', 'vehicle:id,plate_number']), 201);
-        } catch (\Illuminate\Database\QueryException $e) {
+        } catch (QueryException $e) {
             $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                 ->where('employee_id', $validated['employee_id'])
                 ->where('log_date', $validated['log_date'])
                 ->first();
-            if (!$fallback) {
+            if (! $fallback) {
                 $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                     ->where('employee_id', $validated['employee_id'])
                     ->where('vehicle_id', $validated['vehicle_id'])
@@ -304,16 +318,17 @@ class DailyLogController extends Controller
                 }
                 $settled = $fallback->cash_settled ?? 0;
                 $fallback->update(array_merge($validated, [
-                    'company_id'     => $companyId,
+                    'company_id' => $companyId,
                     'rate_per_order' => $rate,
-                    'income_amount'  => $income,
-                    'orders_online'  => $validated['orders_online'] ?? $ordersCount,
-                    'orders_cash'    => $validated['orders_cash'] ?? 0,
+                    'income_amount' => $income,
+                    'orders_online' => $validated['orders_online'] ?? $ordersCount,
+                    'orders_cash' => $validated['orders_cash'] ?? 0,
                     'cash_collected' => $cashCollected,
-                    'cash_pending'   => max(0, $cashCollected - $settled),
-                    'is_valid'       => $isValid,
-                    'driver_status'  => $driverStatus,
+                    'cash_pending' => max(0, $cashCollected - $settled),
+                    'is_valid' => $isValid,
+                    'driver_status' => $driverStatus,
                 ]));
+
                 return response()->json($fallback->fresh(['employee:id,name', 'vehicle:id,plate_number']), 200);
             }
             throw $e;
@@ -326,38 +341,44 @@ class DailyLogController extends Controller
      */
     public function bulkStore(Request $request): JsonResponse
     {
-        if (!$request->user()->can('daily_logs.create')) {
+        if (! $request->user()->can('daily_logs.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة سجلات تشغيل.'], 403);
         }
 
         $logs = $request->input('logs', []);
-        if (!is_array($logs) || empty($logs)) {
+        if (! is_array($logs) || empty($logs)) {
             return response()->json(['message' => 'قائمة السجلات فارغة.'], 422);
         }
 
         // Check Payroll Approval Lock for the batch
-        if (!empty($logs)) {
+        if (! empty($logs)) {
             $sampleDate = $logs[0]['log_date'] ?? null;
             if ($sampleDate) {
                 $time = strtotime($sampleDate);
                 $logYear = (int) date('Y', $time);
                 $logMonth = (int) date('n', $time);
                 $companyId = app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1);
-                $isPayrollLocked = \App\Models\PayrollRun::where('company_id', $companyId)
+                // Month-wide and contract-agnostic — the only check that holds for a bulk save,
+                // whose contract id is read from row zero and says nothing about the other rows.
+                $isPayrollLocked = ConsolidatedPayrollRun::where('company_id', $companyId)
                     ->where('year', $logYear)
                     ->where('month', $logMonth)
                     ->where('status', 'approved')
                     ->exists();
 
+                if ($isPayrollLocked) {
+                    return response()->json(['message' => 'تم اعتماد كشف الرواتب المجمّع لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
+                }
+
                 $contractId = $logs[0]['contract_id'] ?? null;
-                $isContractPayrollLocked = $contractId ? \App\Models\ContractPayrollRun::where('company_id', $companyId)
+                $isContractPayrollLocked = $contractId ? ContractPayrollRun::where('company_id', $companyId)
                     ->where('contract_id', $contractId)
                     ->where('year', $logYear)
                     ->where('month', $logMonth)
                     ->where('status', 'approved')
                     ->exists() : false;
 
-                if ($isPayrollLocked || $isContractPayrollLocked) {
+                if ($isContractPayrollLocked) {
                     return response()->json(['message' => 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'], 422);
                 }
             }
@@ -382,28 +403,29 @@ class DailyLogController extends Controller
             $logDate = $logData['log_date'] ?? null;
             $contractId = $logData['contract_id'] ?? null;
 
-            if (!$employeeId || !$logDate || !$contractId) {
+            if (! $employeeId || ! $logDate || ! $contractId) {
                 $skipped[] = [
                     'log_date' => $logDate,
                     'employee_id' => $employeeId,
                     'reason' => 'incomplete',
                     'message' => 'السجل ناقص بيانات أساسية (الموظف أو التاريخ أو العقد).',
                 ];
+
                 continue;
             }
 
             // Check if driver is assigned to contract on this logDate
-            $isAssigned = \App\Models\ContractAssignment::withoutGlobalScopes()
+            $isAssigned = ContractAssignment::withoutGlobalScopes()
                 ->where('employee_id', $employeeId)
                 ->where('contract_id', $contractId)
                 ->whereDate('start_date', '<=', $logDate)
                 ->where(function ($q) use ($logDate) {
                     $q->whereNull('end_date')
-                      ->orWhereDate('end_date', '>=', $logDate);
+                        ->orWhereDate('end_date', '>=', $logDate);
                 })
                 ->exists();
 
-            if (!$isAssigned) {
+            if (! $isAssigned) {
                 $skipped[] = [
                     'log_date' => $logDate,
                     'employee_id' => $employeeId,
@@ -411,6 +433,7 @@ class DailyLogController extends Controller
                     'reason' => 'not_assigned',
                     'message' => 'السائق غير معيّن على هذا العقد في هذا التاريخ.',
                 ];
+
                 continue;
             }
 
@@ -468,25 +491,25 @@ class DailyLogController extends Controller
                 $ordersOnline = max(0, $ordersCount - $ordersCash);
 
                 $existing->update([
-                    'company_id'            => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
-                    'vehicle_id'            => $vehicleId,
-                    'contract_id'           => $contractId,
-                    'orders_count'          => $ordersCount,
-                    'orders_online'         => $ordersOnline,
-                    'orders_cash'           => $ordersCash,
+                    'company_id' => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
+                    'vehicle_id' => $vehicleId,
+                    'contract_id' => $contractId,
+                    'orders_count' => $ordersCount,
+                    'orders_online' => $ordersOnline,
+                    'orders_cash' => $ordersCash,
                     'rejected_orders_count' => $rejectedOrdersCount,
-                    'cash_collected'        => $cashCollected,
-                    'cash_pending'          => max(0, $cashCollected - $settled),
-                    'online_hours'          => $onlineHours,
-                    'zone'                  => $zone,
-                    'is_valid'              => $isValid,
-                    'shift_valid'           => $isValid,
-                    'late_login'            => $lateLogin,
-                    'early_logout'          => $earlyLogout,
-                    'rate_per_order'        => $rate,
-                    'income_amount'         => $income,
-                    'driver_status'         => $driverStatus,
-                    'notes'                 => $logData['notes'] ?? null,
+                    'cash_collected' => $cashCollected,
+                    'cash_pending' => max(0, $cashCollected - $settled),
+                    'online_hours' => $onlineHours,
+                    'zone' => $zone,
+                    'is_valid' => $isValid,
+                    'shift_valid' => $isValid,
+                    'late_login' => $lateLogin,
+                    'early_logout' => $earlyLogout,
+                    'rate_per_order' => $rate,
+                    'income_amount' => $income,
+                    'driver_status' => $driverStatus,
+                    'notes' => $logData['notes'] ?? null,
                 ]);
                 $savedLogs[] = $existing;
             } else {
@@ -495,37 +518,37 @@ class DailyLogController extends Controller
 
                 try {
                     $newLog = DailyLog::create([
-                        'company_id'            => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
-                        'employee_id'           => $employeeId,
-                        'vehicle_id'            => $vehicleId,
-                        'contract_id'           => $contractId,
-                        'log_date'              => $logDate,
-                        'orders_count'          => $ordersCount,
-                        'orders_online'         => $ordersOnline,
-                        'orders_cash'           => $ordersCash,
+                        'company_id' => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
+                        'employee_id' => $employeeId,
+                        'vehicle_id' => $vehicleId,
+                        'contract_id' => $contractId,
+                        'log_date' => $logDate,
+                        'orders_count' => $ordersCount,
+                        'orders_online' => $ordersOnline,
+                        'orders_cash' => $ordersCash,
                         'rejected_orders_count' => $rejectedOrdersCount,
-                        'cash_collected'        => $cashCollected,
-                        'cash_settled'          => 0,
-                        'cash_pending'          => $cashCollected,
-                        'online_hours'          => $onlineHours,
-                        'zone'                  => $zone,
-                        'is_valid'              => $isValid,
-                        'shift_valid'           => $isValid,
-                        'late_login'            => $lateLogin,
-                        'early_logout'          => $earlyLogout,
-                        'created_by'            => $request->user()?->id ?? 1,
-                        'rate_per_order'        => $rate,
-                        'income_amount'         => $income,
-                        'driver_status'         => $driverStatus,
-                        'notes'                 => $logData['notes'] ?? null,
+                        'cash_collected' => $cashCollected,
+                        'cash_settled' => 0,
+                        'cash_pending' => $cashCollected,
+                        'online_hours' => $onlineHours,
+                        'zone' => $zone,
+                        'is_valid' => $isValid,
+                        'shift_valid' => $isValid,
+                        'late_login' => $lateLogin,
+                        'early_logout' => $earlyLogout,
+                        'created_by' => $request->user()?->id ?? 1,
+                        'rate_per_order' => $rate,
+                        'income_amount' => $income,
+                        'driver_status' => $driverStatus,
+                        'notes' => $logData['notes'] ?? null,
                     ]);
                     $savedLogs[] = $newLog;
-                } catch (\Illuminate\Database\QueryException $e) {
+                } catch (QueryException $e) {
                     $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                         ->where('employee_id', $employeeId)
                         ->where('log_date', $logDate)
                         ->first();
-                    if (!$fallback) {
+                    if (! $fallback) {
                         $fallback = DailyLog::withTrashed()->withoutGlobalScopes()
                             ->where('employee_id', $employeeId)
                             ->where('vehicle_id', $vehicleId)
@@ -538,25 +561,25 @@ class DailyLogController extends Controller
                         }
                         $settled = $fallback->cash_settled ?? 0;
                         $fallback->update([
-                            'company_id'            => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
-                            'vehicle_id'            => $vehicleId,
-                            'contract_id'           => $contractId,
-                            'orders_count'          => $ordersCount,
-                            'orders_online'         => (int) ($logData['orders_online'] ?? $ordersCount),
-                            'orders_cash'           => (int) ($logData['orders_cash'] ?? 0),
+                            'company_id' => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
+                            'vehicle_id' => $vehicleId,
+                            'contract_id' => $contractId,
+                            'orders_count' => $ordersCount,
+                            'orders_online' => (int) ($logData['orders_online'] ?? $ordersCount),
+                            'orders_cash' => (int) ($logData['orders_cash'] ?? 0),
                             'rejected_orders_count' => $rejectedOrdersCount,
-                            'cash_collected'        => $cashCollected,
-                            'cash_pending'          => max(0, $cashCollected - $settled),
-                            'online_hours'          => $onlineHours,
-                            'zone'                  => $zone,
-                            'is_valid'              => $isValid,
-                            'shift_valid'           => $isValid,
-                            'late_login'            => $lateLogin,
-                            'early_logout'          => $earlyLogout,
-                            'rate_per_order'        => $rate,
-                            'income_amount'         => $income,
-                            'driver_status'         => $driverStatus,
-                            'notes'                 => $logData['notes'] ?? null,
+                            'cash_collected' => $cashCollected,
+                            'cash_pending' => max(0, $cashCollected - $settled),
+                            'online_hours' => $onlineHours,
+                            'zone' => $zone,
+                            'is_valid' => $isValid,
+                            'shift_valid' => $isValid,
+                            'late_login' => $lateLogin,
+                            'early_logout' => $earlyLogout,
+                            'rate_per_order' => $rate,
+                            'income_amount' => $income,
+                            'driver_status' => $driverStatus,
+                            'notes' => $logData['notes'] ?? null,
                         ]);
                         $savedLogs[] = $fallback;
                     } else {
@@ -605,7 +628,7 @@ class DailyLogController extends Controller
      */
     public function update(Request $request, DailyLog $dailyLog): JsonResponse
     {
-        if (!$request->user()->can('daily_logs.edit')) {
+        if (! $request->user()->can('daily_logs.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل سجلات التشغيل.'], 403);
         }
 
@@ -615,7 +638,7 @@ class DailyLogController extends Controller
         if ($total === 0) {
             $request->merge([
                 'orders_online' => 0,
-                'orders_cash' => 0
+                'orders_cash' => 0,
             ]);
         } else {
             $contract = $dailyLog->contract ?? Contract::find($request->input('contract_id'));
@@ -634,20 +657,20 @@ class DailyLogController extends Controller
             if ($isZones) {
                 $request->merge([
                     'orders_online' => $total,
-                    'orders_cash' => 0
+                    'orders_cash' => 0,
                 ]);
             } else {
                 $hasOnline = $request->has('orders_online');
-                $hasCash   = $request->has('orders_cash');
-                if (!$hasOnline && !$hasCash && ($dailyLog->orders_online > 0 || $dailyLog->orders_cash > 0)) {
+                $hasCash = $request->has('orders_cash');
+                if (! $hasOnline && ! $hasCash && ($dailyLog->orders_online > 0 || $dailyLog->orders_cash > 0)) {
                     // Do not auto-merge when updating orders_count if dailyLog already has orders breakdown
                 } else {
                     $online = $request->input('orders_online');
-                    $cash   = $request->input('orders_cash');
-                    if (($online === null || (int)$online === 0) && ($cash === null || (int)$cash === 0)) {
+                    $cash = $request->input('orders_cash');
+                    if (($online === null || (int) $online === 0) && ($cash === null || (int) $cash === 0)) {
                         $request->merge([
                             'orders_online' => $total,
-                            'orders_cash'   => 0
+                            'orders_cash' => 0,
                         ]);
                     }
                 }
@@ -655,22 +678,22 @@ class DailyLogController extends Controller
         }
 
         $validator = \Validator::make($request->all(), [
-            'orders_count'   => 'sometimes|integer|min:0',
-            'orders_online'  => 'sometimes|integer|min:0',
-            'orders_cash'    => 'sometimes|integer|min:0',
+            'orders_count' => 'sometimes|integer|min:0',
+            'orders_online' => 'sometimes|integer|min:0',
+            'orders_cash' => 'sometimes|integer|min:0',
             'cash_collected' => 'sometimes|numeric|min:0',
             'odometer_start' => 'nullable|integer|min:0',
-            'odometer_end'   => 'nullable|integer|min:0',
+            'odometer_end' => 'nullable|integer|min:0',
             'odometer_photo_path' => 'nullable|string',
-            'notes'          => 'nullable|string|max:500',
-            'online_hours'   => 'nullable|numeric|min:0',
-            'ontime_rate'    => 'nullable|numeric|min:0|max:100',
+            'notes' => 'nullable|string|max:500',
+            'online_hours' => 'nullable|numeric|min:0',
+            'ontime_rate' => 'nullable|numeric|min:0|max:100',
             'avg_delivery_time' => 'nullable|integer|min:0',
-            'late_login'     => 'nullable|boolean',
-            'early_logout'   => 'nullable|boolean',
-            'is_valid'       => 'nullable|boolean',
-            'shift_valid'    => 'nullable|boolean',
-            'zone'           => 'nullable|string|max:255',
+            'late_login' => 'nullable|boolean',
+            'early_logout' => 'nullable|boolean',
+            'is_valid' => 'nullable|boolean',
+            'shift_valid' => 'nullable|boolean',
+            'zone' => 'nullable|string|max:255',
         ]);
 
         $validator->after(function ($validator) use ($request, $dailyLog) {
@@ -692,10 +715,10 @@ class DailyLogController extends Controller
             }
 
             // Odometer photo validation
-            $hasEnd = $request->has('odometer_end') ? $request->filled('odometer_end') : !empty($dailyLog->odometer_end);
-            $hasPhoto = $request->has('odometer_photo_path') ? $request->filled('odometer_photo_path') : !empty($dailyLog->odometer_photo_path);
+            $hasEnd = $request->has('odometer_end') ? $request->filled('odometer_end') : ! empty($dailyLog->odometer_end);
+            $hasPhoto = $request->has('odometer_photo_path') ? $request->filled('odometer_photo_path') : ! empty($dailyLog->odometer_photo_path);
 
-            if ($hasEnd && !$hasPhoto) {
+            if ($hasEnd && ! $hasPhoto) {
                 $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
             }
         });
@@ -716,16 +739,16 @@ class DailyLogController extends Controller
         $contract = $dailyLog->contract;
         if (isset($validated['is_valid'])) {
             // Respect manual override
-            $validated['is_valid'] = (bool)$validated['is_valid'];
+            $validated['is_valid'] = (bool) $validated['is_valid'];
         } else {
             if ($contract && $contract->is_validity_enabled) {
-                $lateLogin = isset($validated['late_login']) ? (bool)$validated['late_login'] : (bool)$dailyLog->late_login;
-                $earlyLogout = isset($validated['early_logout']) ? (bool)$validated['early_logout'] : (bool)$dailyLog->early_logout;
-                $onlineHours = isset($validated['online_hours']) ? (float)$validated['online_hours'] : (float)$dailyLog->online_hours;
-                $ontimeRate = isset($validated['ontime_rate']) ? (float)$validated['ontime_rate'] : (float)$dailyLog->ontime_rate;
-                $ordersCount = isset($validated['orders_count']) ? (int)$validated['orders_count'] : (int)$dailyLog->orders_count;
+                $lateLogin = isset($validated['late_login']) ? (bool) $validated['late_login'] : (bool) $dailyLog->late_login;
+                $earlyLogout = isset($validated['early_logout']) ? (bool) $validated['early_logout'] : (bool) $dailyLog->early_logout;
+                $onlineHours = isset($validated['online_hours']) ? (float) $validated['online_hours'] : (float) $dailyLog->online_hours;
+                $ontimeRate = isset($validated['ontime_rate']) ? (float) $validated['ontime_rate'] : (float) $dailyLog->ontime_rate;
+                $ordersCount = isset($validated['orders_count']) ? (int) $validated['orders_count'] : (int) $dailyLog->orders_count;
 
-                $validated['is_valid'] = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && !$lateLogin && !$earlyLogout;
+                $validated['is_valid'] = ($onlineHours >= 10.0) && ($ontimeRate >= 90.0) && ($ordersCount >= 2) && ! $lateLogin && ! $earlyLogout;
             }
         }
 
@@ -739,11 +762,12 @@ class DailyLogController extends Controller
      */
     public function destroy(Request $request, DailyLog $dailyLog): JsonResponse
     {
-        if (!$request->user()->can('daily_logs.delete')) {
+        if (! $request->user()->can('daily_logs.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف سجلات التشغيل.'], 403);
         }
 
         $dailyLog->delete();
+
         return response()->json(['message' => 'Log deleted.']);
     }
 }

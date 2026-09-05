@@ -66,7 +66,21 @@ class ContractRevenueService
                 continue;
             }
 
-            $method = $rule['payment_method'] ?? 'zones';
+            // A rule that does not say how it bills is not billed. This used to fall back to zones,
+            // so a rule carrying a perfectly good `fixed_amount` and no `payment_method` was priced
+            // by zones it had none of, billed nothing, and never said why — the stated amount was
+            // simply ignored.
+            $method = $rule['payment_method'] ?? null;
+
+            if ($method === null || $method === '') {
+                $unpriced += $bucket['orders'];
+                $details[] = self::line(
+                    'قاعدة تسعير العميل لا تذكر طريقة الاحتساب — لا يمكن تسعير طلبات هذا النوع',
+                    $bucket['orders'], 0.0, 0.0, true
+                );
+
+                continue;
+            }
 
             if ($method === 'tiers') {
                 [$amount, $line] = self::priceByTier($rule, $bucket['orders']);
@@ -83,6 +97,19 @@ class ContractRevenueService
                 $fixed = round((float) ($rule['fixed_amount'] ?? 0) * $monthsCount, 3);
                 $revenue += $fixed;
                 $details[] = self::line('مبلغ شهري ثابت', $bucket['orders'], 0.0, $fixed, $fixed <= 0.0);
+
+                continue;
+            }
+
+            // Anything the client side does not know how to bill is said so rather than quietly
+            // read as zones — a typo, or a driver-side method like «zones_tiers» that the client
+            // billing does not have, used to be priced by zones the rule never declared.
+            if ($method !== 'zones') {
+                $unpriced += $bucket['orders'];
+                $details[] = self::line(
+                    "طريقة احتساب غير معروفة للعميل ({$method}) — لا يمكن تسعير طلبات هذا النوع",
+                    $bucket['orders'], 0.0, 0.0, true
+                );
 
                 continue;
             }

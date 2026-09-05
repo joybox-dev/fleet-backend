@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\Company;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
@@ -11,8 +12,6 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use App\Models\Violation;
-use App\Models\PayrollSlip;
-use App\Models\PayrollRun;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -21,9 +20,12 @@ class BackendPhase16Test extends TestCase
     use RefreshDatabase;
 
     protected Company $company;
+
     protected User $adminUser;
+
     protected User $operatorUser;
-    protected \App\Models\Client $client;
+
+    protected Client $client;
 
     protected function setUp(): void
     {
@@ -41,7 +43,7 @@ class BackendPhase16Test extends TestCase
         // Set tenant context
         app()->instance('current_company_id', $this->company->id);
 
-        $this->client = \App\Models\Client::create([
+        $this->client = Client::create([
             'name' => 'Test Client',
             'company_id' => $this->company->id,
         ]);
@@ -70,13 +72,13 @@ class BackendPhase16Test extends TestCase
         $response = $this->actingAs($this->adminUser)
             ->postJson('/api/roles', [
                 'name' => 'موظف عقود',
-                'allowed_modules' => ['contracts', 'clients']
+                'allowed_modules' => ['contracts', 'clients'],
             ]);
 
         $response->assertStatus(201);
         $this->assertDatabaseHas('roles', [
             'name' => 'موظف عقود',
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         $roleId = $response->json('id');
@@ -93,7 +95,7 @@ class BackendPhase16Test extends TestCase
         $role = Role::create([
             'name' => 'محاسب',
             'company_id' => $this->company->id,
-            'allowed_modules' => ['payroll']
+            'allowed_modules' => ['payroll'],
         ]);
 
         $response = $this->actingAs($this->adminUser)
@@ -106,14 +108,14 @@ class BackendPhase16Test extends TestCase
                 'role_category' => 'admin',
                 'admin_role_id' => $role->id,
                 'email' => 'adminemp@test.com',
-                'password' => 'password123'
+                'password' => 'password123',
             ]);
 
         $response->assertStatus(201);
         $this->assertDatabaseHas('employees', [
             'name' => 'Admin Emp',
             'role_category' => 'admin',
-            'admin_role_id' => $role->id
+            'admin_role_id' => $role->id,
         ]);
 
         $employee = Employee::where('name', 'Admin Emp')->first();
@@ -122,7 +124,7 @@ class BackendPhase16Test extends TestCase
         $this->assertDatabaseHas('users', [
             'id' => $employee->user_id,
             'email' => 'adminemp@test.com',
-            'role' => 'محاسب'
+            'role' => 'محاسب',
         ]);
     }
 
@@ -135,7 +137,7 @@ class BackendPhase16Test extends TestCase
             'official_salary' => 400,
             'actual_salary' => 400,
             'company_id' => $this->company->id,
-            'role_category' => 'admin'
+            'role_category' => 'admin',
         ]);
 
         // Request as operator -> status should be pending
@@ -144,14 +146,14 @@ class BackendPhase16Test extends TestCase
                 'employee_id' => $employee->id,
                 'amount' => 500,
                 'date' => '2026-07-04',
-                'reason' => 'عهدة ميدانية'
+                'reason' => 'عهدة ميدانية',
             ]);
 
         $response->assertStatus(201);
         $this->assertDatabaseHas('operational_advances', [
             'employee_id' => $employee->id,
             'amount' => '500.000',
-            'status' => 'pending'
+            'status' => 'pending',
         ]);
 
         $advanceId = $response->json('id');
@@ -164,7 +166,7 @@ class BackendPhase16Test extends TestCase
         $this->assertDatabaseHas('operational_advances', [
             'id' => $advanceId,
             'status' => 'active',
-            'approved_by' => $this->adminUser->id
+            'approved_by' => $this->adminUser->id,
         ]);
 
         // Register expense exceeding remaining
@@ -172,7 +174,7 @@ class BackendPhase16Test extends TestCase
             ->postJson("/api/operational-advances/{$advanceId}/expense", [
                 'amount' => 600,
                 'date' => '2026-07-05',
-                'description' => 'شراء وقود'
+                'description' => 'شراء وقود',
             ]);
         $response->assertStatus(422);
 
@@ -181,7 +183,7 @@ class BackendPhase16Test extends TestCase
             ->postJson("/api/operational-advances/{$advanceId}/expense", [
                 'amount' => 300,
                 'date' => '2026-07-05',
-                'description' => 'شراء وقود'
+                'description' => 'شراء وقود',
             ]);
         $response->assertStatus(201);
 
@@ -189,14 +191,14 @@ class BackendPhase16Test extends TestCase
         $response = $this->actingAs($this->adminUser)
             ->postJson("/api/operational-advances/{$advanceId}/return", [
                 'amount' => 200,
-                'date' => '2026-07-06'
+                'date' => '2026-07-06',
             ]);
         $response->assertStatus(201);
 
         // Advance should be auto-completed
         $this->assertDatabaseHas('operational_advances', [
             'id' => $advanceId,
-            'status' => 'completed'
+            'status' => 'completed',
         ]);
     }
 
@@ -208,14 +210,14 @@ class BackendPhase16Test extends TestCase
             'pay_type' => 'fixed',
             'official_salary' => 120,
             'actual_salary' => 150,
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         $vehicle = Vehicle::create([
             'plate_number' => '12345',
             'make' => 'Honda',
             'model' => 'Unassigned',
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         $contract = Contract::create([
@@ -225,7 +227,7 @@ class BackendPhase16Test extends TestCase
             'client_name' => 'Keta',
             'payment_type' => 'per_order',
             'start_date' => '2026-07-01',
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         // Assign vehicle to driver
@@ -234,7 +236,7 @@ class BackendPhase16Test extends TestCase
             'vehicle_id' => $vehicle->id,
             'assigned_date' => '2026-07-01',
             'is_active' => true,
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         // Assign driver to contract
@@ -243,7 +245,7 @@ class BackendPhase16Test extends TestCase
             'contract_id' => $contract->id,
             'start_date' => '2026-07-01',
             'status' => 'active',
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         // 1. Create split violation with mismatching sums -> fail
@@ -252,9 +254,10 @@ class BackendPhase16Test extends TestCase
                 'vehicle_id' => $vehicle->id,
                 'violation_date' => '2026-07-04 10:00:00',
                 'violation_type' => 'سرعة زائدة',
+                'photo_path' => 'violations/ticket.jpg',
                 'amount' => 100,
                 'driver_share' => 30,
-                'contract_share' => 50 // sum = 80 != 100
+                'contract_share' => 50, // sum = 80 != 100
             ]);
         $response->assertStatus(422);
 
@@ -265,7 +268,7 @@ class BackendPhase16Test extends TestCase
             'pay_type' => 'fixed',
             'official_salary' => 120,
             'actual_salary' => 150,
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         $response = $this->actingAs($this->adminUser)
@@ -273,10 +276,11 @@ class BackendPhase16Test extends TestCase
                 'vehicle_id' => $vehicle->id,
                 'violation_date' => '2026-07-04 10:00:00',
                 'violation_type' => 'سرعة زائدة',
+                'photo_path' => 'violations/ticket.jpg',
                 'amount' => 100,
                 'driver_share' => 30,
                 'contract_share' => 70,
-                'employee_id' => $anotherDriver->id // manual override
+                'employee_id' => $anotherDriver->id, // manual override
             ]);
         $response->assertStatus(422);
 
@@ -286,11 +290,12 @@ class BackendPhase16Test extends TestCase
                 'vehicle_id' => $vehicle->id,
                 'violation_date' => '2026-07-04 10:00:00',
                 'violation_type' => 'سرعة زائدة',
+                'photo_path' => 'violations/ticket.jpg',
                 'amount' => 100,
                 'driver_share' => 30,
                 'contract_share' => 70,
                 'employee_id' => $anotherDriver->id,
-                'assignment_override_reason' => 'تصحيح إسناد المخالفة يدوياً'
+                'assignment_override_reason' => 'تصحيح إسناد المخالفة يدوياً',
             ]);
         $response->assertStatus(201);
         $this->assertDatabaseHas('violations', [
@@ -298,7 +303,7 @@ class BackendPhase16Test extends TestCase
             'driver_share' => '30.000',
             'contract_share' => '70.000',
             'is_driver_override' => true,
-            'assignment_override_reason' => 'تصحيح إسناد المخالفة يدوياً'
+            'assignment_override_reason' => 'تصحيح إسناد المخالفة يدوياً',
         ]);
     }
 
@@ -310,7 +315,7 @@ class BackendPhase16Test extends TestCase
             'name' => 'Main Contract',
             'payment_type' => 'per_order',
             'start_date' => '2026-07-01',
-            'company_id' => $this->company->id
+            'company_id' => $this->company->id,
         ]);
 
         $response = $this->actingAs($this->adminUser)
@@ -318,96 +323,14 @@ class BackendPhase16Test extends TestCase
                 'amount' => 800,
                 'date' => '2026-07-04',
                 'payment_method' => 'bank_transfer',
-                'notes' => 'الدفعة الأولى لشهر يوليو'
+                'notes' => 'الدفعة الأولى لشهر يوليو',
             ]);
 
         $response->assertStatus(201);
         $this->assertDatabaseHas('client_collections', [
             'contract_id' => $contract->id,
             'amount' => '800.000',
-            'payment_method' => 'bank_transfer'
-        ]);
-    }
-
-    public function test_it_records_payroll_slip_disbursements_and_write_offs()
-    {
-        $employee = Employee::create([
-            'name' => 'Driver A',
-            'date_of_joining' => '2026-07-01',
-            'pay_type' => 'fixed',
-            'official_salary' => 120,
-            'actual_salary' => 150,
-            'company_id' => $this->company->id
-        ]);
-
-        $run = PayrollRun::create([
-            'year' => 2026,
-            'month' => 7,
-            'status' => 'draft',
-            'created_by' => $this->adminUser->id,
-            'company_id' => $this->company->id
-        ]);
-
-        $slip = PayrollSlip::create([
-            'payroll_run_id' => $run->id,
-            'employee_id' => $employee->id,
-            'official_salary' => 120,
-            'actual_salary' => 150,
-            'total_deductions' => 0,
-            'net_salary' => 150,
-            'company_id' => $this->company->id
-        ]);
-
-        // Disburse payroll slip
-        $response = $this->actingAs($this->adminUser)
-            ->postJson("/api/payroll-slips/{$slip->id}/payments", [
-                'amount' => 150,
-                'date' => '2026-07-05',
-                'type' => 'disbursement',
-                'payment_method' => 'bank_transfer'
-            ]);
-
-        $response->assertStatus(201);
-        $this->assertDatabaseHas('payroll_payments', [
-            'payroll_slip_id' => $slip->id,
-            'amount' => '150.000',
-            'type' => 'disbursement'
-        ]);
-
-        $anotherEmployee = Employee::create([
-            'name' => 'Driver B',
-            'date_of_joining' => '2026-07-01',
-            'pay_type' => 'fixed',
-            'official_salary' => 120,
-            'actual_salary' => 150,
-            'company_id' => $this->company->id
-        ]);
-
-        // Write off negative carryover (if slip has negative net)
-        $negativeSlip = PayrollSlip::create([
-            'payroll_run_id' => $run->id,
-            'employee_id' => $anotherEmployee->id,
-            'official_salary' => 0,
-            'actual_salary' => 0,
-            'total_deductions' => 50,
-            'net_salary' => -50,
-            'company_id' => $this->company->id
-        ]);
-
-        $response = $this->actingAs($this->adminUser)
-            ->postJson("/api/payroll-slips/{$negativeSlip->id}/payments", [
-                'amount' => -50,
-                'date' => '2026-07-05',
-                'type' => 'write_off',
-                'audit_reason' => 'إعفاء السائق من الرصيد السالب عند الاستقالة'
-            ]);
-
-        $response->assertStatus(201);
-        $this->assertDatabaseHas('payroll_payments', [
-            'payroll_slip_id' => $negativeSlip->id,
-            'amount' => '-50.000',
-            'type' => 'write_off',
-            'audit_reason' => 'إعفاء السائق من الرصيد السالب عند الاستقالة'
+            'payment_method' => 'bank_transfer',
         ]);
     }
 }

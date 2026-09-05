@@ -8,11 +8,9 @@ use App\Models\Contract;
 use App\Models\ContractAssignment;
 use App\Models\DailyLog;
 use App\Models\Employee;
-use App\Models\PayrollRun;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -113,47 +111,6 @@ class DailyLogBulkRecalculationTest extends TestCase
         }
 
         return ['logs' => $logs];
-    }
-
-    /**
-     * The whole point: the number of queries must not scale with the number of rows in the way
-     * a per-row payroll rebuild made it scale.
-     */
-    public function test_a_draft_run_is_rebuilt_once_per_bulk_request_not_once_per_row(): void
-    {
-        PayrollRun::create([
-            'company_id' => $this->company->id,
-            'created_by' => $this->user->id,
-            'year' => 2026,
-            'month' => 7,
-            'status' => 'draft',
-        ]);
-
-        $countQueriesFor = function (int $days): int {
-            $queries = 0;
-            DB::listen(function () use (&$queries) {
-                $queries++;
-            });
-
-            $this->postJson('/api/daily-logs/bulk', $this->julyPayload($days))->assertOk();
-
-            return $queries;
-        };
-
-        $forFive = $countQueriesFor(5);
-
-        DailyLog::withoutGlobalScopes()->forceDelete();
-
-        $forTwenty = $countQueriesFor(20);
-
-        // Per-row rebuilds made the rebuild cost grow 4x with the row count. Now only the
-        // per-row writes grow, and the rebuild is a fixed cost paid once.
-        $growth = $forTwenty / max(1, $forFive);
-        $this->assertLessThan(
-            3.0,
-            $growth,
-            "Query count grew {$growth}x from 5 rows to 20 rows ({$forFive} -> {$forTwenty}); the payroll rebuild is still running per row."
-        );
     }
 
     public function test_the_month_is_still_recalculated_after_a_bulk_save(): void

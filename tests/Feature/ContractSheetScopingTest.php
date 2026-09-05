@@ -186,18 +186,31 @@ class ContractSheetScopingTest extends TestCase
     /**
      * Two vehicle types in one month has no single answer, so neither screen may invent one.
      */
-    public function test_a_month_split_across_two_vehicle_types_is_flagged_not_guessed(): void
+    /**
+     * A month split across two vehicle types is priced by both rules, one per stretch of days. It
+     * used to be flagged and paid 0.000 — right to refuse a guess, wrong to pay nothing when the
+     * contract prices both types.
+     */
+    public function test_a_month_split_across_two_vehicle_types_is_priced_by_both_rules(): void
     {
         $this->assign('2026-07-01');
         $this->logDay('2026-07-02', 10, $this->bike);
         $this->logDay('2026-07-20', 10, $this->car);
 
         $row = $this->sheetRow();
+        $gross = (float) $row['gross_contract_earnings'];
 
         $this->assertTrue($row['vehicle_type_is_mixed'], 'the month used two types');
-        $this->assertSame(0.0, (float) $row['gross_contract_earnings'], 'no rule is assumed');
-        // Taking the first log's vehicle would have paid the whole month at the bike's 5.000.
-        $this->assertNotSame(100.0, (float) $row['gross_contract_earnings']);
+
+        // 10 orders on the bike at 5.000, 10 on the car at 1.000.
+        $this->assertSame(60.0, $gross);
+
+        // Still no guessing: one type for the whole month would read 100.000 (all bike) or
+        // 20.000 (all car), and the old refusal read 0.000.
+        $this->assertNotSame(100.0, $gross);
+        $this->assertNotSame(20.0, $gross);
+        $this->assertNotSame(0.0, $gross);
+        $this->assertFalse((bool) $row['unresolved_vehicle_type'], 'both types are priced here');
     }
 
     /**
