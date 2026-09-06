@@ -140,7 +140,9 @@ class DailyLogController extends Controller
                 $validator->errors()->add('orders_count', 'مجموع طلبات الكاش والأونلاين يجب أن يساوي عدد الطلبات الإجمالي.');
             }
 
-            if ($request->filled('odometer_end') && ! $request->filled('odometer_photo_path')) {
+            // A zero is what the form sends for “no reading taken”, and `filled` counts that as a
+            // reading — so it demanded a photo of an odometer nobody read.
+            if ((float) $request->input('odometer_end') > 0 && ! $request->filled('odometer_photo_path')) {
                 $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
             }
         });
@@ -260,6 +262,13 @@ class DailyLogController extends Controller
             if ($existingLog->trashed()) {
                 $existingLog->restore();
             }
+            if ($blocked = self::settledCashBlocks($existingLog, (float) $cashCollected)) {
+                return response()->json([
+                    'message' => $blocked,
+                    'errors' => ['cash_collected' => [$blocked]],
+                ], 422);
+            }
+
             $settled = $existingLog->cash_settled ?? 0;
             $existingLog->update(array_merge($validated, [
                 'company_id' => $companyId,
@@ -303,6 +312,13 @@ class DailyLogController extends Controller
                 if ($fallback->trashed()) {
                     $fallback->restore();
                 }
+                if ($blocked = self::settledCashBlocks($fallback, (float) $cashCollected)) {
+                    return response()->json([
+                        'message' => $blocked,
+                        'errors' => ['cash_collected' => [$blocked]],
+                    ], 422);
+                }
+
                 $settled = $fallback->cash_settled ?? 0;
                 $fallback->update(array_merge($validated, [
                     'company_id' => $companyId,
@@ -468,6 +484,18 @@ class DailyLogController extends Controller
                 if ($existing->trashed()) {
                     $existing->restore();
                 }
+                if ($blocked = self::settledCashBlocks($existing, $cashCollected)) {
+                    $skipped[] = [
+                        'log_date' => $logDate,
+                        'employee_id' => $employeeId,
+                        'contract_id' => $contractId,
+                        'reason' => 'cash_already_settled',
+                        'message' => $blocked,
+                    ];
+
+                    continue;
+                }
+
                 $settled = $existing->cash_settled ?? 0;
                 $ordersCash = (int) ($logData['orders_cash'] ?? 0);
                 $ordersOnline = max(0, $ordersCount - $ordersCash);
@@ -535,6 +563,18 @@ class DailyLogController extends Controller
                         if ($fallback->trashed()) {
                             $fallback->restore();
                         }
+                        if ($blocked = self::settledCashBlocks($fallback, $cashCollected)) {
+                            $skipped[] = [
+                                'log_date' => $logDate,
+                                'employee_id' => $employeeId,
+                                'contract_id' => $contractId,
+                                'reason' => 'cash_already_settled',
+                                'message' => $blocked,
+                            ];
+
+                            continue;
+                        }
+
                         $settled = $fallback->cash_settled ?? 0;
                         $fallback->update([
                             'company_id' => app()->bound('current_company_id') ? app('current_company_id') : ($request->user()?->company_id ?? 1),
@@ -691,11 +731,18 @@ class DailyLogController extends Controller
             }
 
             // Odometer photo validation
-            $hasEnd = $request->has('odometer_end') ? $request->filled('odometer_end') : ! empty($dailyLog->odometer_end);
+            $hasEnd = $request->has('odometer_end')
+                ? (float) $request->input('odometer_end') > 0
+                : (float) $dailyLog->odometer_end > 0;
             $hasPhoto = $request->has('odometer_photo_path') ? $request->filled('odometer_photo_path') : ! empty($dailyLog->odometer_photo_path);
 
             if ($hasEnd && ! $hasPhoto) {
                 $validator->errors()->add('odometer_photo_path', 'يجب رفع صورة العداد الحية لتأكيد القراءة.');
+            }
+
+            if ($request->has('cash_collected')
+                && ($blocked = self::settledCashBlocks($dailyLog, (float) $request->input('cash_collected')))) {
+                $validator->errors()->add('cash_collected', $blocked);
             }
         });
 
@@ -745,5 +792,34 @@ class DailyLogController extends Controller
         $dailyLog->delete();
 
         return response()->json(['message' => 'Log deleted.']);
+    }
+
+    /**
+     * Cash already handed to the accountant cannot be un-collected. Dropping a day's collection
+     * below what was settled on it leaves the books holding money the driver never took in — the
+     * shape the imported ledger is already carrying 37.748 KWD of. The settlement is the physical
+     * receipt, so it has to be corrected first.
+     *
+     * A day already in that state may still be raised toward its settled figure, so a broken row
+     * can be repaired; only making it worse is refused.
+     */
+    private static function settledCashBlocks(?DailyLog $log, float $cashCollected): ?string
+    {
+        if (! $log) {
+            return null;
+        }
+
+        $settled = round((float) $log->cash_settled, 3);
+        $current = round((float) $log->cash_collected, 3);
+        $next = round($cashCollected, 3);
+
+        if ($settled <= 0 || $next >= $settled || $next >= $current) {
+            return null;
+        }
+
+        return sprintf(
+            'هذا اليوم مُسوّى بمبلغ %s د.ك — لا يمكن تخفيض الكاش المجمّع تحت هذا المبلغ. عدّل التسوية أولاً.',
+            number_format($settled, 3)
+        );
     }
 }

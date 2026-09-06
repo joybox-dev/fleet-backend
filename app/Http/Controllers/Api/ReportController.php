@@ -139,10 +139,13 @@ class ReportController extends Controller
      */
     public function pendingCash(): JsonResponse
     {
+        // One row per driver: the cash is his debt, not the vehicle's. Grouping by both split a
+        // driver who had changed plates into two rows the report cannot even tell apart — it prints
+        // name, amount and oldest date, and no plate.
         $pending = DailyLog::where('cash_pending', '>', 0)
-            ->with(['employee:id,name,phone', 'vehicle:id,plate_number'])
-            ->selectRaw('employee_id, vehicle_id, SUM(cash_pending) as total, MIN(log_date) as oldest_date')
-            ->groupBy('employee_id', 'vehicle_id')
+            ->with(['employee:id,name,phone'])
+            ->selectRaw('employee_id, SUM(cash_pending) as total, MIN(log_date) as oldest_date')
+            ->groupBy('employee_id')
             ->orderByDesc('total')
             ->get();
 
