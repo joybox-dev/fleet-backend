@@ -296,10 +296,12 @@ class ContractRevenueIsPricedFromRulesTest extends TestCase
     }
 
     /**
-     * Reading the method off the rules is not a guess: a contract pricing its vehicle types by
-     * DIFFERENT methods has a real disagreement, and has to be told which one it runs on.
+     * The opposite of what this used to assert, and the correction matters: a contract pricing its
+     * vehicle types by DIFFERENT methods is not a disagreement — it is how the system works. Both
+     * engines read the method out of each type's own rule, and عقد الدوائية bills its سيكل flat and
+     * its صالون by zone. Demanding a single method refused that contract outright.
      */
-    public function test_a_contract_pricing_two_types_two_ways_must_still_say_which_it_uses(): void
+    public function test_a_contract_may_price_its_vehicle_types_by_different_methods(): void
     {
         $contract = Contract::create([
             'client_id' => $this->client->id,
@@ -321,6 +323,39 @@ class ContractRevenueIsPricedFromRulesTest extends TestCase
                 '3' => ['payment_method' => 'tiers', 'tiers' => [['min' => 1, 'max' => null, 'price' => '0.400']]],
             ],
             'driver_pricing_rules' => ['2' => ['payment_method' => 'fixed', 'fixed_amount' => '250']],
-        ])->assertStatus(422)->assertJsonValidationErrors(['client_payment_method']);
+        ])->assertOk();
+
+        $contract->refresh();
+
+        // Each type keeps its own method, and the contract's column — only ever the fallback for a
+        // type with no rule — names one the contract actually uses rather than being demanded.
+        $this->assertSame('fixed', $contract->client_pricing_rules['2']['payment_method']);
+        $this->assertSame('tiers', $contract->client_pricing_rules['3']['payment_method']);
+        $this->assertContains($contract->client_payment_method, ['fixed', 'tiers']);
+    }
+
+    /** A column naming a method no rule uses is still a contract disagreeing with itself. */
+    public function test_a_column_that_matches_no_rule_is_still_refused(): void
+    {
+        $contract = Contract::create([
+            'client_id' => $this->client->id,
+            'name' => 'عقد يناقض نفسه',
+            'contract_number' => 'LEGACY-3',
+            'company_id' => $this->company->id,
+            'payment_type' => 'per_order',
+            'start_date' => '2026-01-01',
+        ]);
+
+        $this->actingAs($this->user)->putJson("/api/contracts/{$contract->id}", [
+            'name' => 'عقد يناقض نفسه',
+            'client_id' => $this->client->id,
+            'default_required_work_days' => 26,
+            'client_payment_method' => 'hybrid',
+            'client_pricing_rules' => [
+                '2' => ['payment_method' => 'fixed', 'fixed_amount' => '900'],
+                '3' => ['payment_method' => 'tiers', 'tiers' => [['min' => 1, 'max' => null, 'price' => '0.400']]],
+            ],
+            'driver_pricing_rules' => ['2' => ['payment_method' => 'fixed', 'fixed_amount' => '250']],
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_pricing_rules']);
     }
 }

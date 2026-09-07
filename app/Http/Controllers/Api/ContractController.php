@@ -65,14 +65,20 @@ class ContractController extends Controller
 
             $methods = collect($request->input($side.'_pricing_rules') ?: [])
                 ->pluck('payment_method')
-                ->filter()
-                ->unique();
+                ->filter();
 
-            // Only when every priced vehicle type agrees. Two different methods in one contract is
-            // a real disagreement and the caller has to resolve it, not have one picked for them.
-            if ($methods->count() === 1) {
-                $request->merge([$field => $methods->first()]);
+            if ($methods->isEmpty()) {
+                continue;
             }
+
+            // A contract prices EACH VEHICLE TYPE its own way — عقد الدوائية pays the سيكل a fixed
+            // salary and the صالون by bands — and both engines read the method out of the type's
+            // own rule. This column is only the fallback for a type that has no rule at all, so it
+            // takes whichever method covers the most types rather than refusing the contract for
+            // holding more than one. It used to be filled only when every type agreed, which left
+            // a legitimate mixed contract unsaveable: "The driver payment method field is required".
+            $dominant = $methods->countBy()->sortDesc()->keys()->first();
+            $request->merge([$field => $dominant]);
         }
     }
 
@@ -143,9 +149,8 @@ class ContractController extends Controller
                 'string',
                 'in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
                 function ($attribute, $value, $fail) use ($request) {
-                    $clientMethod = $request->input('client_payment_method');
-                    if (in_array($value, ['zones', 'zones_tiers', 'tiered_zones']) && $clientMethod !== 'zones') {
-                        $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
+                    foreach ($this->zoneWithoutClientMap($request->input('driver_pricing_rules'), $request->input('client_pricing_rules')) as $problem) {
+                        $fail($problem);
                     }
                 },
             ],
@@ -269,9 +274,10 @@ class ContractController extends Controller
                 'string',
                 'in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
                 function ($attribute, $value, $fail) use ($request, $contract) {
-                    $clientMethod = $request->input('client_payment_method') ?? $contract->client_payment_method;
-                    if (in_array($value, ['zones', 'zones_tiers', 'tiered_zones']) && $clientMethod !== 'zones') {
-                        $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
+                    $driverRules = $request->input('driver_pricing_rules') ?? $contract->driver_pricing_rules;
+                    $clientRules = $request->input('client_pricing_rules') ?? $contract->client_pricing_rules;
+                    foreach ($this->zoneWithoutClientMap($driverRules, $clientRules) as $problem) {
+                        $fail($problem);
                     }
                 },
             ],
@@ -335,6 +341,44 @@ class ContractController extends Controller
      * @param  mixed  $rules
      * @return array<int, string> one message per problem found, empty when the rules are usable
      */
+    /**
+     * Zones are the client's own map, so a driver priced by zone has to be priced against a map the
+     * contract actually draws — but that is a question PER VEHICLE TYPE, not per contract. Asking it
+     * of the contract's summary column refused a contract whose سيكل is paid a fixed salary and
+     * whose صالون is paid by zone, because the summary could only name one of them.
+     *
+     * @param  mixed  $driverRules
+     * @param  mixed  $clientRules
+     * @return array<int, string>
+     */
+    private function zoneWithoutClientMap($driverRules, $clientRules): array
+    {
+        if (! is_array($driverRules)) {
+            return [];
+        }
+
+        $zoneBased = ['zones', 'zone', 'zones_tiers', 'tiered_zones'];
+        $problems = [];
+
+        foreach ($driverRules as $vehicleType => $rule) {
+            $method = is_array($rule) ? ($rule['payment_method'] ?? null) : null;
+            if (! in_array($method, $zoneBased, true)) {
+                continue;
+            }
+
+            $clientMethod = is_array($clientRules) && is_array($clientRules[$vehicleType] ?? null)
+                ? ($clientRules[$vehicleType]['payment_method'] ?? null)
+                : null;
+
+            if ($clientMethod !== 'zones') {
+                $problems[] = "نوع المركبة {$vehicleType}: طريقة دفع السائق «{$method}» تعتمد على الفئات، "
+                    .'ولا يمكن ذلك ما لم تكن طريقة دفع العميل لنفس نوع المركبة هي الفئات.';
+            }
+        }
+
+        return $problems;
+    }
+
     private function pricingRuleProblems($rules, ?string $declaredMethod, string $side): array
     {
         $label = $side === 'client' ? 'العميل' : 'السائق';
@@ -344,6 +388,25 @@ class ContractController extends Controller
         }
 
         $problems = [];
+
+        // The column is the fallback for a vehicle type with no rule of its own, so it has to name
+        // something the contract really does — but NOT the same thing for every type. A contract
+        // legitimately pays its سيكل a fixed salary and its صالون by zone, and demanding one method
+        // across both is what made عقد الدوائية unsaveable. What is still refused is a column that
+        // matches nothing: «fixed» written over rules that all say «zones» is a contract disagreeing
+        // with itself, and the money follows the rules while the screen shows the column.
+        $declared = $declaredMethod !== null && $declaredMethod !== '' ? $declaredMethod : null;
+        if ($declared !== null) {
+            $used = collect($rules)
+                ->map(fn ($rule) => is_array($rule) ? ($rule['payment_method'] ?? null) : null)
+                ->filter()
+                ->unique();
+
+            if ($used->isNotEmpty() && ! $used->contains($declared)) {
+                $problems[] = "تسعير {$label}: طريقة الدفع المحددة للعقد «{$declared}» لا تستخدمها أي قاعدة "
+                    .'— القواعد تقول: '.$used->implode('، ').'.';
+            }
+        }
 
         foreach ($rules as $vehicleType => $rule) {
             $where = "تسعير {$label}، نوع المركبة {$vehicleType}";
@@ -357,12 +420,6 @@ class ContractController extends Controller
             $method = $rule['payment_method'] ?? null;
             if ($method === null || $method === '') {
                 $problems[] = "{$where}: لم تُحدَّد طريقة الاحتساب.";
-
-                continue;
-            }
-
-            if ($declaredMethod !== null && $method !== $declaredMethod) {
-                $problems[] = "{$where}: القاعدة تقول «{$method}» وطريقة الدفع المحددة للعقد «{$declaredMethod}» — لا يجوز أن تختلفا.";
 
                 continue;
             }

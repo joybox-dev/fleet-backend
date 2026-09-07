@@ -55,8 +55,16 @@ class EmployeesAndContractsScenarioTest extends TestCase
     {
         $this->actingAs($this->user);
 
-        // Try to create contract with driver payment method = 'zones' but client_payment_method = 'fixed'
+        // Try to create contract paying a vehicle type by zone while its client side is flat.
+        // The check reads the vehicle type's own rules, which is where the mistake actually lives —
+        // a contract can pay one type by zone and another flat, so the contract-wide column could
+        // never answer this.
         $response = $this->postJson('/api/contracts', [
+            'client_pricing_rules' => ['1' => ['payment_method' => 'fixed', 'fixed_amount' => 900]],
+            'driver_pricing_rules' => ['1' => [
+                'payment_method' => 'zones',
+                'zones' => [['id' => 'Z1', 'name' => 'شمال', 'price' => 0.300]],
+            ]],
             'client_id' => $this->client->id,
             'contract_number' => 'CON-1',
             'name' => 'Contract 1',
@@ -122,14 +130,17 @@ class EmployeesAndContractsScenarioTest extends TestCase
         ], $overrides);
     }
 
-    public function test_a_contract_cannot_be_saved_without_saying_how_it_bills_and_pays(): void
+    public function test_a_contract_cannot_be_saved_without_its_pricing_rules(): void
     {
         $this->actingAs($this->user);
 
+        // The RULES are what the money is read from, so a contract without them prices nothing and
+        // must be refused. The two *_payment_method columns are no longer in this list on purpose:
+        // they are the fallback for a vehicle type with no rule, they are filled from the rules
+        // when the caller leaves them out, and demanding them refused a contract that prices its
+        // vehicle types by different methods — which is what the screen legitimately sends.
         foreach ([
-            'client_payment_method',
             'client_pricing_rules',
-            'driver_payment_method',
             'driver_pricing_rules',
         ] as $field) {
             $payload = $this->contractPayload();
@@ -141,6 +152,20 @@ class EmployeesAndContractsScenarioTest extends TestCase
         }
 
         $this->postJson('/api/contracts', $this->contractPayload())->assertStatus(201);
+    }
+
+    public function test_the_payment_method_column_is_filled_from_the_rules_when_left_out(): void
+    {
+        $this->actingAs($this->user);
+
+        $payload = $this->contractPayload(['contract_number' => 'CON-INFER']);
+        unset($payload['client_payment_method'], $payload['driver_payment_method']);
+
+        $this->postJson('/api/contracts', $payload)->assertStatus(201);
+
+        $contract = Contract::withoutGlobalScopes()->where('contract_number', 'CON-INFER')->first();
+        $this->assertSame('fixed', $contract->client_payment_method);
+        $this->assertSame('fixed', $contract->driver_payment_method);
     }
 
     public function test_a_pricing_rule_that_does_not_say_how_it_bills_is_refused(): void
