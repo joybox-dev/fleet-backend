@@ -3,12 +3,23 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class UploadController extends Controller
 {
+    /**
+     * Where an uploaded file is filed. The frontend posts one of these by name, so adding a screen
+     * that uploads something means adding it here — a category missing from this list is refused
+     * with «The selected category is invalid» and the screen simply stops working.
+     */
+    private const CATEGORIES = [
+        'violations', 'maintenance', 'receipts', 'expenses', 'custody', 'documents',
+        'handovers', 'advances', 'odometers', 'guarantees',
+    ];
+
     /**
      * POST /api/upload
      * Generic file upload — returns path to use in other endpoints.
@@ -17,22 +28,22 @@ class UploadController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'file'     => 'required|file|mimes:jpg,jpeg,png,webp,pdf|max:10240', // 10MB max
-            'category' => 'required|in:violations,maintenance,receipts,expenses,custody,documents,handovers',
+            'file' => 'required|file|mimes:jpg,jpeg,png,webp,pdf|max:10240', // 10MB max
+            'category' => ['required', Rule::in(self::CATEGORIES)],
         ]);
 
-        $file     = $request->file('file');
+        $file = $request->file('file');
         $category = $validated['category'];
-        $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+        $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
 
         $path = $file->storeAs("uploads/{$category}", $filename, 'public');
 
         return response()->json([
-            'path'     => $path,
-            'url'      => Storage::disk('public')->url($path),
+            'path' => $path,
+            'url' => Storage::disk('public')->url($path),
             'filename' => $file->getClientOriginalName(),
-            'size'     => $file->getSize(),
-            'mime'     => $file->getMimeType(),
+            'size' => $file->getSize(),
+            'mime' => $file->getMimeType(),
         ], 201);
     }
 
@@ -43,23 +54,23 @@ class UploadController extends Controller
     public function storeMultiple(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'files'    => 'required|array|min:1|max:10',
-            'files.*'  => 'file|mimes:jpg,jpeg,png,webp,pdf|max:10240',
-            'category' => 'required|in:violations,maintenance,receipts,expenses,custody,documents,handovers',
+            'files' => 'required|array|min:1|max:10',
+            'files.*' => 'file|mimes:jpg,jpeg,png,webp,pdf|max:10240',
+            'category' => ['required', Rule::in(self::CATEGORIES)],
         ]);
 
         $category = $validated['category'];
-        $results  = [];
+        $results = [];
 
         foreach ($request->file('files') as $file) {
-            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
             $path = $file->storeAs("uploads/{$category}", $filename, 'public');
 
             $results[] = [
-                'path'     => $path,
-                'url'      => Storage::disk('public')->url($path),
+                'path' => $path,
+                'url' => Storage::disk('public')->url($path),
                 'filename' => $file->getClientOriginalName(),
-                'size'     => $file->getSize(),
+                'size' => $file->getSize(),
             ];
         }
 
