@@ -3,12 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Contract;
 use App\Models\ContractAssignment;
+use App\Models\DailyLog;
 use App\Models\DriverContractOverride;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Validation\Rule;
+use App\Models\Employee;
+use App\Models\VehicleAssignment;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class ContractAssignmentController extends Controller
 {
@@ -33,21 +37,21 @@ class ContractAssignmentController extends Controller
         $validated = $request->validate([
             'employee_id' => [
                 'required',
-                \Illuminate\Validation\Rule::exists('employees', 'id')
+                Rule::exists('employees', 'id')
                     ->where('company_id', $companyId)
                     ->where('role_category', 'driver'),
             ],
             'contract_id' => 'required|exists:contracts,id',
-            'start_date'  => 'required|date',
-            'end_date'    => 'nullable|date|after_or_equal:start_date',
-            'courier_id'  => 'nullable|string|max:255',
-            'status'      => 'required|in:active,inactive',
+            'start_date' => 'required|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+            'courier_id' => 'nullable|string|max:255',
+            'status' => 'required|in:active,inactive',
         ]);
 
-        $driver = \App\Models\Employee::findOrFail($validated['employee_id']);
-        $contract = \App\Models\Contract::findOrFail($validated['contract_id']);
+        $driver = Employee::findOrFail($validated['employee_id']);
+        $contract = Contract::findOrFail($validated['contract_id']);
 
-        $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+        $activeVehicleAssignment = VehicleAssignment::where('employee_id', $driver->id)
             ->where('is_active', true)
             ->first();
 
@@ -58,16 +62,16 @@ class ContractAssignmentController extends Controller
                     if ($contract->vehicle_type_id !== $driverVehicleTypeId) {
                         return response()->json([
                             'message' => 'نوع المركبة الحالية للسائق لا يتوافق مع نوع المركبة المسموح به لهذا العقد.',
-                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']],
                         ], 422);
                     }
                 } else {
                     $clientPricing = $contract->client_pricing_rules ?? [];
                     $configuredVehicleTypes = array_keys($clientPricing);
-                    if (!in_array((string)$driverVehicleTypeId, array_map('strval', $configuredVehicleTypes))) {
+                    if (! in_array((string) $driverVehicleTypeId, array_map('strval', $configuredVehicleTypes))) {
                         return response()->json([
                             'message' => 'نوع المركبة الحالية للسائق لا يتوافق مع المركبات المتاحة في تسعير هذا العقد.',
-                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']]
+                            'errors' => ['contract_id' => ['نوع المركبة غير متوافق مع العقد.']],
                         ], 422);
                     }
                 }
@@ -82,7 +86,7 @@ class ContractAssignmentController extends Controller
         if ($exists) {
             return response()->json([
                 'message' => 'السائق معين بالفعل على هذا العقد ولا يمكن تكرار تعيينه.',
-                'errors' => ['contract_id' => ['السائق معين بالفعل على هذا العقد.']]
+                'errors' => ['contract_id' => ['السائق معين بالفعل على هذا العقد.']],
             ], 422);
         }
 
@@ -93,10 +97,10 @@ class ContractAssignmentController extends Controller
             ->where(function ($query) use ($validated) {
                 $start = $validated['start_date'];
                 $end = $validated['end_date'] ?? '9999-12-31';
-                
+
                 $query->where(function ($q) use ($start, $end) {
                     $q->where('start_date', '<=', $end)
-                      ->whereRaw('COALESCE(end_date, "9999-12-31") >= ?', [$start]);
+                        ->whereRaw('COALESCE(end_date, "9999-12-31") >= ?', [$start]);
                 });
             })
             ->exists();
@@ -104,7 +108,7 @@ class ContractAssignmentController extends Controller
         if ($overlap && $validated['status'] === 'active') {
             return response()->json([
                 'message' => 'السائق لديه تعيين نشط متداخل في نفس الفترة لهذا العقد.',
-                'errors' => ['start_date' => ['يوجد تداخل في تواريخ التعيين النشط لهذا العقد.']]
+                'errors' => ['start_date' => ['يوجد تداخل في تواريخ التعيين النشط لهذا العقد.']],
             ], 422);
         }
 
@@ -117,10 +121,10 @@ class ContractAssignmentController extends Controller
     public function update(Request $request, ContractAssignment $assignment): JsonResponse
     {
         $validated = $request->validate([
-            'start_date'  => 'sometimes|date',
-            'end_date'    => 'nullable|date|after_or_equal:start_date',
-            'courier_id'  => 'nullable|string|max:255',
-            'status'      => 'sometimes|in:active,inactive',
+            'start_date' => 'sometimes|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+            'courier_id' => 'nullable|string|max:255',
+            'status' => 'sometimes|in:active,inactive',
         ]);
 
         // Check overlaps on update if active
@@ -135,10 +139,10 @@ class ContractAssignmentController extends Controller
                 ->where(function ($query) use ($startDate, $endDate) {
                     $start = $startDate;
                     $end = $endDate ?? '9999-12-31';
-                    
+
                     $query->where(function ($q) use ($start, $end) {
                         $q->where('start_date', '<=', $end)
-                          ->whereRaw('COALESCE(end_date, "9999-12-31") >= ?', [$start]);
+                            ->whereRaw('COALESCE(end_date, "9999-12-31") >= ?', [$start]);
                     });
                 })
                 ->exists();
@@ -146,7 +150,7 @@ class ContractAssignmentController extends Controller
             if ($overlap) {
                 return response()->json([
                     'message' => 'السائق لديه تعيين نشط متداخل في نفس الفترة لهذا العقد.',
-                    'errors' => ['start_date' => ['يوجد تداخل في تواريخ التعيين النشط لهذا العقد.']]
+                    'errors' => ['start_date' => ['يوجد تداخل في تواريخ التعيين النشط لهذا العقد.']],
                 ], 422);
             }
         }
@@ -159,18 +163,19 @@ class ContractAssignmentController extends Controller
     public function destroy(ContractAssignment $assignment): JsonResponse
     {
         // Prevent deletion if daily logs exist under this assignment contract
-        $hasLogs = \App\Models\DailyLog::where('employee_id', $assignment->employee_id)
+        $hasLogs = DailyLog::where('employee_id', $assignment->employee_id)
             ->where('contract_id', $assignment->contract_id)
             ->whereBetween('log_date', [$assignment->start_date, $assignment->end_date ?? Carbon::now()])
             ->exists();
 
         if ($hasLogs) {
             return response()->json([
-                'message' => 'لا يمكن حذف التعيين لوجود سجلات عمل مسجلة للسائق تحت هذا العقد. يمكنك إيقاف التعيين بتعديل تاريخ النهاية.'
+                'message' => 'لا يمكن حذف التعيين لوجود سجلات عمل مسجلة للسائق تحت هذا العقد. يمكنك إيقاف التعيين بتعديل تاريخ النهاية.',
             ], 422);
         }
 
         $assignment->delete();
+
         return response()->json(['message' => 'تم حذف تعيين العقد بنصف نجاح.']);
     }
 
@@ -181,46 +186,47 @@ class ContractAssignmentController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'override_type'           => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers',
-            'fixed_amount'            => 'nullable|numeric|min:0',
-            'fixed_target'            => 'nullable|integer|min:0',
-            'fixed_deficit_rate'      => 'nullable|numeric|min:0',
-            'fixed_bonus_type'        => 'nullable|string|in:lump_sum,per_order',
-            'fixed_surplus_bonus'     => 'nullable|numeric|min:0',
-            'fixed_surplus_rate'      => 'nullable|numeric|min:0',
-            'zone_target_orders'      => 'nullable|integer|min:0',
-            'zone_deficit_rate'       => 'nullable|numeric|min:0',
-            'zone_bonus_type'         => 'nullable|string|in:lump_sum,per_order',
-            'zone_target_bonus'       => 'nullable|numeric|min:0',
-            'zone_surplus_rate'       => 'nullable|numeric|min:0',
-            'zones'                   => 'nullable|array',
-            'tiers'                   => 'nullable|array',
-            'hybrid_fixed'            => 'nullable|numeric|min:0',
-            'hybrid_tiers'            => 'nullable|array',
-            'zones_tiers'             => 'nullable|array',
-            'customization_reason'    => 'required|string|max:1000',
-            'effective_from'          => 'required|date',
-            'effective_to'            => 'nullable|date|after_or_equal:effective_from',
+            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
+            'fixed_amount' => 'nullable|numeric|min:0',
+            'fixed_target' => 'nullable|integer|min:0',
+            'fixed_deficit_rate' => 'nullable|numeric|min:0',
+            'fixed_bonus_type' => 'nullable|string|in:lump_sum,per_order',
+            'fixed_surplus_bonus' => 'nullable|numeric|min:0',
+            'fixed_surplus_rate' => 'nullable|numeric|min:0',
+            'zone_target_orders' => 'nullable|integer|min:0',
+            'zone_deficit_rate' => 'nullable|numeric|min:0',
+            'zone_bonus_type' => 'nullable|string|in:lump_sum,per_order',
+            'zone_target_bonus' => 'nullable|numeric|min:0',
+            'zone_surplus_rate' => 'nullable|numeric|min:0',
+            'zones' => 'nullable|array',
+            'tiers' => 'nullable|array',
+            'hybrid_fixed' => 'nullable|numeric|min:0',
+            'hybrid_tiers' => 'nullable|array',
+            'zones_tiers' => 'nullable|array',
+            'tiered_zones' => 'nullable|array',
+            'customization_reason' => 'required|string|max:1000',
+            'effective_from' => 'required|date',
+            'effective_to' => 'nullable|date|after_or_equal:effective_from',
         ]);
 
         // Validate override dates are within assignment dates
         $from = Carbon::parse($validated['effective_from']);
-        $to = (!empty($validated['effective_to'])) ? Carbon::parse($validated['effective_to']) : null;
-        
+        $to = (! empty($validated['effective_to'])) ? Carbon::parse($validated['effective_to']) : null;
+
         $assignStart = Carbon::parse($assignment->start_date);
         $assignEnd = $assignment->end_date ? Carbon::parse($assignment->end_date) : null;
 
         if ($from->lt($assignStart) || ($assignEnd && $from->gt($assignEnd))) {
             return response()->json([
                 'message' => 'تاريخ بدء التجاوز يجب أن يكون ضمن فترة تعيين العقد للسائق.',
-                'errors' => ['effective_from' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']]
+                'errors' => ['effective_from' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']],
             ], 422);
         }
 
         if ($to && ($to->lt($assignStart) || ($assignEnd && $to->gt($assignEnd)))) {
             return response()->json([
                 'message' => 'تاريخ نهاية التجاوز يجب أن يكون ضمن فترة تعيين العقد للسائق.',
-                'errors' => ['effective_to' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']]
+                'errors' => ['effective_to' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']],
             ], 422);
         }
 
@@ -229,10 +235,10 @@ class ContractAssignmentController extends Controller
             ->where(function ($query) use ($validated) {
                 $start = $validated['effective_from'];
                 $end = $validated['effective_to'] ?? '9999-12-31';
-                
+
                 $query->where(function ($q) use ($start, $end) {
                     $q->where('effective_from', '<=', $end)
-                      ->whereRaw('COALESCE(effective_to, "9999-12-31") >= ?', [$start]);
+                        ->whereRaw('COALESCE(effective_to, "9999-12-31") >= ?', [$start]);
                 });
             })
             ->exists();
@@ -240,32 +246,32 @@ class ContractAssignmentController extends Controller
         if ($overlap) {
             return response()->json([
                 'message' => 'يوجد تجاوز آخر مخصص متداخل في نفس التواريخ لهذا السائق.',
-                'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']]
+                'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']],
             ], 422);
         }
 
         $oType = $validated['override_type'] ?? null;
-        if (in_array($oType, ['zones', 'zones_tiers'])) {
+        if (in_array($oType, ['zones', 'zones_tiers', 'tiered_zones'])) {
             $driver = $assignment->employee;
             $contract = $assignment->contract;
-            $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+            $activeVehicleAssignment = VehicleAssignment::where('employee_id', $driver->id)
                 ->where('is_active', true)
                 ->first();
-            
+
             $vehicleTypeId = $activeVehicleAssignment?->vehicle?->vehicle_type_id;
             $clientPricing = $contract->client_pricing_rules ?? [];
-            
+
             $clientMethod = null;
             if ($vehicleTypeId !== null && isset($clientPricing[$vehicleTypeId])) {
                 $clientMethod = $clientPricing[$vehicleTypeId]['payment_method'] ?? null;
             } elseif ($contract->vehicle_type_id !== null) {
                 $clientMethod = $contract->client_payment_method;
             }
-            
+
             if ($clientMethod !== 'zones') {
                 return response()->json([
                     'message' => 'لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل لهذه الفئة من المركبات هي الفئات.',
-                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']]
+                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']],
                 ], 422);
             }
         }
@@ -274,7 +280,7 @@ class ContractAssignmentController extends Controller
             'fixed_amount', 'fixed_target', 'fixed_deficit_rate', 'fixed_bonus_type',
             'fixed_surplus_bonus', 'fixed_surplus_rate', 'zone_target_orders',
             'zone_deficit_rate', 'zone_bonus_type', 'zone_target_bonus', 'zone_surplus_rate',
-            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers'
+            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers', 'tiered_zones',
         ];
         $rules = [];
         foreach ($pricingRulesFields as $field) {
@@ -295,7 +301,7 @@ class ContractAssignmentController extends Controller
 
         $validated['company_id'] = $companyId;
         $validated['contract_assignment_id'] = $assignment->id;
-        
+
         $override = DriverContractOverride::create($validated);
 
         return response()->json($override, 201);
@@ -304,49 +310,50 @@ class ContractAssignmentController extends Controller
     public function updateOverride(Request $request, DriverContractOverride $override): JsonResponse
     {
         $assignment = $override->contractAssignment;
-        
+
         $validated = $request->validate([
-            'override_type'           => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers',
-            'fixed_amount'            => 'nullable|numeric|min:0',
-            'fixed_target'            => 'nullable|integer|min:0',
-            'fixed_deficit_rate'      => 'nullable|numeric|min:0',
-            'fixed_bonus_type'        => 'nullable|string|in:lump_sum,per_order',
-            'fixed_surplus_bonus'     => 'nullable|numeric|min:0',
-            'fixed_surplus_rate'      => 'nullable|numeric|min:0',
-            'zone_target_orders'      => 'nullable|integer|min:0',
-            'zone_deficit_rate'       => 'nullable|numeric|min:0',
-            'zone_bonus_type'         => 'nullable|string|in:lump_sum,per_order',
-            'zone_target_bonus'       => 'nullable|numeric|min:0',
-            'zone_surplus_rate'       => 'nullable|numeric|min:0',
-            'zones'                   => 'nullable|array',
-            'tiers'                   => 'nullable|array',
-            'hybrid_fixed'            => 'nullable|numeric|min:0',
-            'hybrid_tiers'            => 'nullable|array',
-            'zones_tiers'             => 'nullable|array',
-            'customization_reason'    => 'sometimes|required|string|max:1000',
-            'effective_from'          => 'sometimes|required|date',
-            'effective_to'            => 'nullable|date|after_or_equal:effective_from',
+            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
+            'fixed_amount' => 'nullable|numeric|min:0',
+            'fixed_target' => 'nullable|integer|min:0',
+            'fixed_deficit_rate' => 'nullable|numeric|min:0',
+            'fixed_bonus_type' => 'nullable|string|in:lump_sum,per_order',
+            'fixed_surplus_bonus' => 'nullable|numeric|min:0',
+            'fixed_surplus_rate' => 'nullable|numeric|min:0',
+            'zone_target_orders' => 'nullable|integer|min:0',
+            'zone_deficit_rate' => 'nullable|numeric|min:0',
+            'zone_bonus_type' => 'nullable|string|in:lump_sum,per_order',
+            'zone_target_bonus' => 'nullable|numeric|min:0',
+            'zone_surplus_rate' => 'nullable|numeric|min:0',
+            'zones' => 'nullable|array',
+            'tiers' => 'nullable|array',
+            'hybrid_fixed' => 'nullable|numeric|min:0',
+            'hybrid_tiers' => 'nullable|array',
+            'zones_tiers' => 'nullable|array',
+            'tiered_zones' => 'nullable|array',
+            'customization_reason' => 'sometimes|required|string|max:1000',
+            'effective_from' => 'sometimes|required|date',
+            'effective_to' => 'nullable|date|after_or_equal:effective_from',
         ]);
 
         $from = Carbon::parse($validated['effective_from'] ?? $override->effective_from);
-        $to = array_key_exists('effective_to', $validated) 
+        $to = array_key_exists('effective_to', $validated)
             ? ($validated['effective_to'] ? Carbon::parse($validated['effective_to']) : null)
             : ($override->effective_to ? Carbon::parse($override->effective_to) : null);
-        
+
         $assignStart = Carbon::parse($assignment->start_date);
         $assignEnd = $assignment->end_date ? Carbon::parse($assignment->end_date) : null;
 
         if ($from->lt($assignStart) || ($assignEnd && $from->gt($assignEnd))) {
             return response()->json([
                 'message' => 'تاريخ بدء التجاوز يجب أن يكون ضمن فترة تعيين العقد للسائق.',
-                'errors' => ['effective_from' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']]
+                'errors' => ['effective_from' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']],
             ], 422);
         }
 
         if ($to && ($to->lt($assignStart) || ($assignEnd && $to->gt($assignEnd)))) {
             return response()->json([
                 'message' => 'تاريخ نهاية التجاوز يجب أن يكون ضمن فترة تعيين العقد للسائق.',
-                'errors' => ['effective_to' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']]
+                'errors' => ['effective_to' => ['تاريخ التجاوز خارج نطاق تواريخ التعيين.']],
             ], 422);
         }
 
@@ -356,10 +363,10 @@ class ContractAssignmentController extends Controller
             ->where(function ($query) use ($from, $to) {
                 $start = $from->toDateString();
                 $end = $to ? $to->toDateString() : '9999-12-31';
-                
+
                 $query->where(function ($q) use ($start, $end) {
                     $q->where('effective_from', '<=', $end)
-                      ->whereRaw('COALESCE(effective_to, "9999-12-31") >= ?', [$start]);
+                        ->whereRaw('COALESCE(effective_to, "9999-12-31") >= ?', [$start]);
                 });
             })
             ->exists();
@@ -367,32 +374,32 @@ class ContractAssignmentController extends Controller
         if ($overlap) {
             return response()->json([
                 'message' => 'يوجد تجاوز آخر مخصص متداخل في نفس التواريخ لهذا السائق.',
-                'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']]
+                'errors' => ['effective_from' => ['يوجد تداخل مع فترة تجاوز أخرى.']],
             ], 422);
         }
 
         $oType = $validated['override_type'] ?? $override->override_type;
-        if (in_array($oType, ['zones', 'zones_tiers'])) {
+        if (in_array($oType, ['zones', 'zones_tiers', 'tiered_zones'])) {
             $driver = $assignment->employee;
             $contract = $assignment->contract;
-            $activeVehicleAssignment = \App\Models\VehicleAssignment::where('employee_id', $driver->id)
+            $activeVehicleAssignment = VehicleAssignment::where('employee_id', $driver->id)
                 ->where('is_active', true)
                 ->first();
-            
+
             $vehicleTypeId = $activeVehicleAssignment?->vehicle?->vehicle_type_id;
             $clientPricing = $contract->client_pricing_rules ?? [];
-            
+
             $clientMethod = null;
             if ($vehicleTypeId !== null && isset($clientPricing[$vehicleTypeId])) {
                 $clientMethod = $clientPricing[$vehicleTypeId]['payment_method'] ?? null;
             } elseif ($contract->vehicle_type_id !== null) {
                 $clientMethod = $contract->client_payment_method;
             }
-            
+
             if ($clientMethod !== 'zones') {
                 return response()->json([
                     'message' => 'لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل لهذه الفئة من المركبات هي الفئات.',
-                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']]
+                    'errors' => ['override_type' => ['طريقة الدفع غير متوافقة مع تسعير العميل لمركبة السائق.']],
                 ], 422);
             }
         }
@@ -401,9 +408,9 @@ class ContractAssignmentController extends Controller
             'fixed_amount', 'fixed_target', 'fixed_deficit_rate', 'fixed_bonus_type',
             'fixed_surplus_bonus', 'fixed_surplus_rate', 'zone_target_orders',
             'zone_deficit_rate', 'zone_bonus_type', 'zone_target_bonus', 'zone_surplus_rate',
-            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers'
+            'zones', 'tiers', 'hybrid_fixed', 'hybrid_tiers', 'zones_tiers', 'tiered_zones',
         ];
-        
+
         // Merge pricing rules
         $existingRules = $override->custom_pricing_rules ?? [];
         $rules = $existingRules;
@@ -431,6 +438,7 @@ class ContractAssignmentController extends Controller
     public function destroyOverride(DriverContractOverride $override): JsonResponse
     {
         $override->delete();
+
         return response()->json(['message' => 'تم حذف التجاوز بنجاح.']);
     }
 }

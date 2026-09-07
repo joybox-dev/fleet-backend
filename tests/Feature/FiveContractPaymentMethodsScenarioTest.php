@@ -109,9 +109,9 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
     }
 
     /**
-     * The five contracts. A zone-based driver method needs a zone-based client, so the two
-     * zone contracts bill their client by zone and the other three do not — which is what makes
-     * the override matrix below meaningful.
+     * The six contracts. A zone-based driver method needs a zone-based client, so the three zone
+     * contracts bill their client by zone and the other three do not — which is what makes the
+     * override matrix below meaningful.
      *
      * @return array<string, array{client: string, driver: string, types: array{int, int}}>
      */
@@ -123,6 +123,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             'hybrid' => ['client' => 'hybrid', 'driver' => 'hybrid', 'types' => [self::TYPE_BIKE, self::TYPE_LARGE]],
             'zones' => ['client' => 'zones', 'driver' => 'zones', 'types' => [self::TYPE_BIKE, self::TYPE_SMALL]],
             'zones_tiers' => ['client' => 'zones', 'driver' => 'zones_tiers', 'types' => [self::TYPE_SMALL, self::TYPE_LARGE]],
+            'tiered_zones' => ['client' => 'zones', 'driver' => 'tiered_zones', 'types' => [self::TYPE_BIKE, self::TYPE_LARGE]],
         ];
     }
 
@@ -189,6 +190,19 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
 
             // The same, except the south zone is deliberately missing from the first type's rules:
             // a zone the drivers actually worked and the client agreement never priced.
+            // Both zones priced on both types, so its revenue is a clean read of the map — the
+            // driver side is where this contract's novelty lives.
+            'tiered_zones' => [
+                (string) $typeA => ['payment_method' => 'zones', 'zones' => [
+                    ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.350],
+                    ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.300],
+                ]],
+                (string) $typeB => ['payment_method' => 'zones', 'zones' => [
+                    ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.500],
+                    ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.450],
+                ]],
+            ],
+
             'zones_tiers' => [
                 (string) $typeA => ['payment_method' => 'zones', 'zones' => [
                     ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.220],
@@ -217,20 +231,26 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             // 900 + 600. Orders are irrelevant to a flat fee; only the unpriced type is reported.
             'fixed' => ['revenue' => 1500.000, 'unpriced' => 50],
 
-            // 3,750 × 0.250 (second band) + 130 × 0.500 (first band) = 937.500 + 65.000.
-            'tiers' => ['revenue' => 1002.500, 'unpriced' => 50],
+            // 4,010 × 0.250 (second band) + 130 × 0.500 (first band) = 1,002.500 + 65.000.
+            'tiers' => ['revenue' => 1067.500, 'unpriced' => 50],
 
             // 750 + 450.
             'hybrid' => ['revenue' => 1200.000, 'unpriced' => 50],
 
-            // (1,885 × 0.300 + 1,825 × 0.200) + (65 × 0.250 + 65 × 0.150)
-            //   = (565.500 + 365.000) + (16.250 + 9.750) = 930.500 + 26.000.
+            // (2,015 × 0.300 + 1,955 × 0.200) + (65 × 0.250 + 65 × 0.150)
+            //   = (604.500 + 391.000) + (16.250 + 9.750) = 995.500 + 26.000.
             // Unpriced: 40 orders carrying no zone, plus 50 on the type with no rule.
-            'zones' => ['revenue' => 956.500, 'unpriced' => 90],
+            'zones' => ['revenue' => 1021.500, 'unpriced' => 90],
 
-            // 1,885 × 0.220 + (65 × 0.400 + 65 × 0.400) = 414.700 + 52.000.
-            // Unpriced: 1,825 in the unpriced south zone, 40 with no zone, 50 on the unpriced type.
-            'zones_tiers' => ['revenue' => 466.700, 'unpriced' => 1915],
+            // 2,015 × 0.220 + (65 × 0.400 + 65 × 0.400) = 443.300 + 52.000.
+            // Unpriced: 1,955 in the unpriced south zone, 40 with no zone, 50 on the unpriced type.
+            'zones_tiers' => ['revenue' => 495.300, 'unpriced' => 2045],
+
+            // (2,015 × 0.350 + 1,955 × 0.300) + (65 × 0.500 + 65 × 0.450)
+            //   = (705.250 + 586.500) + (32.500 + 29.250) = 1,291.750 + 61.750.
+            // Unpriced: the 40 orders carrying no zone, plus 50 on the type with no rule. The
+            // driver's bands never touch this — the client is billed by the zone map alone.
+            'tiered_zones' => ['revenue' => 1353.500, 'unpriced' => 90],
         };
     }
 
@@ -279,6 +299,24 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
                     ['id' => 'Z2', 'name' => 'جنوب', 'tiers' => [
                         ['min' => 1, 'max' => 100, 'price' => round(0.650 * $f, 3)],
                         ['min' => 101, 'max' => null, 'price' => round(0.900 * $f, 3)],
+                    ]],
+                ],
+            ],
+
+            // The mirror image of zones_tiers, and the whole reason it exists: ONE band for the
+            // month, chosen by the total across every zone, and inside it a rate per zone plus a
+            // bonus paid once. The band edges are counts, so they are not scaled with the rates.
+            'tiered_zones' => [
+                'payment_method' => 'tiered_zones',
+                'tiered_zones' => [
+                    ['id' => 'B1', 'min' => 1, 'max' => 200, 'label' => 'منخفض', 'bonus' => 0, 'prices' => [
+                        'Z1' => round(0.300 * $f, 3), 'Z2' => round(0.200 * $f, 3),
+                    ]],
+                    ['id' => 'B2', 'min' => 201, 'max' => 1000, 'label' => 'متوسط', 'bonus' => round(15 * $f, 3), 'prices' => [
+                        'Z1' => round(0.450 * $f, 3), 'Z2' => round(0.350 * $f, 3),
+                    ]],
+                    ['id' => 'B3', 'min' => 1001, 'max' => null, 'label' => 'مرتفع', 'bonus' => round(40 * $f, 3), 'prices' => [
+                        'Z1' => round(0.600 * $f, 3), 'Z2' => round(0.500 * $f, 3),
                     ]],
                 ],
             ],
@@ -855,6 +893,21 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
                 'full26A' => 208.000, 'split13' => 128.700, 'late8A' => 44.000, 'all31A' => 248.000,
                 'ten10A' => 55.000, 'thirteen13A' => 71.500, 'unzoned10A' => 27.000, 'zero' => 0.000,
             ],
+            // One band for the whole month, chosen by the total: 260 and 310 orders reach the
+            // second (0.450/0.350 + 15 bonus), 80/100/130 stay in the first (0.300/0.200, no
+            // bonus). Each vehicle-type stretch is banded on its own total, so the split month
+            // sits in the first band twice — 130 orders on A, then 130 on B at four fifths.
+            //   full26A     130×0.450 + 130×0.350 + 15 = 119.000
+            //   all31A      155×0.450 + 155×0.350 + 15 = 139.000
+            //   split13     (65×0.300 + 65×0.200) + (65×0.240 + 65×0.160) = 32.500 + 26.000
+            //   thirteen13A 65×0.300 + 65×0.200        =  32.500
+            //   ten10A      50×0.300 + 50×0.200        =  25.000
+            //   late8A      40×0.300 + 40×0.200        =  20.000
+            //   unzoned10A  60 north at 0.300, and the 40 with no zone are never priced = 18.000
+            'tiered_zones' => [
+                'full26A' => 119.000, 'split13' => 58.500, 'late8A' => 20.000, 'all31A' => 139.000,
+                'ten10A' => 25.000, 'thirteen13A' => 32.500, 'unzoned10A' => 18.000, 'zero' => 0.000,
+            ],
         ];
     }
 
@@ -937,14 +990,16 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
 
     /**
      * What a driver paid by an override earns for a full 26-day month of 260 orders, worked out by
-     * hand from the override's own terms. All five are exercised on every contract, so each method
-     * is checked against four contracts it does not belong to as well as the one it does.
+     * hand from the override's own terms. All six are exercised on every contract, so each method
+     * is checked against five contracts it does not belong to as well as the one it does.
      *
      *   fixed        240 ÷ 26 = 9.231/day × 26                        = 240.000
      *   tiers        260 orders at a flat 0.550                       = 143.000
      *   hybrid       130 ÷ 26 × 26 = 130.000, plus 260 × 0.350         = 221.000
      *   zones        only the north zone is priced: 130 × 0.420        =  54.600
      *   zones_tiers  the north zone's only band: 130 × 0.470           =  61.100
+     *   tiered_zones one band over the month: 130 × 0.480 + 130 × 0.380
+     *                plus its 12.000 bonus                              = 123.800
      *
      * A refused override leaves the driver on the contract's own pricing for a full month.
      */
@@ -960,6 +1015,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             'hybrid' => 221.000,
             'zones' => 54.600,
             'zones_tiers' => 61.100,
+            'tiered_zones' => 123.800,
         };
     }
 
@@ -983,7 +1039,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             $built = $this->buildContract($key, $spec);
             $sheet = $this->sheet($built['contract']);
 
-            $this->assertCount(20, $sheet['drivers'] ?? [], "contract {$key} should list all twenty drivers");
+            $this->assertCount(21, $sheet['drivers'] ?? [], "contract {$key} should list all twenty-one drivers");
 
             foreach ($this->workingShapes() as $shape) {
                 $row = $this->rowFor($sheet, $built[$shape]);
@@ -1368,7 +1424,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             }
 
             $this->assertSame(
-                3930,
+                4190,
                 (int) $revenue['orders'],
                 "contract {$key}: every order in the month must be accounted for, priced or not"
             );
@@ -1577,7 +1633,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
     /** The other four methods, for a contract whose own method is $own. */
     private function otherMethods(string $own): array
     {
-        return array_values(array_diff(['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers'], [$own]));
+        return array_values(array_diff(['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers', 'tiered_zones'], [$own]));
     }
 
     private function overridePayload(string $method): array
@@ -1597,14 +1653,18 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             'zones_tiers' => ['zones_tiers' => [
                 ['id' => 'Z1', 'name' => 'شمال', 'tiers' => [['min' => 1, 'max' => null, 'price' => 0.470]]],
             ]],
+            'tiered_zones' => ['tiered_zones' => [
+                ['id' => 'B1', 'min' => 1, 'max' => null, 'label' => 'اتفاق خاص', 'bonus' => 12,
+                    'prices' => ['Z1' => 0.480, 'Z2' => 0.380]],
+            ]],
         };
     }
 
     /**
      * The point of the override drivers: every contract pays somebody by every method, so each of
-     * the five is exercised against four contracts it does not belong to as well as its own.
+     * the six is exercised against five contracts it does not belong to as well as its own.
      */
-    public function test_every_contract_pays_a_driver_by_each_of_the_other_four_methods(): void
+    public function test_every_contract_pays_a_driver_by_each_of_the_other_methods(): void
     {
         $paid = [];
 
@@ -1631,9 +1691,9 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             }
         }
 
-        // Four of the five methods appear on each of the five contracts.
-        foreach (['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers'] as $method) {
-            $this->assertSame(4, $paid[$method] ?? 0, "«{$method}» should be overridden onto four contracts");
+        // Five of the six methods appear on each of the six contracts.
+        foreach (['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers', 'tiered_zones'] as $method) {
+            $this->assertSame(5, $paid[$method] ?? 0, "«{$method}» should be overridden onto five contracts");
         }
     }
 
@@ -1647,7 +1707,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             $clientIsZoned = $spec['client'] === 'zones';
 
             foreach ($built['overrideDrivers'] as $method => $entry) {
-                $zoneBased = in_array($method, ['zones', 'zones_tiers'], true);
+                $zoneBased = in_array($method, ['zones', 'zones_tiers', 'tiered_zones'], true);
 
                 if ($zoneBased && ! $clientIsZoned) {
                     $entry['response']->assertStatus(422);
@@ -1679,16 +1739,16 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             }
         }
 
-        // Three contracts bill their client by something other than zone; each refuses two of its
-        // four override methods. The remaining fourteen are legitimate.
-        $this->assertSame(6, $refused, 'six zone overrides should have been refused');
-        $this->assertSame(14, $allowed, 'every other override should have been accepted');
+        // Three contracts bill their client by something other than zone; each refuses all three
+        // of its zone-based override methods. The remaining twenty-one are legitimate.
+        $this->assertSame(9, $refused, 'nine zone overrides should have been refused');
+        $this->assertSame(21, $allowed, 'every other override should have been accepted');
     }
 
     public function test_a_zone_driver_method_is_refused_on_the_contract_itself(): void
     {
         foreach (['fixed', 'tiers', 'hybrid'] as $clientMethod) {
-            foreach (['zones', 'zones_tiers'] as $driverMethod) {
+            foreach (['zones', 'zones_tiers', 'tiered_zones'] as $driverMethod) {
                 $this->postJson('/api/contracts', [
                     'client_id' => $this->client->id,
                     'contract_number' => "CON-BAD-{$clientMethod}-{$driverMethod}",
@@ -1783,13 +1843,13 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
         $driver = $built['fixed']['steady'];
         $day = '2026-05-04';
 
-        // Put him on all five contracts, then log the SAME day on each with its own order count.
+        // Put him on all six contracts, then log the SAME day on each with its own order count.
         $expected = [];
         $i = 0;
         foreach ($this->contractMatrix() as $key => $spec) {
             $contract = $built[$key]['contract'];
-            // fixed, hybrid and zones all run the bike, so three of these five share ONE vehicle
-            // on the shared day — which the old (employee, vehicle, date) key forbade outright.
+            // fixed, hybrid, zones and tiered_zones all run the bike, so four of these six share
+            // ONE vehicle on the shared day — which the old (employee, vehicle, date) key forbade.
             $vehicleId = $this->vehicles[$spec['types'][0]]->id;
             $orders = 3 + $i;
             $expected[$contract->id] = $orders;
@@ -1819,9 +1879,9 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             ->get();
 
         $this->assertCount(
-            5,
+            6,
             $rows,
-            'a day entered on five contracts must leave five rows, not one that survived the others'
+            'a day entered on six contracts must leave six rows, not one that survived the others'
         );
 
         foreach ($expected as $contractId => $orders) {
@@ -1848,7 +1908,7 @@ class FiveContractPaymentMethodsScenarioTest extends TestCase
             ->whereDate('log_date', $day)
             ->get();
 
-        $this->assertCount(5, $after, 're-entering one contract deleted the others');
+        $this->assertCount(6, $after, 're-entering one contract deleted the others');
         $this->assertSame(99, (int) $after->firstWhere('contract_id', $target->id)->orders_count);
         foreach ($expected as $contractId => $orders) {
             if ($contractId === $target->id) {

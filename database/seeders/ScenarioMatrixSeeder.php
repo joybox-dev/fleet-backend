@@ -163,6 +163,7 @@ class ScenarioMatrixSeeder extends Seeder
             'hybrid' => ['client' => 'hybrid', 'driver' => 'hybrid', 'types' => [self::TYPE_BIKE, self::TYPE_LARGE]],
             'zones' => ['client' => 'zones', 'driver' => 'zones', 'types' => [self::TYPE_BIKE, self::TYPE_SMALL]],
             'zones_tiers' => ['client' => 'zones', 'driver' => 'zones_tiers', 'types' => [self::TYPE_SMALL, self::TYPE_LARGE]],
+            'tiered_zones' => ['client' => 'zones', 'driver' => 'tiered_zones', 'types' => [self::TYPE_BIKE, self::TYPE_LARGE]],
         ];
     }
 
@@ -189,6 +190,7 @@ class ScenarioMatrixSeeder extends Seeder
             'hybrid' => [4800, 4100],
             'zones' => [4100, 3500],
             'zones_tiers' => [4400, 3750],
+            'tiered_zones' => [4600, 3900],
         };
 
         return [
@@ -252,6 +254,19 @@ class ScenarioMatrixSeeder extends Seeder
                     ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.150],
                 ]],
             ],
+            // Both zones priced on both types: this contract's novelty is on the driver side, so
+            // its billing is a plain read of the zone map.
+            'tiered_zones' => [
+                (string) $typeA => ['payment_method' => 'zones', 'zones' => [
+                    ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.350],
+                    ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.300],
+                ]],
+                (string) $typeB => ['payment_method' => 'zones', 'zones' => [
+                    ['id' => 'Z1', 'name' => 'شمال', 'price' => 0.500],
+                    ['id' => 'Z2', 'name' => 'جنوب', 'price' => 0.450],
+                ]],
+            ],
+
             // The south zone is deliberately left unpriced here: a zone the drivers worked and the
             // client agreement never covered.
             'zones_tiers' => [
@@ -292,6 +307,20 @@ class ScenarioMatrixSeeder extends Seeder
                 ['id' => 'Z2', 'name' => 'جنوب', 'tiers' => [
                     ['min' => 1, 'max' => 100, 'price' => round(0.650 * $f, 3)],
                     ['min' => 101, 'max' => null, 'price' => round(0.900 * $f, 3)],
+                ]],
+            ]],
+            // The mirror of zones_tiers: ONE band for the month, chosen by the total across every
+            // zone, and inside it a rate per zone plus a bonus paid once. Band edges are counts, so
+            // they are not scaled with the rates.
+            'tiered_zones' => ['payment_method' => 'tiered_zones', 'tiered_zones' => [
+                ['id' => 'B1', 'min' => 1, 'max' => 200, 'label' => 'منخفض', 'bonus' => 0, 'prices' => [
+                    'Z1' => round(0.300 * $f, 3), 'Z2' => round(0.200 * $f, 3),
+                ]],
+                ['id' => 'B2', 'min' => 201, 'max' => 1000, 'label' => 'متوسط', 'bonus' => round(15 * $f, 3), 'prices' => [
+                    'Z1' => round(0.450 * $f, 3), 'Z2' => round(0.350 * $f, 3),
+                ]],
+                ['id' => 'B3', 'min' => 1001, 'max' => null, 'label' => 'مرتفع', 'bonus' => round(40 * $f, 3), 'prices' => [
+                    'Z1' => round(0.600 * $f, 3), 'Z2' => round(0.500 * $f, 3),
                 ]],
             ]],
         };
@@ -732,13 +761,13 @@ class ScenarioMatrixSeeder extends Seeder
             $this->attachEveryDeduction($driver, $contract, $vA);
         }
 
-        // 17-20. A driver paid by each of the OTHER four methods, through an override — which is
-        // what makes every contract exercise all five. They work a full month like anybody else.
+        // 17-21. A driver paid by each of the OTHER five methods, through an override — which is
+        // what makes every contract exercise all six. They work a full month like anybody else.
         // A zone-based override on a client not billed by zone is refused by the screen, so those
         // drivers are seeded with no override and stay on the contract's own pricing.
         $clientIsZoned = $spec['client'] === 'zones';
 
-        foreach (array_diff(['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers'], [$spec['driver']]) as $method) {
+        foreach (array_diff(['fixed', 'tiers', 'hybrid', 'zones', 'zones_tiers', 'tiered_zones'], [$spec['driver']]) as $method) {
             [$driver, $assignment] = $hire('طريقة '.$this->methodLabel($method));
             $this->workDays($driver, $contract, $vA, range(1, 26));
             VehicleAssignment::create([
@@ -747,7 +776,7 @@ class ScenarioMatrixSeeder extends Seeder
                 'assigned_date' => '2026-05-01', 'is_active' => true,
             ]);
 
-            $zoneBased = in_array($method, ['zones', 'zones_tiers'], true);
+            $zoneBased = in_array($method, ['zones', 'zones_tiers', 'tiered_zones'], true);
             if (! $zoneBased || $clientIsZoned) {
                 DriverContractOverride::create(array_merge([
                     'contract_assignment_id' => $assignment->id,
@@ -781,6 +810,10 @@ class ScenarioMatrixSeeder extends Seeder
             'zones_tiers' => ['custom_pricing_rules' => ['zones_tiers' => [
                 ['id' => 'Z1', 'name' => 'شمال', 'tiers' => [['min' => 1, 'max' => null, 'price' => 0.470]]],
             ]]],
+            'tiered_zones' => ['custom_pricing_rules' => ['tiered_zones' => [
+                ['id' => 'B1', 'min' => 1, 'max' => null, 'label' => 'اتفاق خاص', 'bonus' => 12,
+                    'prices' => ['Z1' => 0.480, 'Z2' => 0.380]],
+            ]]],
         };
     }
 
@@ -792,6 +825,7 @@ class ScenarioMatrixSeeder extends Seeder
             'hybrid' => 'هجين',
             'zones' => 'فئات',
             'zones_tiers' => 'شرائح فئات',
+            'tiered_zones' => 'فئات بشريحة الشهر',
             default => $method,
         };
     }

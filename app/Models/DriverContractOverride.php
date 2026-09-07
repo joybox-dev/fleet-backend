@@ -55,6 +55,7 @@ class DriverContractOverride extends Model
         'hybrid_fixed',
         'hybrid_tiers',
         'zones_tiers',
+        'tiered_zones',
     ];
 
     public function getFixedAmountAttribute()
@@ -135,6 +136,11 @@ class DriverContractOverride extends Model
     public function getZonesTiersAttribute()
     {
         return $this->custom_pricing_rules['zones_tiers'] ?? [];
+    }
+
+    public function getTieredZonesAttribute()
+    {
+        return $this->custom_pricing_rules['tiered_zones'] ?? [];
     }
 
     public function contractAssignment(): BelongsTo
