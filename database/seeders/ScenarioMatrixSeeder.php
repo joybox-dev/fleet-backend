@@ -26,7 +26,7 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The same scenario FiveContractPaymentMethodsScenarioTest proves in PHP, laid into a real
+ * The same scenario PaymentMethodMatrixScenarioTest proves in PHP, laid into a real
  * database so the screens can be opened against it.
  *
  * The point is the comparison: the payroll engine is tested, but the contract dashboard computes

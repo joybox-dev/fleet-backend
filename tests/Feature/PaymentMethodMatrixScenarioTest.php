@@ -24,17 +24,18 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * One contract per driver payment method, each pricing two vehicle types, each carrying the same
- * three shapes of driver — a full month on one vehicle type, a full month split across two, and a
- * driver assigned to only part of the month — plus an override attempt for every other payment
- * method.
+ * One contract per driver payment method — six of them today, and the file is named for the
+ * matrix rather than a count so the next one does not make its name a lie. Each prices two vehicle
+ * types and carries the same three shapes of driver — a full month on one vehicle type, a full
+ * month split across two, and a driver assigned to only part of the month — plus an override
+ * attempt for every other payment method.
  *
  * The matrix exists to pin two things at once: that a month is priced whatever the method and
  * however the vehicle changed under the driver, and that a zone-based override is refused on a
  * contract whose client is not billed by zone. Zones are the client's own map; a driver cannot be
  * paid against a map the contract never drew.
  */
-class FiveContractPaymentMethodsScenarioTest extends TestCase
+class PaymentMethodMatrixScenarioTest extends TestCase
 {
     use RefreshDatabase;
 
