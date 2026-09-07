@@ -46,6 +46,17 @@ class SalaryAdvanceController extends Controller
             // Cash leaves the company here. The only record that the driver received it used to be
             // the row created by whoever handed it over; now the signed voucher goes with it.
             'voucher_path' => 'required|string|max:255',
+        ], [
+            // The default read «The voucher path field is required» — an English sentence naming a
+            // database column, on an Arabic screen, and it was also what came back when the upload
+            // itself had failed. It has to say what to do about it.
+            'voucher_path.required' => 'يجب إرفاق سند الصرف الموقّع قبل حفظ السلفة — وهو إثبات استلام السائق للمبلغ نقداً.',
+            'employee_id.required' => 'يجب اختيار الموظف.',
+            'amount.required' => 'يجب إدخال مبلغ السلفة.',
+            'amount.min' => 'مبلغ السلفة يجب أن يكون دينـاراً واحداً على الأقل.',
+            'monthly_installment.required' => 'يجب إدخال القسط الشهري.',
+            'monthly_installment.min' => 'القسط الشهري يجب أن يكون أكبر من صفر.',
+            'advance_date.required' => 'يجب تحديد تاريخ السلفة.',
         ]);
 
         // Check for existing active advance for same employee
