@@ -59,7 +59,8 @@ class ContractPayrollService
         ContractAssignment $assignment,
         ?DriverContractOverride $override,
         Collection $empLogs,
-        ?int $vtId = null
+        ?int $vtId = null,
+        ?int $dayBudget = null
     ): array {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
             ? $contract->driver_pricing_rules[$vtId]
@@ -124,10 +125,10 @@ class ContractPayrollService
         }
 
         return match ($method) {
-            'fixed', 'target' => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'fixed', 'target' => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId, $dayBudget),
             'per_order' => self::calculatePerOrderDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'hybrid' => self::calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
-            'zones' => self::calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'hybrid' => self::calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId, $dayBudget),
+            'zones' => self::calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId, $dayBudget),
             'zones_tiers' => self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             'tiered_zones' => self::calculateTieredZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             'tiers' => self::calculateTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
@@ -145,7 +146,8 @@ class ContractPayrollService
         ContractAssignment $assignment,
         ?DriverContractOverride $override,
         Collection $empLogs,
-        ?int $vtId = null
+        ?int $vtId = null,
+        ?int $dayBudget = null
     ): array {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
             ? $contract->driver_pricing_rules[$vtId]
@@ -181,8 +183,13 @@ class ContractPayrollService
         // The divisor is the contract's working days but the multiplier was raw attendance, so a
         // 31-day month against a 28-day contract paid 110.7% of the configured salary and demanded
         // 110.7% of the target. A month is capped at the days the contract actually pays for.
+        // The cap belongs to the MONTH, not to a stretch of it. A month split across two vehicle
+        // types is priced one stretch at a time, and each applying the contract's full cap to
+        // itself paid a 31-day month over two vehicles for 31 days on a contract that pays 28.
+        // The caller hands each stretch what is left of the month's allowance.
         $paidDays = $stats['paid_days'];
-        $payableDays = min($paidDays, $contractWorkingDays);
+        $cap = $dayBudget !== null ? min($dayBudget, $contractWorkingDays) : $contractWorkingDays;
+        $payableDays = max(0, min($paidDays, $cap));
         $earnedBaseSalary = round($payableDays * $dailySalaryRate, 3);
         $requiredTarget = (int) round($payableDays * $dailyTargetRate);
 
@@ -312,7 +319,8 @@ class ContractPayrollService
         ContractAssignment $assignment,
         ?DriverContractOverride $override,
         Collection $empLogs,
-        ?int $vtId = null
+        ?int $vtId = null,
+        ?int $dayBudget = null
     ): array {
         $vtPricing = is_array($contract->driver_pricing_rules) && $vtId && isset($contract->driver_pricing_rules[$vtId])
             ? $contract->driver_pricing_rules[$vtId]
@@ -337,7 +345,11 @@ class ContractPayrollService
         $contractWorkingDays = (int) $contract->default_required_work_days;
 
         $dailySalaryRate = $baseSalaryConfig / $contractWorkingDays;
-        $paidDays = min($stats['paid_days'], $contractWorkingDays);
+        // Capped against what is left of the month — see calculateFixedDriverPayroll.
+        $paidDays = max(0, min(
+            $stats['paid_days'],
+            $dayBudget !== null ? min($dayBudget, $contractWorkingDays) : $contractWorkingDays
+        ));
         $earnedBaseSalary = round($paidDays * $dailySalaryRate, 3);
 
         $ordersCount = $stats['total_orders'];
@@ -404,7 +416,8 @@ class ContractPayrollService
         ContractAssignment $assignment,
         ?DriverContractOverride $override,
         Collection $empLogs,
-        ?int $vtId = null
+        ?int $vtId = null,
+        ?int $dayBudget = null
     ): array {
         // The target/deficit/surplus settings live on the rule itself, not on the zone list, so
         // capture them before $pricingRules is narrowed down to the zones array below.
@@ -537,7 +550,11 @@ class ContractPayrollService
         $contractWorkingDays = (int) $contract->default_required_work_days;
         // Capped the same way as the fixed strategy: a driver cannot be judged against more than
         // the contract's own working days.
-        $paidDays = min(self::evaluateDriverAttendance($empLogs)['paid_days'], $contractWorkingDays);
+        // Capped against what is left of the month — see calculateFixedDriverPayroll.
+        $paidDays = max(0, min(
+            self::evaluateDriverAttendance($empLogs)['paid_days'],
+            $dayBudget !== null ? min($dayBudget, $contractWorkingDays) : $contractWorkingDays
+        ));
         $dailyZoneTargetRate = $monthlyZoneTarget > 0 ? ($monthlyZoneTarget / $contractWorkingDays) : 0;
         $zoneTarget = (int) round($paidDays * $dailyZoneTargetRate);
 

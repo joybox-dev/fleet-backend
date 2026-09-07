@@ -1119,6 +1119,12 @@ class PayrollController extends Controller
         $multi = count($segments) > 1;
         $unresolved = false;
 
+        // The contract's working days cap a MONTH, and this splits one into stretches. Left to
+        // itself each stretch applied the whole cap, so a month over two vehicle types could be
+        // paid for more days than the contract pays for at all. The allowance is spent in date
+        // order and what remains is handed to the next stretch.
+        $dayBudget = (int) $contract->default_required_work_days;
+
         foreach ($segments as $segment) {
             // Each stretch is priced by the rule for the vehicle actually driven in it. Only the
             // caller that never split by type leaves vt_id unset, and it falls back as before.
@@ -1130,8 +1136,13 @@ class PayrollController extends Controller
                 $assignment,
                 $segment['override'],
                 $segment['logs'],
-                $segVtId
+                $segVtId,
+                $multi ? max(0, $dayBudget) : null
             );
+
+            if ($multi) {
+                $dayBudget -= ContractPayrollService::evaluateDriverAttendance($segment['logs'])['paid_days'];
+            }
 
             foreach ($numeric as $field) {
                 $totals[$field] += (float) ($result[$field] ?? 0);
