@@ -10,6 +10,7 @@ use App\Models\Employee;
 use App\Models\MaintenanceRecord;
 use App\Models\SupervisorCostAllocation;
 use App\Models\Vehicle;
+use App\Models\VehicleAssignment;
 use App\Models\VehicleExpense;
 use App\Models\Violation;
 use App\Services\ContractRevenueService;
@@ -54,6 +55,25 @@ class ContractDashboardController extends Controller
                     ->orWhere('end_date', '>=', $startDateStr);
             })
             ->get();
+
+        // The vehicle type each driver held DURING THIS MONTH, from the vehicle assignment that
+        // covered it — not from whatever is assigned today. A driver with no logged day yet read
+        // «غير محدد» on the grid although a vehicle had been assigned to him all month, and the
+        // month's pricing rule could not be looked up for him either. One of the three drivers this
+        // was reported for had his assignment closed since, which is why «active now» is the wrong
+        // question and the month's own dates are the right one.
+        $vehicleTypeByEmployee = VehicleAssignment::withoutGlobalScopes()
+            ->whereIn('employee_id', $activeAssignments->pluck('employee_id')->unique())
+            ->whereDate('assigned_date', '<=', $endDateStr)
+            ->where(function ($q) use ($startDateStr) {
+                $q->whereNull('unassigned_date')
+                    ->orWhereDate('unassigned_date', '>=', $startDateStr);
+            })
+            ->with('vehicle:id,vehicle_type_id')
+            ->orderBy('assigned_date')
+            ->get()
+            ->groupBy('employee_id')
+            ->map(fn ($rows) => $rows->pluck('vehicle.vehicle_type_id')->filter()->unique()->values()->all());
 
         $activeDriversCount = $activeAssignments->unique('employee_id')->count();
         $requiredDriversCount = 0;
@@ -325,6 +345,8 @@ class ContractDashboardController extends Controller
                 'default_absence_divisor' => $contract->default_absence_divisor,
             ],
             'assignments' => $activeAssignments,
+            // employee_id => [vehicle type ids held during this month]
+            'vehicle_types_by_employee' => $vehicleTypeByEmployee,
             'daily_logs' => $dailyLogs,
             'timeframe' => [
                 'year' => $year,
