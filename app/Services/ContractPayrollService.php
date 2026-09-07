@@ -129,6 +129,7 @@ class ContractPayrollService
             'hybrid' => self::calculateHybridDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             'zones' => self::calculateZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             'zones_tiers' => self::calculateZonesTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
+            'tiered_zones' => self::calculateTieredZonesDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             'tiers' => self::calculateTiersDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
             default => self::calculateFixedDriverPayroll($employee, $contract, $assignment, $override, $empLogs, $vtId),
         };
@@ -725,6 +726,254 @@ class ContractPayrollService
             'gross_contract_earnings' => round($gross, 3),
             'calculation_details' => $details,
         ];
+    }
+
+    /** The placeholder a day carries when its orders were never attributed to a zone. */
+    private const UNZONED = 'افتراضي';
+
+    /**
+     * Monthly Tier × Zone Price Strategy — «تسعيرة الفئات حسب شريحة الشهر».
+     *
+     * Easy to confuse with zones_tiers, and the difference is the whole point. There, every zone
+     * carries its own ladder and each is placed on it by ITS OWN order count. Here the month's
+     * TOTAL orders — every zone added together — pick ONE band for the whole month, and that band
+     * holds a price for each zone plus a single bonus paid once.
+     *
+     * That is how عقد الدوائية is written: «إجمالي الطلبات بالشهر يحدد الشريحة», after which a
+     * driver in زون 4 on the «جيد» band earns 900 فلس an order and the month carries a 20 د.ك
+     * bonus. Read the same table the other way — each zone banded on its own count — and a
+     * 400-order month spread evenly over four zones puts every zone on the lowest band: 180.000
+     * د.ك where the contract says 270.000 plus the bonus.
+     *
+     * Rules are stored tier-major, the way the client draws the table — a row per band, a price
+     * per zone across it:
+     *   [{ id, min, max, label, bonus, prices: { <zoneId>: <rate>, ... } }, ...]
+     */
+    public static function calculateTieredZonesDriverPayroll(
+        Employee $employee,
+        Contract $contract,
+        ContractAssignment $assignment,
+        ?DriverContractOverride $override,
+        Collection $empLogs,
+        ?int $vtId = null
+    ): array {
+        $tiers = self::resolveTieredZonesRules($contract, $override, $vtId);
+        [$zoneOrders, $totalOrders] = self::splitOrdersByZone($empLogs);
+        $zoneNames = self::zoneNamesFor($contract, $vtId);
+
+        // The band is chosen once, by the month as a whole.
+        $tier = null;
+        foreach ($tiers as $candidate) {
+            $min = (int) ($candidate['min'] ?? 1);
+            $max = isset($candidate['max']) && $candidate['max'] !== null && $candidate['max'] !== ''
+                ? (int) $candidate['max']
+                : PHP_INT_MAX;
+            if ($totalOrders >= $min && $totalOrders <= $max) {
+                $tier = $candidate;
+                break;
+            }
+        }
+
+        $details = [];
+        $gross = 0.0;
+
+        if ($tier === null) {
+            // No band covers this month's volume. Every order is unpriced, and the sheet says so
+            // rather than quietly paying zero.
+            foreach ($zoneOrders as $zoneKey => $count) {
+                $details[] = self::tieredZoneLine(
+                    $zoneNames[(string) $zoneKey] ?? (string) $zoneKey,
+                    $count,
+                    0.0,
+                    'لا تنطبق شريحة على إجمالي طلبات الشهر',
+                    true
+                );
+            }
+
+            return self::tieredZonesResult($totalOrders, 0.0, $details);
+        }
+
+        $min = (int) ($tier['min'] ?? 1);
+        $max = isset($tier['max']) && $tier['max'] !== null && $tier['max'] !== '' ? (int) $tier['max'] : null;
+        $band = $max === null ? "{$min} فأكثر" : "{$min}-{$max}";
+        $named = trim((string) ($tier['label'] ?? ''));
+        $tierLabel = $named !== ''
+            ? "شريحة {$named} ({$band} طلب بالشهر)"
+            : "الشريحة ({$band} طلب بالشهر)";
+        $prices = is_array($tier['prices'] ?? null) ? $tier['prices'] : [];
+
+        foreach ($zoneOrders as $zoneKey => $count) {
+            $rate = (float) ($prices[$zoneKey] ?? $prices[(string) $zoneKey] ?? 0.0);
+            $gross += round($count * $rate, 3);
+            $details[] = self::tieredZoneLine(
+                $zoneNames[(string) $zoneKey] ?? (string) $zoneKey,
+                $count,
+                $rate,
+                $tierLabel,
+                $rate <= 0.0 && $count > 0
+            );
+        }
+
+        // Paid once for the month, not once per zone.
+        $bonus = round((float) ($tier['bonus'] ?? 0), 3);
+        if ($bonus > 0) {
+            $gross += $bonus;
+            $details[] = [
+                'label' => "بونص {$tierLabel}",
+                'amount' => $bonus,
+                'formula' => "إجمالي {$totalOrders} طلب بالشهر ← {$tierLabel} = {$bonus} د.ك",
+            ];
+        }
+
+        return self::tieredZonesResult($totalOrders, $gross, $details);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function tieredZoneLine(string $zoneName, int $count, float $rate, string $tierLabel, bool $isUnpriced): array
+    {
+        $amount = round($count * $rate, 3);
+
+        return [
+            'label' => $isUnpriced
+                ? ($zoneName === self::UNZONED
+                    ? 'طلبات بلا فئة محددة — لا ينطبق عليها سعر'
+                    : "فئة ({$zoneName}) — لا يوجد سعر لها في هذه الشريحة")
+                : "فئة ({$zoneName}) - {$tierLabel}",
+            'orders' => $count,
+            'rate' => $rate,
+            'amount' => $amount,
+            'is_unpriced' => $isUnpriced,
+            'formula' => "{$count} طلب × {$rate} د.ك = {$amount} د.ك",
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $details
+     * @return array<string, mixed>
+     */
+    private static function tieredZonesResult(int $totalOrders, float $gross, array $details): array
+    {
+        return [
+            'base_salary' => 0.0,
+            'orders_count' => $totalOrders,
+            'orders_bonus' => round($gross, 3),
+            'deficit_deduction' => 0.0,
+            'surplus_bonus' => 0.0,
+            'absence_deduction' => 0.0,
+            'gross_contract_earnings' => round($gross, 3),
+            'calculation_details' => $details,
+        ];
+    }
+
+    /**
+     * The month's orders gathered per zone, plus the total. Orders a day recorded without naming a
+     * zone are kept under their own key rather than dropped, so the sheet can report them.
+     *
+     * @return array{0: array<string, int>, 1: int}
+     */
+    private static function splitOrdersByZone(Collection $empLogs): array
+    {
+        $zoneOrders = [];
+        $totalOrders = 0;
+
+        foreach ($empLogs as $log) {
+            $orders = (int) $log->orders_count;
+            if ($orders <= 0) {
+                continue;
+            }
+            $totalOrders += $orders;
+
+            $notes = $log->notes ? json_decode($log->notes, true) : null;
+            $map = (is_array($notes) && is_array($notes['zone_orders'] ?? null)) ? $notes['zone_orders'] : [];
+
+            if ($map !== []) {
+                foreach ($map as $zoneKey => $count) {
+                    $count = (int) $count;
+                    if ($count > 0) {
+                        $zoneOrders[$zoneKey] = ($zoneOrders[$zoneKey] ?? 0) + $count;
+                    }
+                }
+            } else {
+                $key = $log->zone ?: self::UNZONED;
+                $zoneOrders[$key] = ($zoneOrders[$key] ?? 0) + $orders;
+            }
+        }
+
+        $attributed = array_sum($zoneOrders);
+        if ($totalOrders > $attributed) {
+            $zoneOrders[self::UNZONED] = ($zoneOrders[self::UNZONED] ?? 0) + ($totalOrders - $attributed);
+        }
+
+        return [$zoneOrders, $totalOrders];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private static function resolveTieredZonesRules(Contract $contract, ?DriverContractOverride $override, ?int $vtId): array
+    {
+        if ($override) {
+            $custom = is_string($override->custom_pricing_rules)
+                ? json_decode($override->custom_pricing_rules, true)
+                : $override->custom_pricing_rules;
+            if (is_array($custom) && is_array($custom['tiered_zones'] ?? null) && $custom['tiered_zones'] !== []) {
+                return array_values($custom['tiered_zones']);
+            }
+        }
+
+        $rules = is_string($contract->driver_pricing_rules)
+            ? json_decode($contract->driver_pricing_rules, true)
+            : $contract->driver_pricing_rules;
+
+        if (! is_array($rules)) {
+            return [];
+        }
+
+        if ($vtId && is_array($rules[$vtId]['tiered_zones'] ?? null)) {
+            return array_values($rules[$vtId]['tiered_zones']);
+        }
+
+        $firstKey = array_key_first($rules);
+        if ($firstKey !== null && is_array($rules[$firstKey]['tiered_zones'] ?? null)) {
+            return array_values($rules[$firstKey]['tiered_zones']);
+        }
+
+        return [];
+    }
+
+    /**
+     * Zone id to display name. Zones are defined on the client side of the contract, so without
+     * this a sheet reads «فئة (1786365892901)».
+     *
+     * @return array<string, string>
+     */
+    private static function zoneNamesFor(Contract $contract, ?int $vtId): array
+    {
+        $names = [];
+
+        foreach (['client_pricing_rules', 'driver_pricing_rules'] as $side) {
+            $rules = is_string($contract->{$side}) ? json_decode($contract->{$side}, true) : $contract->{$side};
+            if (! is_array($rules)) {
+                continue;
+            }
+            $candidates = ($vtId && isset($rules[$vtId])) ? [$rules[$vtId]] : array_values($rules);
+            foreach ($candidates as $rule) {
+                if (! is_array($rule)) {
+                    continue;
+                }
+                foreach (['zones', 'zones_tiers'] as $key) {
+                    foreach ((array) ($rule[$key] ?? []) as $zone) {
+                        if (is_array($zone) && isset($zone['id'], $zone['name'])) {
+                            $names[(string) $zone['id']] = (string) $zone['name'];
+                        }
+                    }
+                }
+            }
+        }
+
+        return $names;
     }
 
     /**

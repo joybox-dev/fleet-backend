@@ -141,10 +141,10 @@ class ContractController extends Controller
             'driver_payment_method' => [
                 'required',
                 'string',
-                'in:fixed,zones,tiers,hybrid,zones_tiers',
+                'in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
                 function ($attribute, $value, $fail) use ($request) {
                     $clientMethod = $request->input('client_payment_method');
-                    if (in_array($value, ['zones', 'zones_tiers']) && $clientMethod !== 'zones') {
+                    if (in_array($value, ['zones', 'zones_tiers', 'tiered_zones']) && $clientMethod !== 'zones') {
                         $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
                     }
                 },
@@ -267,10 +267,10 @@ class ContractController extends Controller
             'driver_payment_method' => [
                 Rule::requiredIf(fn () => blank($contract->driver_payment_method)),
                 'string',
-                'in:fixed,zones,tiers,hybrid,zones_tiers',
+                'in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
                 function ($attribute, $value, $fail) use ($request, $contract) {
                     $clientMethod = $request->input('client_payment_method') ?? $contract->client_payment_method;
-                    if (in_array($value, ['zones', 'zones_tiers']) && $clientMethod !== 'zones') {
+                    if (in_array($value, ['zones', 'zones_tiers', 'tiered_zones']) && $clientMethod !== 'zones') {
                         $fail('لا يمكن تعيين طريقة دفع السائق بناءً على الفئات (Zones) إذا لم تكن طريقة دفع العميل هي الفئات.');
                     }
                 },
@@ -399,6 +399,10 @@ class ContractController extends Controller
             return $this->bandProblems($rule['tiers'] ?? null, $where);
         }
 
+        if ($method === 'tiered_zones') {
+            return $this->tieredZoneProblems($rule['tiered_zones'] ?? null, $where);
+        }
+
         if ($method === 'zones' || $method === 'zones_tiers') {
             $zones = $rule[$method === 'zones' ? 'zones' : 'zones_tiers'] ?? null;
             if (! is_array($zones) || $zones === []) {
@@ -432,6 +436,37 @@ class ContractController extends Controller
      * @param  mixed  $bands
      * @return array<int, string>
      */
+    /**
+     * A tiered_zones table is a band per row with a price per zone across it. A band priced
+     * nowhere pays that whole month nothing, which is the failure this stops before it is saved.
+     *
+     * @return array<int, string>
+     */
+    private function tieredZoneProblems($tiers, string $where): array
+    {
+        if (! is_array($tiers) || $tiers === []) {
+            return ["{$where}: لم تُحدَّد أي شريحة."];
+        }
+
+        foreach ($tiers as $tier) {
+            if (! is_array($tier)) {
+                return ["{$where}: شريحة غير صالحة."];
+            }
+            if (! is_numeric($tier['min'] ?? null)) {
+                return ["{$where}: شريحة بلا بداية."];
+            }
+            $priced = array_filter(
+                (array) ($tier['prices'] ?? []),
+                fn ($price) => is_numeric($price) && (float) $price > 0
+            );
+            if ($priced === []) {
+                return ["{$where}: شريحة بلا سعر لأي فئة."];
+            }
+        }
+
+        return [];
+    }
+
     private function bandProblems($bands, string $where): array
     {
         if (! is_array($bands) || $bands === []) {
@@ -454,7 +489,7 @@ class ContractController extends Controller
         }
 
         $oldRules = is_array($contract->driver_pricing_rules) ? $contract->driver_pricing_rules : [];
-        $zoneBased = ['zones', 'zone', 'zones_tiers'];
+        $zoneBased = ['zones', 'zone', 'zones_tiers', 'tiered_zones'];
         $impact = [];
 
         foreach ($newRules as $vtId => $rule) {

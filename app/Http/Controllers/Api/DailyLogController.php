@@ -77,7 +77,7 @@ class DailyLogController extends Controller
                 $pricing = $contract->driver_pricing_rules ?? [];
                 foreach ($pricing as $rule) {
                     $method = $rule['payment_method'] ?? 'fixed';
-                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers') {
+                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers' || $method === 'tiered_zones') {
                         $isZones = true;
                         break;
                     }
@@ -663,7 +663,7 @@ class DailyLogController extends Controller
                 $pricing = $contract->driver_pricing_rules ?? [];
                 foreach ($pricing as $rule) {
                     $method = $rule['payment_method'] ?? 'fixed';
-                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers') {
+                    if ($method === 'zone' || $method === 'zones' || $method === 'zones_tiers' || $method === 'tiered_zones') {
                         $isZones = true;
                         break;
                     }
