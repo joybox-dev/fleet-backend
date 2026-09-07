@@ -1522,6 +1522,20 @@ class PayrollController extends Controller
                 return ($log->orders_count > 0) || ($log->cash_collected > 0) || ($log->rejected_orders_count > 0) || ($log->driver_status === 'working');
             })->count();
 
+            // Attendance alone never explained the salary: a driver paid for his leave read
+            // "6 أيام" beside 50.000 د.ك, and 6 × the daily rate is 11.538. These are the two
+            // figures that do explain it — the days that carry pay, and the days the contract
+            // will pay for once its own monthly cap is applied.
+            $paidDays = $empLogs->filter(function ($log) {
+                return $log->driver_status === 'paid_leave'
+                    || $log->driver_status === 'working'
+                    || (int) $log->orders_count > 0
+                    || (float) $log->cash_collected > 0
+                    || (int) $log->rejected_orders_count > 0;
+            })->count();
+            $contractPayableDays = (int) ($contract->default_required_work_days ?: 0);
+            $payableDays = $contractPayableDays > 0 ? min($paidDays, $contractPayableDays) : $paidDays;
+
             $driversResult[] = [
                 'employee_id' => $empId,
                 'employee_name' => $employee->name,
@@ -1543,6 +1557,9 @@ class PayrollController extends Controller
                 'unresolved_vehicle_type' => (bool) ($calcResult['unresolved_vehicle_type'] ?? false),
                 'assigned_days' => $assignedDays,
                 'actual_work_days' => $actualWorkDays,
+                'paid_days' => $paidDays,
+                'payable_days' => $payableDays,
+                'contract_working_days' => $contractPayableDays,
                 'days_ratio' => round($segRatio, 4),
                 'orders_count' => $calcResult['orders_count'] ?? $empLogs->sum('orders_count'),
                 'base_salary' => $calcResult['base_salary'] ?? 0.0,
@@ -1920,6 +1937,22 @@ class PayrollController extends Controller
             return ! in_array($c->id, $approvedContractIds);
         })->values();
 
+        // A driver on five contracts has one month, not five. Adding each contract sheet's day
+        // count together read 143 days for a 31-day August. The month is counted once, over the
+        // dates themselves.
+        $calendarDays = DailyLog::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->where('company_id', $companyId)
+            ->whereBetween('log_date', [$startDate, $endDate])
+            ->where(function ($q) {
+                $q->whereIn('driver_status', ['working', 'paid_leave'])
+                    ->orWhere('orders_count', '>', 0)
+                    ->orWhere('cash_collected', '>', 0);
+            })
+            ->selectRaw('employee_id, COUNT(DISTINCT log_date) AS days')
+            ->groupBy('employee_id')
+            ->pluck('days', 'employee_id');
+
         // Consolidated drivers mapping
         $consolidatedDrivers = [];
 
@@ -1943,7 +1976,7 @@ class PayrollController extends Controller
                         'employee_name' => $d['employee_name'],
                         'employee_number' => $d['employee_number'],
                         'assigned_days' => $d['assigned_days'] ?? 0,
-                        'actual_work_days' => $d['actual_work_days'] ?? 0,
+                        'actual_work_days' => (int) ($calendarDays[$empId] ?? ($d['actual_work_days'] ?? 0)),
                         'orders_count' => $d['orders_count'] ?? 0,
                         'gross_contract_earnings' => (float) ($d['gross_contract_earnings'] ?? 0.0),
                         'violations_deduction' => (float) ($d['violations_deduction'] ?? 0.0),
@@ -1952,7 +1985,7 @@ class PayrollController extends Controller
                     ];
                 } else {
                     $consolidatedDrivers[$empId]['assigned_days'] = max($consolidatedDrivers[$empId]['assigned_days'], $d['assigned_days'] ?? 0);
-                    $consolidatedDrivers[$empId]['actual_work_days'] += ($d['actual_work_days'] ?? 0);
+                    // Deliberately not summed — see $calendarDays above.
                     $consolidatedDrivers[$empId]['orders_count'] += ($d['orders_count'] ?? 0);
                     $consolidatedDrivers[$empId]['gross_contract_earnings'] += (float) ($d['gross_contract_earnings'] ?? 0.0);
                     $consolidatedDrivers[$empId]['violations_deduction'] += (float) ($d['violations_deduction'] ?? 0.0);

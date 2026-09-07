@@ -458,7 +458,8 @@ class EmployeeLedgerService
         $logs = DailyLog::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('employee_id', $employee->id)
             ->whereBetween('log_date', [$start, $end])
-            ->get(['orders_count', 'driver_status', 'cash_collected']);
+            // log_date is selected because the month is counted over dates, not rows.
+            ->get(['log_date', 'orders_count', 'driver_status', 'cash_collected']);
 
         // Settlements agreed on a contract for this month — a bonus added, an amount written off.
         // The statement was leaving them out of an open month altogether, so its net disagreed
@@ -490,9 +491,15 @@ class EmployeeLedgerService
             'source' => 'projection',
             'orders_count' => (int) $logs->sum('orders_count'),
             'cash_collected' => self::cashCollected($employee->id, $start, $end),
+            // Counted over the DATES, not the rows: a driver on five contracts has a row per
+            // contract per day, and counting rows made his August 143 days long.
             'work_days' => $logs->filter(fn ($l) => $l->driver_status === 'working'
                 || $l->driver_status === 'paid_leave'
-                || (int) $l->orders_count > 0)->count(),
+                || (int) $l->orders_count > 0)
+                ->pluck('log_date')
+                ->map(fn ($d) => substr((string) $d, 0, 10))
+                ->unique()
+                ->count(),
             'contracts' => $contracts,
             'gross_earnings' => round($gross, 3),
             // Surfaced at month level so the row can say why the earnings read low.
@@ -618,7 +625,11 @@ class EmployeeLedgerService
             'contract_name' => $contract->name,
             'payment_method_label' => $label,
             'orders_count' => $orders,
-            'work_days' => $logs->count(),
+            // The days this contract pays for, not every row it holds — an untouched
+            // unpaid-leave day is not a day worked on it.
+            'work_days' => $logs->filter(fn ($l) => $l->driver_status === 'working'
+                || $l->driver_status === 'paid_leave'
+                || (int) $l->orders_count > 0)->count(),
             'gross' => round($gross, 3),
             'net' => round($gross, 3),
             'frozen' => false,

@@ -200,11 +200,19 @@ class ContractPayrollService
         $gross = round($earnedBaseSalary - $deficitDeduction + $surplusBonus, 3);
 
         $dailyFormatted = number_format($dailySalaryRate, 3);
+
+        // The line used to open on $paidDays while the amount was built from $payableDays, so a
+        // month over the contract's days read "31 يوم × 1.923 = 50.000" — an equation that does not
+        // hold, on the one screen the owner uses to explain a salary to a client.
+        $cappedNote = $payableDays < $paidDays
+            ? " (من {$paidDays} يوم مدفوع، بحد أقصى {$contractWorkingDays} يوم يدفعها العقد)"
+            : '';
+
         $details = [
             [
                 'label' => 'الراتب المستحق عن أيام الدوام الفعلي',
                 'amount' => $earnedBaseSalary,
-                'formula' => "{$paidDays} يوم دوام × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم عمل = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك",
+                'formula' => "{$payableDays} يوم مدفوع{$cappedNote} × اليومية ({$baseSalaryConfig} د.ك ÷ {$contractWorkingDays} يوم عمل = {$dailyFormatted} د.ك) = {$earnedBaseSalary} د.ك",
             ],
         ];
 
@@ -236,6 +244,8 @@ class ContractPayrollService
 
         return [
             'base_salary' => $earnedBaseSalary,
+            'paid_days' => $paidDays,
+            'payable_days' => $payableDays,
             'orders_count' => $totalOrders,
             'orders_bonus' => 0.0,
             'required_target' => $requiredTarget,
