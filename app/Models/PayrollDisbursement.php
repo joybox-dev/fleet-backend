@@ -37,6 +37,31 @@ class PayrollDisbursement extends Model
         return round((float) $this->bank_amount + (float) $this->cash_amount, 3);
     }
 
+    /**
+     * How much of a month may still go to the bank for one driver: his registered salary — the
+     * figure the ministry and the bank know him by — less what this month has already sent there.
+     * The owner's rule: a bank transfer never exceeds that salary; whatever a month owes above it
+     * is handed over in cash. A driver with no registered salary is paid in cash only. Counted over
+     * the whole month, so two transfers cannot add up to more than one may.
+     *
+     * @return array{salary: float, transferred: float, available: float}
+     */
+    public static function bankAllowance(Employee $employee, int $runId, ?int $excludeId = null): array
+    {
+        $salary = round((float) ($employee->official_salary ?? 0), 3);
+        $transferred = round((float) static::withoutGlobalScopes()
+            ->where('consolidated_run_id', $runId)
+            ->where('employee_id', $employee->id)
+            ->when($excludeId !== null, fn ($q) => $q->where('id', '!=', $excludeId))
+            ->sum('bank_amount'), 3);
+
+        return [
+            'salary' => $salary,
+            'transferred' => $transferred,
+            'available' => round(max(0.0, $salary - $transferred), 3),
+        ];
+    }
+
     public function run(): BelongsTo
     {
         return $this->belongsTo(ConsolidatedPayrollRun::class, 'consolidated_run_id');

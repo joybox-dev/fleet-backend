@@ -616,6 +616,8 @@ class PayrollController extends Controller
             return response()->json(['message' => 'هذا السائق ليس في كشف الشهر المعتمد.'], 422);
         }
 
+        $this->assertBankWithinSalary($run->id, $data['employee_id'], $data['bank_amount']);
+
         $disbursement = PayrollDisbursement::create([
             'company_id' => $run->company_id,
             'consolidated_run_id' => $run->id,
@@ -641,6 +643,12 @@ class PayrollController extends Controller
     public function updateDisbursement(Request $request, PayrollDisbursement $disbursement): JsonResponse
     {
         $data = $this->validatedDisbursement($request, false);
+        $this->assertBankWithinSalary(
+            (int) $disbursement->consolidated_run_id,
+            (int) $disbursement->employee_id,
+            $data['bank_amount'],
+            $disbursement->id
+        );
 
         $disbursement->update([
             'bank_amount' => $data['bank_amount'],
@@ -812,5 +820,39 @@ class PayrollController extends Controller
             'paid_at' => ! empty($data['paid_at']) ? Carbon::parse($data['paid_at'])->toDateString() : now()->toDateString(),
             'notes' => $data['notes'] ?? null,
         ];
+    }
+
+    /**
+     * The owner's rule on the bank side of a payment: what goes through the bank in a month is at
+     * most the driver's registered salary — the bank and the ministry see that figure and nothing
+     * above it — and the rest of what he is owed is handed over in cash. Measured against the
+     * month's other transfers, so a correction is judged without counting itself.
+     */
+    private function assertBankWithinSalary(int $runId, int $employeeId, float $bank, ?int $excludeId = null): void
+    {
+        if ($bank <= 0) {
+            return;
+        }
+
+        $employee = Employee::withoutGlobalScopes()->withTrashed()->find($employeeId);
+        $allowance = $employee
+            ? PayrollDisbursement::bankAllowance($employee, $runId, $excludeId)
+            : ['salary' => 0.0, 'transferred' => 0.0, 'available' => 0.0];
+
+        if ($bank <= $allowance['available'] + 0.0005) {
+            return;
+        }
+
+        $salary = number_format($allowance['salary'], 3, '.', '').' د.ك';
+        $transferred = number_format($allowance['transferred'], 3, '.', '').' د.ك';
+        $available = number_format($allowance['available'], 3, '.', '').' د.ك';
+
+        $message = match (true) {
+            $allowance['salary'] <= 0 => 'لا راتب بنكي مسجَّل لهذا السائق — سجّل راتبه الرسمي في ملفه، أو اصرف المبلغ نقداً.',
+            $allowance['transferred'] > 0 => "التحويل البنكي لا يتجاوز الراتب البنكي للسائق ({$salary}): حُوِّل له هذا الشهر {$transferred} والمتاح {$available} — الباقي يُصرف نقداً.",
+            default => "التحويل البنكي لا يتجاوز الراتب البنكي للسائق ({$salary}) — الباقي يُصرف نقداً.",
+        };
+
+        throw ValidationException::withMessages(['bank_amount' => $message]);
     }
 }

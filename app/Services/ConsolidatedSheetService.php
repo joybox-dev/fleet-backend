@@ -342,6 +342,12 @@ class ConsolidatedSheetService
                 ->groupBy('employee_id')
             : collect();
 
+        // The registered salary caps the bank side of any payment (PayrollDisbursement::bankAllowance);
+        // the sheet carries it so the payment form splits bank/cash the way the rule will insist on.
+        $bankSalaries = Employee::withoutGlobalScopes()->withTrashed()
+            ->whereIn('id', array_map(fn ($d) => (int) ($d['employee_id'] ?? 0), $data['drivers'] ?? []))
+            ->pluck('official_salary', 'id');
+
         $totals = [
             'opening' => 0.0, 'due' => 0.0, 'suggested' => 0.0, 'bank' => 0.0, 'cash' => 0.0, 'remaining' => 0.0,
             'paid' => 0, 'unpaid' => 0, 'nothing_due' => 0, 'owing' => 0,
@@ -389,6 +395,8 @@ class ConsolidatedSheetService
                 'remaining_balance' => $remaining,
                 'disbursement_status' => $status,
                 'disbursements' => $rows->map(fn (PayrollDisbursement $p) => $p->toRow())->values()->all(),
+                'bank_salary' => round((float) ($bankSalaries[$employeeId] ?? 0), 3),
+                'bank_transferable' => round(max(0.0, (float) ($bankSalaries[$employeeId] ?? 0) - $bank), 3),
             ]);
 
             $totals['opening'] += $prior['balance'];

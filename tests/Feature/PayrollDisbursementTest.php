@@ -78,6 +78,8 @@ class PayrollDisbursementTest extends TestCase
             'role_category' => 'driver',
             'date_of_joining' => '2026-01-01',
             'actual_salary' => 0.000,
+            // The registered (bank) salary: the ceiling on the bank side of any month's payment.
+            'official_salary' => 100.000,
         ]);
 
         $this->vehicle = Vehicle::create([
@@ -304,6 +306,61 @@ class PayrollDisbursementTest extends TestCase
         $this->assertSame(30.0, (float) $row['disbursed_bank']);
         $this->assertSame(20.0, (float) $row['disbursed_cash']);
         $this->assertSame('جزء نقدي', $row['disbursements'][0]['notes']);
+    }
+
+    /**
+     * The owner's rule: the bank never receives more than the driver's registered salary in a
+     * month — that is the figure the bank and the ministry know — and the rest is cash.
+     */
+    public function test_the_bank_side_of_a_month_is_capped_at_the_registered_salary(): void
+    {
+        // A clean April owing 50 against a registered salary of 30 — the March expense would
+        // otherwise be charged here too (expenses are cumulative) and leave nothing to pay.
+        DriverExpense::withoutGlobalScopes()->where('employee_id', $this->driver->id)->delete();
+        $this->driver->update(['official_salary' => 30.000]);
+        $this->approveMonth(4);
+
+        $row = $this->driverRow(4);
+        fwrite(STDERR, '
+');
+        $this->assertSame(50.0, (float) $row['amount_due']);
+        $this->assertSame(30.0, (float) $row['bank_salary']);
+        $this->assertSame(30.0, (float) $row['bank_transferable']);
+
+        $this->pay(4, ['bank_amount' => 30.5])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
+        $this->pay(4, ['bank_amount' => 50])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
+        $this->assertSame(0, PayrollDisbursement::withoutGlobalScopes()->count());
+
+        $first = $this->pay(4, ['bank_amount' => 20, 'cash_amount' => 20])->assertCreated()->json('disbursement.id');
+        $this->assertSame(10.0, (float) $this->driverRow(4)['bank_transferable']);
+
+        // The cap is on the month, not on each payment: a second transfer only has what is left.
+        $this->pay(4, ['bank_amount' => 10.5])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
+        $this->pay(4, ['bank_amount' => 10])->assertCreated();
+        $this->assertSame(0.0, (float) $this->driverRow(4)['bank_transferable']);
+        $this->pay(4, ['cash_amount' => 5])->assertCreated();
+
+        // A correction is measured against the other payments, not against its own old figure.
+        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 20, 'cash_amount' => 25])->assertOk();
+        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 21, 'cash_amount' => 0])
+            ->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
+
+        $this->assertSame(30.0, (float) $this->driverRow(4)['disbursed_bank']);
+        $this->assertSame(30.0, (float) $this->driverRow(4)['disbursed_cash']);
+    }
+
+    public function test_a_driver_with_no_registered_salary_is_paid_in_cash_only(): void
+    {
+        DriverExpense::withoutGlobalScopes()->where('employee_id', $this->driver->id)->delete();
+        $this->driver->update(['official_salary' => 0]);
+        $this->approveMonth(4);
+
+        $this->assertSame(50.0, (float) $this->driverRow(4)['amount_due']);
+
+        $this->assertSame(0.0, (float) $this->driverRow(4)['bank_transferable']);
+        $message = $this->pay(4, ['bank_amount' => 10])->assertStatus(422)->json('errors.bank_amount.0');
+        $this->assertStringContainsString('لا راتب بنكي', $message);
+        $this->pay(4, ['cash_amount' => 50])->assertCreated();
     }
 
     public function test_the_statement_lists_movements_by_date_and_lands_on_the_sheet_balance(): void
