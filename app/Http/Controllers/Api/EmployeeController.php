@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\DailyLog;
 use App\Models\Employee;
 use App\Models\Role;
 use App\Models\User;
@@ -407,12 +406,6 @@ class EmployeeController extends Controller
         $credits = round((float) $totals['gross_earnings'], 3);
         $debits = round((float) $totals['deductions_total'], 3);
 
-        // Revenue is the company's figure, not the driver's, and has no place in his ledger.
-        $revenueQuery = DailyLog::where('employee_id', $employee->id);
-        if ($scope === 'month') {
-            $revenueQuery->whereYear('log_date', $year)->whereMonth('log_date', $month);
-        }
-
         return response()->json([
             'employee_id' => $employee->id,
             'employee_name' => $employee->name,
@@ -431,7 +424,6 @@ class EmployeeController extends Controller
                 'work_days' => (int) $totals['work_days'],
                 'rate_per_order' => (float) ($employee->rate_per_order ?? 0.0),
                 'cash_returned' => round((float) $totals['cash_collected'], 3),
-                'company_revenue' => (float) $revenueQuery->sum('income_amount'),
             ],
             'debits' => [
                 'violations' => round((float) ($deductions['violations'] ?? 0), 3),

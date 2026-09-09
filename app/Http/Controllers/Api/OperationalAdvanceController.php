@@ -3,11 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Employee;
 use App\Models\OperationalAdvance;
-use App\Models\OperationalAdvanceExpense;
-use App\Models\OperationalAdvanceReturn;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class OperationalAdvanceController extends Controller
 {
@@ -18,25 +17,25 @@ class OperationalAdvanceController extends Controller
 
         // Check if user has permission to manage all operational advances (requires explicit op_advances.create or super admin)
         $canManageAll = $user && (
-            $user->isSuperAdmin() || 
+            $user->isSuperAdmin() ||
             $user->can('op_advances.create')
         );
 
         $employeeId = $request->employee_id;
 
-        if (!$canManageAll) {
+        if (! $canManageAll) {
             // Scope to logged-in user's employee ID only
-            $userEmployee = \App\Models\Employee::withoutGlobalScopes()
-                ->where(function($q) use ($user) {
+            $userEmployee = Employee::withoutGlobalScopes()
+                ->where(function ($q) use ($user) {
                     $q->where('user_id', $user?->id);
-                    if (!empty($user?->email)) {
-                        $q->orWhereHas('user', function($uq) use ($user) {
+                    if (! empty($user?->email)) {
+                        $q->orWhereHas('user', function ($uq) use ($user) {
                             $uq->where('email', $user->email);
                         });
                     }
                 })->first();
 
-            if (!$userEmployee) {
+            if (! $userEmployee) {
                 return response()->json([]);
             }
             $employeeId = $userEmployee->id;
@@ -44,13 +43,14 @@ class OperationalAdvanceController extends Controller
 
         $advances = OperationalAdvance::with(['employee:id,name', 'approver:id,name', 'expenses.contract:id,name', 'returns'])
             ->where('company_id', $companyId)
-            ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
+            ->when($employeeId, fn ($q) => $q->where('employee_id', $employeeId))
             ->orderByDesc('date')
             ->get()
             ->map(function ($advance) {
                 $totalExpenses = $advance->expenses->sum('amount');
                 $totalReturns = $advance->returns->sum('amount');
                 $advance->remaining_balance = max(0, $advance->amount - $totalExpenses - $totalReturns);
+
                 return $advance;
             });
 
@@ -65,7 +65,7 @@ class OperationalAdvanceController extends Controller
         $canCreateActive = $user && ($user->isSuperAdmin() || $user->role === 'admin' || $user->can('op_advances.create') || $user->can('op_advances.edit'));
         $canRequestPending = $user && ($user->role === 'operator' || $user->can('op_advances.view'));
 
-        if (!$canCreateActive && !$canRequestPending) {
+        if (! $canCreateActive && ! $canRequestPending) {
             return response()->json(['message' => 'غير مصرح لك بإضافة عهدة تشغيلية جديدة.'], 403);
         }
 
@@ -92,19 +92,16 @@ class OperationalAdvanceController extends Controller
 
     public function approve(Request $request, $id): JsonResponse
     {
-        $user = $request->user();
-        if ($user && $user->role !== 'admin' && !$user->isSuperAdmin()) {
-            return response()->json(['message' => 'غير مصرح. يجب أن تكون مسؤول شركة لاعتماد السلف.'], 403);
-        }
-
-        $advance = OperationalAdvance::where('company_id', app('current_company_id'))->findOrFail($id);
+        // Who may approve is `permission:op_advances.edit` on the route. Matching the role NAME
+        // «admin» here refused every company-defined role, including «مدير», whatever it was granted.
+        $advance = OperationalAdvance::findOrFail($id);
         if ($advance->status !== 'pending') {
             return response()->json(['message' => 'هذه السلفة ليست في حالة معلقة.'], 422);
         }
 
         $advance->update([
             'status' => 'active',
-            'approved_by' => $user->id
+            'approved_by' => $request->user()->id,
         ]);
 
         return response()->json($advance);
@@ -112,12 +109,7 @@ class OperationalAdvanceController extends Controller
 
     public function reject(Request $request, $id): JsonResponse
     {
-        $user = $request->user();
-        if ($user && $user->role !== 'admin' && !$user->isSuperAdmin()) {
-            return response()->json(['message' => 'غير مصرح. يجب أن تكون مسؤول شركة لرفض السلف.'], 403);
-        }
-
-        $advance = OperationalAdvance::where('company_id', app('current_company_id'))->findOrFail($id);
+        $advance = OperationalAdvance::findOrFail($id);
         if ($advance->status !== 'pending') {
             return response()->json(['message' => 'هذه السلفة ليست في حالة معلقة.'], 422);
         }
@@ -142,7 +134,7 @@ class OperationalAdvanceController extends Controller
         $remaining = $advance->amount - $totalExpenses - $totalReturns;
 
         $validated = $request->validate([
-            'amount' => 'required|numeric|min:0.001|max:' . $remaining,
+            'amount' => 'required|numeric|min:0.001|max:'.$remaining,
             'date' => 'required|date',
             'description' => 'required|string|max:255',
             'contract_id' => 'nullable|exists:contracts,id',
@@ -175,7 +167,7 @@ class OperationalAdvanceController extends Controller
         $remaining = $advance->amount - $totalExpenses - $totalReturns;
 
         $validated = $request->validate([
-            'amount' => 'required|numeric|min:0.001|max:' . $remaining,
+            'amount' => 'required|numeric|min:0.001|max:'.$remaining,
             'date' => 'required|date',
         ]);
 

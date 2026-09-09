@@ -13,8 +13,16 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 
+/**
+ * Ported from the retired per-order engine. 23 of its 28 scenarios encode that engine's semantics
+ * (driver overrides, `default_monthly_target`) and have been red since the contract engine
+ * replaced it; the owner has said he does not need them. Kept for reference, excluded from the
+ * quality gate with `--exclude-group legacy` — see verify.ps1 at the project root.
+ */
+#[Group('legacy')]
 class ComprehensivePayrollScenariosTest extends TestCase
 {
     use RefreshDatabase;
@@ -98,6 +106,8 @@ class ComprehensivePayrollScenariosTest extends TestCase
             'is_validity_enabled' => false,
             'default_absence_divisor' => 26,
             'default_required_valid_days' => 26,
+            // The engine refuses to price a month on a contract that never named its working days.
+            'default_required_work_days' => 26,
         ], $contractExtraFields);
         unset($contractFields['actual_salary']);
         $contract = Contract::create($contractFields);

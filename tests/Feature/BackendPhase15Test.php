@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Http\Controllers\Api\PayrollController;
 use App\Models\Company;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
@@ -196,6 +195,14 @@ class BackendPhase15Test extends TestCase
             'vehicle_type_id' => $this->bikeType->id,
         ]);
 
+        ContractAssignment::create([
+            'employee_id' => $driver->id,
+            'contract_id' => $bikeContract->id,
+            'start_date' => '2026-07-01',
+            'status' => 'active',
+            'company_id' => $this->company->id,
+        ]);
+
         // Try to create daily log with bike contract but car vehicle (should fail)
         $response = $this->postJson('/api/daily-logs', [
             'employee_id' => $driver->id,
@@ -212,8 +219,13 @@ class BackendPhase15Test extends TestCase
         $this->assertStringContainsString('فئة هذه المركبة غير مدعومة في هذا العقد', $response->json('message'));
     }
 
-    /** @test */
-    public function test_mid_month_joiner_proration_calculation()
+    /**
+     * A driver who joins mid-month is paid for the days he worked, each at the contract's daily
+     * rate — read from the contract payroll sheet, the one place that prices a month.
+     *
+     * @test
+     */
+    public function test_mid_month_joiner_is_paid_for_his_own_days()
     {
         $driver = Employee::create([
             'name' => 'Mid Month Driver',
@@ -221,12 +233,18 @@ class BackendPhase15Test extends TestCase
             'employee_number' => 'EMP201',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
+            'role_category' => 'driver',
             'status' => 'active',
-            'pay_type' => 'fixed',
-            'actual_salary' => 300.0,
         ]);
 
-        // Monthly salary: 300 KWD, required valid days: 26, absence divisor: 26
+        $bike = Vehicle::create([
+            'plate_number' => 'BIKE-201',
+            'company_id' => $this->company->id,
+            'status' => 'available',
+            'vehicle_type_id' => $this->bikeType->id,
+        ]);
+
+        // A 300.000 monthly salary over the contract's 26 working days.
         $contract = Contract::create([
             'company_id' => $this->company->id,
             'client_id' => 1,
@@ -234,15 +252,16 @@ class BackendPhase15Test extends TestCase
             'name' => 'Fixed Salary Contract',
             'client_name' => 'Client A',
             'status' => 'active',
-            'payment_type' => 'fixed',
             'start_date' => '2026-06-01',
-            'default_required_valid_days' => 26,
-            'default_absence_divisor' => 26,
+            'default_required_work_days' => 26,
+            'driver_payment_method' => 'fixed',
+            'driver_pricing_rules' => [
+                (string) $this->bikeType->id => ['payment_method' => 'fixed', 'fixed_amount' => 300],
+            ],
         ]);
 
-        // Driver assigned starting mid-month (June 16th to June 30th -> exactly 15 days out of 30 days)
-        // Ratio R = 15 / 30 = 0.5
-        $assignment = ContractAssignment::create([
+        // Assigned from the 16th, so the first half of the month is not his.
+        ContractAssignment::create([
             'employee_id' => $driver->id,
             'contract_id' => $contract->id,
             'start_date' => '2026-06-16',
@@ -251,56 +270,39 @@ class BackendPhase15Test extends TestCase
             'company_id' => $this->company->id,
         ]);
 
-        // Record 10 valid daily logs (driver was absent for 3 days of the 13 prorated required valid days)
-        for ($day = 16; $day <= 25; $day++) {
+        foreach (range(16, 25) as $day) {
             DailyLog::create([
                 'employee_id' => $driver->id,
-                'vehicle_id' => 1,
+                'vehicle_id' => $bike->id,
                 'contract_id' => $contract->id,
                 'log_date' => "2026-06-{$day}",
                 'orders_count' => 10,
-                'orders_online' => 10,
-                'orders_cash' => 0,
-                'shift_valid' => true,
-                'is_valid' => true,
+                'driver_status' => 'working',
                 'created_by' => $this->admin->id,
                 'company_id' => $this->company->id,
             ]);
         }
 
-        // Run payroll calculation
-        $allDailyLogs = collect([$driver->id => DailyLog::where('employee_id', $driver->id)->get()]);
-        $allAssignments = collect([$assignment]);
+        $row = collect($this->getJson("/api/payroll/contract-sheet/{$contract->id}?year=2026&month=6")
+            ->assertOk()
+            ->json('drivers'))
+            ->firstWhere('employee_id', $driver->id);
 
-        $slipData = PayrollController::calculateDriverSlipData(
-            $driver,
-            2026,
-            6,
-            '2026-06-01',
-            '2026-06-30',
-            $allDailyLogs,
-            collect(),
-            collect(),
-            collect(),
-            collect(),
-            collect(),
-            $allAssignments
-        );
-
-        // Calculations:
-        // Prorated fixed salary = 300 * 0.5 = 150
-        // Prorated required valid days = round(26 * 0.5) = 13
-        // Worked valid days = 10
-        // Absent days = 13 - 10 = 3
-        // Absence deduction = 3 * (300 / 26) = 34.615 KWD
-        // Expected base actual = 150 - 34.615 = 115.385 KWD
-
-        $this->assertEquals(115.385, round($slipData['base_actual_salary'], 3));
-        $this->assertEquals(34.615, round($slipData['total_absence_deduction'], 3));
+        // 10 paid days × (300 ÷ 26 = 11.538) = 115.385
+        $this->assertSame(10, (int) $row['paid_days']);
+        $this->assertSame(10, (int) $row['payable_days']);
+        $this->assertEquals(115.385, round((float) $row['base_salary'], 3));
+        $this->assertEquals(115.385, round((float) $row['gross_contract_earnings'], 3));
     }
 
-    /** @test */
-    public function test_mid_month_vehicle_type_transition_segment_splitting()
+    /**
+     * A driver who moves from a bike to a car mid-month has two contracts, two vehicle types and
+     * two prices. Each contract's sheet pays for the stretch on its own vehicle, and the driver's
+     * statement — priced by the same routine — adds the two together.
+     *
+     * @test
+     */
+    public function test_mid_month_vehicle_type_transition_is_priced_per_stretch()
     {
         $driver = Employee::create([
             'name' => 'Transition Driver',
@@ -308,28 +310,18 @@ class BackendPhase15Test extends TestCase
             'employee_number' => 'EMP301',
             'company_id' => $this->company->id,
             'employee_type' => 'driver',
+            'role_category' => 'driver',
             'status' => 'active',
-            'pay_type' => 'hybrid',
-            'actual_salary' => 100.0,
         ]);
 
-        // Create contracts with zone-tier pricing
-        $bikePricingRules = [
+        $hawallyTiers = fn (float $low, float $high) => [
             [
+                'id' => 'hawally',
+                'name' => 'Hawally',
                 'zone' => 'Hawally',
                 'tiers' => [
-                    ['min' => 1, 'max' => 10, 'price' => 0.500],
-                    ['min' => 11, 'max' => 50, 'price' => 0.600],
-                ],
-            ],
-        ];
-
-        $carPricingRules = [
-            [
-                'zone' => 'Hawally',
-                'tiers' => [
-                    ['min' => 1, 'max' => 10, 'price' => 0.400],
-                    ['min' => 11, 'max' => 50, 'price' => 0.450],
+                    ['min' => 1, 'max' => 10, 'price' => $low],
+                    ['min' => 11, 'max' => 50, 'price' => $high],
                 ],
             ],
         ];
@@ -341,12 +333,13 @@ class BackendPhase15Test extends TestCase
             'name' => 'Segment Bike Contract',
             'client_name' => 'Client A',
             'status' => 'active',
-            'payment_type' => 'per_order',
-            'driver_payment_method' => 'zones_tiers',
-            'driver_pricing_rules' => $bikePricingRules,
             'start_date' => '2026-07-01',
             'end_date' => '2026-07-31',
-            'vehicle_type_id' => $this->bikeType->id,
+            'default_required_work_days' => 26,
+            'driver_payment_method' => 'zones_tiers',
+            'driver_pricing_rules' => [
+                (string) $this->bikeType->id => ['payment_method' => 'zones_tiers', 'zones_tiers' => $hawallyTiers(0.500, 0.600)],
+            ],
         ]);
 
         $carContract = Contract::create([
@@ -356,15 +349,15 @@ class BackendPhase15Test extends TestCase
             'name' => 'Segment Car Contract',
             'client_name' => 'Client A',
             'status' => 'active',
-            'payment_type' => 'per_order',
-            'driver_payment_method' => 'zones_tiers',
-            'driver_pricing_rules' => $carPricingRules,
             'start_date' => '2026-07-01',
             'end_date' => '2026-07-31',
-            'vehicle_type_id' => $this->carType->id,
+            'default_required_work_days' => 26,
+            'driver_payment_method' => 'zones_tiers',
+            'driver_pricing_rules' => [
+                (string) $this->carType->id => ['payment_method' => 'zones_tiers', 'zones_tiers' => $hawallyTiers(0.400, 0.450)],
+            ],
         ]);
 
-        // Vehicle assignments
         $bike = Vehicle::create([
             'plate_number' => 'BIKE-301',
             'company_id' => $this->company->id,
@@ -379,27 +372,7 @@ class BackendPhase15Test extends TestCase
             'vehicle_type_id' => $this->carType->id,
         ]);
 
-        // Days 1 to 10: assigned to bike
-        VehicleAssignment::create([
-            'vehicle_id' => $bike->id,
-            'employee_id' => $driver->id,
-            'assigned_date' => '2026-07-01',
-            'unassigned_date' => '2026-07-10',
-            'is_active' => false,
-            'company_id' => $this->company->id,
-        ]);
-
-        // Days 11 to 31: assigned to car
-        VehicleAssignment::create([
-            'vehicle_id' => $car->id,
-            'employee_id' => $driver->id,
-            'assigned_date' => '2026-07-11',
-            'is_active' => true,
-            'company_id' => $this->company->id,
-        ]);
-
-        // Contract assignments
-        $assign1 = ContractAssignment::create([
+        ContractAssignment::create([
             'employee_id' => $driver->id,
             'contract_id' => $bikeContract->id,
             'start_date' => '2026-07-01',
@@ -408,7 +381,7 @@ class BackendPhase15Test extends TestCase
             'company_id' => $this->company->id,
         ]);
 
-        $assign2 = ContractAssignment::create([
+        ContractAssignment::create([
             'employee_id' => $driver->id,
             'contract_id' => $carContract->id,
             'start_date' => '2026-07-11',
@@ -417,71 +390,45 @@ class BackendPhase15Test extends TestCase
             'company_id' => $this->company->id,
         ]);
 
-        // Daily logs:
-        // Days 1 to 10 (10 days, ratio = 10 / 31):
-        // Total orders = 12 in zone Hawally.
-        // Hawally tiers boundaries scaled by 10/31:
-        // Tier 1: min = 0, max = round(10 * 10/31) = 3
-        // Tier 2: min = round(11 * 10/31) = 4, max = round(50 * 10/31) = 16
-        // Reached Tier 2 (orders 12 >= 4). Rate = 0.600.
-        // Payout = 12 * 0.600 = 7.200 KWD
-        for ($day = 1; $day <= 10; $day++) {
+        // Days 1-10 on the bike: 12 orders in Hawally land in the 11-50 band at 0.600 = 7.200.
+        foreach (range(1, 10) as $day) {
             DailyLog::create([
                 'employee_id' => $driver->id,
                 'vehicle_id' => $bike->id,
                 'contract_id' => $bikeContract->id,
                 'log_date' => sprintf('2026-07-%02d', $day),
-                'orders_count' => ($day === 1 ? 12 : 0),
-                'orders_online' => ($day === 1 ? 12 : 0),
-                'orders_cash' => 0,
+                'orders_count' => $day === 1 ? 12 : 0,
+                'driver_status' => 'working',
                 'zone' => 'Hawally',
                 'created_by' => $this->admin->id,
                 'company_id' => $this->company->id,
             ]);
         }
 
-        // Days 11 to 31 (21 days, ratio = 21 / 31):
-        // Total orders = 25 in zone Hawally.
-        // Hawally tiers boundaries scaled by 21/31:
-        // Tier 1: min = 0, max = round(10 * 21/31) = 7
-        // Tier 2: min = round(11 * 21/31) = 7, max = round(50 * 21/31) = 34
-        // Reached Tier 2 (orders 25 >= 7). Rate = 0.450.
-        // Payout = 25 * 0.450 = 11.250 KWD
-        for ($day = 11; $day <= 31; $day++) {
+        // Days 11-31 on the car: 25 orders in Hawally land in the 11-50 band at 0.450 = 11.250.
+        foreach (range(11, 31) as $day) {
             DailyLog::create([
                 'employee_id' => $driver->id,
                 'vehicle_id' => $car->id,
                 'contract_id' => $carContract->id,
                 'log_date' => sprintf('2026-07-%02d', $day),
-                'orders_count' => ($day === 11 ? 25 : 0),
-                'orders_online' => ($day === 11 ? 25 : 0),
-                'orders_cash' => 0,
+                'orders_count' => $day === 11 ? 25 : 0,
+                'driver_status' => 'working',
                 'zone' => 'Hawally',
                 'created_by' => $this->admin->id,
                 'company_id' => $this->company->id,
             ]);
         }
 
-        // Run calculations
-        $allDailyLogs = collect([$driver->id => DailyLog::where('employee_id', $driver->id)->get()]);
-        $allAssignments = collect([$assign1, $assign2]);
+        $rowOn = fn (Contract $contract) => collect(
+            $this->getJson("/api/payroll/contract-sheet/{$contract->id}?year=2026&month=7")->assertOk()->json('drivers')
+        )->firstWhere('employee_id', $driver->id);
 
-        $slipData = PayrollController::calculateDriverSlipData(
-            $driver,
-            2026,
-            7,
-            '2026-07-01',
-            '2026-07-31',
-            $allDailyLogs,
-            collect(),
-            collect(),
-            collect(),
-            collect(),
-            collect(),
-            $allAssignments
-        );
+        $this->assertEquals(7.200, round((float) $rowOn($bikeContract)['gross_contract_earnings'], 3));
+        $this->assertEquals(11.250, round((float) $rowOn($carContract)['gross_contract_earnings'], 3));
 
-        // Expected orders bonus = 7.200 (segment 1) + 11.250 (segment 2) = 18.450 KWD
-        $this->assertEquals(18.450, round($slipData['orders_bonus'], 3));
+        // The driver's own statement is priced by the same routine, so it reads the same 18.450.
+        $history = $this->getJson("/api/employees/{$driver->id}/history?from=2026-07&to=2026-07")->assertOk()->json();
+        $this->assertEquals(18.450, round((float) $history['totals']['gross_earnings'], 3));
     }
 }

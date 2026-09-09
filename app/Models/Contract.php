@@ -3,14 +3,15 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Contract extends Model
 {
-    use SoftDeletes, BelongsToCompany;
+    use BelongsToCompany, SoftDeletes;
 
     protected $fillable = [
         'client_id', 'contract_number', 'name', 'payment_type',
@@ -20,7 +21,7 @@ class Contract extends Model
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
         'expected_monthly_revenue', 'target_driver_count',
         'expected_total_profit', 'expected_monthly_profit',
-        
+
         // Mandatory fields (client feedback)
         'client_name', 'status', 'currency',
 
@@ -30,7 +31,7 @@ class Contract extends Model
         'expected_monthly_expenses', 'target_profit_margin',
         'default_required_valid_days',
         'default_required_work_days',
-        
+
         // Pricing rules and vehicle types
         'vehicle_type_id', 'client_payment_method', 'client_pricing_rules',
         'driver_payment_method', 'driver_pricing_rules', 'capacity_target', 'capacity_pricing_rules',
@@ -40,10 +41,10 @@ class Contract extends Model
         'is_active' => 'boolean',
         'is_validity_enabled' => 'boolean',
         'rate_per_order' => 'decimal:3',
-        'fixed_monthly'  => 'decimal:3',
+        'fixed_monthly' => 'decimal:3',
         'required_drivers' => 'integer',
-        'daily_target'     => 'integer',
-        'monthly_target'   => 'integer',
+        'daily_target' => 'integer',
+        'monthly_target' => 'integer',
         'target_orders_monthly' => 'integer',
         'base_commission_rate' => 'decimal:3',
         'premium_commission_rate' => 'decimal:3',
@@ -51,7 +52,7 @@ class Contract extends Model
         'target_driver_count' => 'integer',
         'expected_total_profit' => 'decimal:3',
         'expected_monthly_profit' => 'decimal:3',
-        
+
         // Defaults
         'default_order_commission' => 'decimal:3',
         'default_absence_divisor' => 'integer',
@@ -64,9 +65,9 @@ class Contract extends Model
         'default_required_work_days' => 'integer',
 
         // Pricing rules and vehicle types
-        'vehicle_type_id'        => 'integer',
-        'client_pricing_rules'   => 'array',
-        'driver_pricing_rules'   => 'array',
+        'vehicle_type_id' => 'integer',
+        'client_pricing_rules' => 'array',
+        'driver_pricing_rules' => 'array',
         'capacity_pricing_rules' => 'array',
     ];
 
@@ -74,8 +75,8 @@ class Contract extends Model
     {
         static::saving(function ($contract) {
             if ($contract->expected_total_profit) {
-                $startDate = \Carbon\Carbon::parse($contract->start_date);
-                $endDate = $contract->end_date ? \Carbon\Carbon::parse($contract->end_date) : null;
+                $startDate = Carbon::parse($contract->start_date);
+                $endDate = $contract->end_date ? Carbon::parse($contract->end_date) : null;
                 if ($endDate) {
                     $months = max(1, $startDate->diffInMonths($endDate->copy()->addDay()));
                     $contract->expected_monthly_profit = $contract->expected_total_profit / $months;
@@ -111,16 +112,6 @@ class Contract extends Model
     public function assignments(): HasMany
     {
         return $this->hasMany(ContractAssignment::class);
-    }
-
-    public function monthlyParameters(): HasMany
-    {
-        return $this->hasMany(ContractMonthlyParameter::class);
-    }
-
-    public function bonuses(): HasMany
-    {
-        return $this->hasMany(ContractBonus::class);
     }
 
     public function supervisorCostAllocations(): HasMany

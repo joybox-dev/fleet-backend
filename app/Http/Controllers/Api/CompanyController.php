@@ -23,64 +23,59 @@ class CompanyController extends Controller
     {
         $company = $request->user()->company;
 
-        if (!$company) {
+        if (! $company) {
             return response()->json(['message' => 'لا توجد شركة مرتبطة بحسابك.'], 404);
         }
 
         return response()->json([
             'company' => [
-                'id'              => $company->id,
-                'name'            => $company->name,
-                'name_ar'         => $company->name_ar,
-                'code'            => $company->code,
-                'logo_path'       => $company->logo_path,
-                'branding'        => $company->branding,
+                'id' => $company->id,
+                'name' => $company->name,
+                'name_ar' => $company->name_ar,
+                'code' => $company->code,
+                'logo_path' => $company->logo_path,
+                'branding' => $company->branding,
                 'enabled_modules' => $company->enabled_modules,
-                'currency'        => $company->currency,
-                'phone'           => $company->phone,
-                'email'           => $company->email,
-                'address'         => $company->address,
-                'tax_number'      => $company->tax_number,
+                'currency' => $company->currency,
+                'phone' => $company->phone,
+                'email' => $company->email,
+                'address' => $company->address,
+                'tax_number' => $company->tax_number,
             ],
         ]);
     }
 
     /**
-     * PUT /api/company — update current company info (admin only).
+     * PUT /api/company — update current company info. Gated by `permission:settings.edit` on the
+     * route; a check on the role NAME here locked out every company-defined role, «مدير» included.
      */
     public function update(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $company = $user->company;
+        $company = $request->user()->company;
 
-        if (!$company) {
+        if (! $company) {
             return response()->json(['message' => 'لا توجد شركة مرتبطة بحسابك.'], 404);
         }
 
-        // Only admins can update company info
-        if ($user->role !== 'admin' && !$user->is_super_admin) {
-            return response()->json(['message' => 'غير مصرح لك بتعديل بيانات الشركة.'], 403);
-        }
-
         $validated = $request->validate([
-            'name'       => 'sometimes|string|max:255',
-            'name_ar'    => 'nullable|string|max:255',
-            'phone'      => 'nullable|string|max:50',
-            'email'      => 'nullable|email|max:255',
-            'address'    => 'nullable|string|max:500',
+            'name' => 'sometimes|string|max:255',
+            'name_ar' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:50',
+            'email' => 'nullable|email|max:255',
+            'address' => 'nullable|string|max:500',
             'tax_number' => 'nullable|string|max:50',
-            'branding'   => 'nullable|array',
+            'branding' => 'nullable|array',
             'branding.primary_color' => 'nullable|string|max:20',
-            'branding.accent_color'  => 'nullable|string|max:20',
-            'branding.sidebar_bg'    => 'nullable|string|max:20',
-            'branding.sidebar_text'  => 'nullable|string|max:20',
-            'branding.header_bg'     => 'nullable|string|max:20',
+            'branding.accent_color' => 'nullable|string|max:20',
+            'branding.sidebar_bg' => 'nullable|string|max:20',
+            'branding.sidebar_text' => 'nullable|string|max:20',
+            'branding.header_bg' => 'nullable|string|max:20',
         ]);
 
         // Handle logo upload
         if ($request->hasFile('logo')) {
             $path = $request->file('logo')->store('logos', 'public');
-            $validated['logo_path'] = '/storage/' . $path;
+            $validated['logo_path'] = '/storage/'.$path;
         }
 
         $company->update($validated);

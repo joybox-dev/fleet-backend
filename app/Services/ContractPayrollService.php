@@ -51,6 +51,23 @@ class ContractPayrollService
     }
 
     /**
+     * A payment method as the screens name it.
+     */
+    public static function paymentMethodLabel(?string $method): string
+    {
+        return match ($method) {
+            'fixed' => 'راتب ثابت (Fixed)',
+            'per_order' => 'بالطلب (Per-Order)',
+            'hybrid' => 'هجين (Fixed + Commission)',
+            'zones' => 'فئات (Zones)',
+            'zones_tiers' => 'شرائح الفئات (Zones + Tiers)',
+            'tiered_zones' => 'فئات بشريحة الشهر (Monthly Tier × Zones)',
+            'tiers' => 'شرائح (Tiers)',
+            default => (string) $method,
+        };
+    }
+
+    /**
      * Dispatch calculation based on driver payment method.
      */
     public static function calculateDriverContractPayroll(

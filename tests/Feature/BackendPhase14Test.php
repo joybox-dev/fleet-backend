@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Client;
 use App\Models\Company;
 use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\Employee;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -118,6 +119,15 @@ class BackendPhase14Test extends TestCase
             'is_validity_enabled' => true,
         ]);
 
+        // A day is only accepted inside the driver's assignment on the contract.
+        ContractAssignment::create([
+            'employee_id' => $driver->id,
+            'contract_id' => $kpiContract->id,
+            'start_date' => '2026-07-01',
+            'status' => 'active',
+            'company_id' => $this->company->id,
+        ]);
+
         // A log that fails KPI criteria (online_hours < 10)
         $response = $this->actingAs($this->adminUser)
             ->postJson('/api/daily-logs', [
@@ -197,6 +207,14 @@ class BackendPhase14Test extends TestCase
             'start_date' => '2026-07-01',
             'company_id' => $this->company->id,
             'is_validity_enabled' => false,
+        ]);
+
+        ContractAssignment::create([
+            'employee_id' => $driver->id,
+            'contract_id' => $nonKpiContract->id,
+            'start_date' => '2026-07-01',
+            'status' => 'active',
+            'company_id' => $this->company->id,
         ]);
 
         $response = $this->actingAs($this->adminUser)

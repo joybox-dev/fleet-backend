@@ -47,7 +47,10 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | FleetOps API Routes
 |--------------------------------------------------------------------------
-| Roles: admin (full access), operator (daily ops), accountant (financial)
+| Two gates on every route. `role:` names the built-in roles a group is for (admin / operator /
+| accountant); a company-defined role passes it and is judged by `permission:` — the same keys
+| the sidebar hides pages by, so what a login cannot see it also cannot call. A controller that
+| checks a finer permission of its own keeps doing so.
 | All routes return JSON. Authentication via Laravel Sanctum tokens.
 */
 
@@ -64,8 +67,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
     // ── Company info (user's own) ────────────────────────────────────
     Route::get('company', [CompanyController::class, 'current']);
-    Route::put('company', [CompanyController::class, 'update']);
-    Route::post('company', [CompanyController::class, 'update']); // multipart fallback
+    Route::middleware('permission:settings.edit')->group(function () {
+        Route::put('company', [CompanyController::class, 'update']);
+        Route::post('company', [CompanyController::class, 'update']); // multipart fallback
+    });
 
     // ── File Uploads (all roles) ─────────────────────────────────────
     Route::post('upload', [UploadController::class, 'store']);
@@ -86,45 +91,71 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::middleware('role:admin,operator')->group(function () {
 
         // Daily Logs — core operator entry
+        Route::middleware('permission:daily_logs.view')->group(function () {
+            Route::apiResource('daily-logs', DailyLogController::class)->only(['index', 'show']);
+        });
         Route::post('daily-logs/bulk', [DailyLogController::class, 'bulkStore']);
-        Route::apiResource('daily-logs', DailyLogController::class);
+        Route::apiResource('daily-logs', DailyLogController::class)->except(['index', 'show']);
 
-        // Vehicles — view + assign/unassign + odometer
-        Route::get('vehicles', [VehicleController::class, 'index']);
-        Route::get('vehicles/{vehicle}', [VehicleController::class, 'show']);
-        Route::post('vehicles/{vehicle}/assign', [VehicleController::class, 'assign']);
-        Route::post('vehicles/{vehicle}/unassign', [VehicleController::class, 'unassign']);
+        // Vehicles — view + assign/unassign
+        Route::middleware('permission:vehicles.view')->group(function () {
+            Route::get('vehicles', [VehicleController::class, 'index']);
+            Route::get('vehicles/{vehicle}', [VehicleController::class, 'show']);
+        });
+        Route::middleware('permission:vehicles.edit,employees.edit')->group(function () {
+            Route::post('vehicles/{vehicle}/assign', [VehicleController::class, 'assign']);
+            Route::post('vehicles/{vehicle}/unassign', [VehicleController::class, 'unassign']);
+        });
+
+        // Lookup lists every form needs; managed from the settings screen.
         Route::get('vehicle-types', [VehicleTypeController::class, 'index']);
-        Route::apiResource('vehicle-types', VehicleTypeController::class)->except(['index']);
         Route::get('vehicle-expense-types', [VehicleExpenseTypeController::class, 'index']);
-        Route::apiResource('vehicle-expense-types', VehicleExpenseTypeController::class)->except(['index', 'show']);
+        Route::middleware('permission:settings.edit')->group(function () {
+            Route::apiResource('vehicle-types', VehicleTypeController::class)->except(['index']);
+            Route::apiResource('vehicle-expense-types', VehicleExpenseTypeController::class)->except(['index', 'show']);
+        });
 
         // Violations — record traffic fines
-        Route::get('violations/resolve-driver', [ViolationController::class, 'resolveDriver']);
-        Route::apiResource('violations', ViolationController::class);
+        Route::middleware('permission:violations.view')->group(function () {
+            Route::get('violations/resolve-driver', [ViolationController::class, 'resolveDriver']);
+            Route::apiResource('violations', ViolationController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('violations', ViolationController::class)->except(['index', 'show']);
 
         // Maintenance — report + view
-        Route::get('maintenance', [MaintenanceController::class, 'index']);
-        Route::get('maintenance/{maintenance}', [MaintenanceController::class, 'show']);
+        Route::middleware('permission:maintenance.view')->group(function () {
+            Route::get('maintenance', [MaintenanceController::class, 'index']);
+            Route::get('maintenance/{maintenance}', [MaintenanceController::class, 'show']);
+        });
         Route::post('maintenance', [MaintenanceController::class, 'store']);
 
         // Cash Settlements — record handover
-        Route::post('cash-settlements', [CashSettlementController::class, 'store']);
-        Route::get('cash-settlements', [CashSettlementController::class, 'index']);
-        Route::get('cash-settlements/pending', [CashSettlementController::class, 'pending']);
+        Route::post('cash-settlements', [CashSettlementController::class, 'store'])->middleware('permission:cash.create');
+        Route::middleware('permission:cash.view')->group(function () {
+            Route::get('cash-settlements', [CashSettlementController::class, 'index']);
+            Route::get('cash-settlements/pending', [CashSettlementController::class, 'pending']);
+        });
 
         // Leaves — CRUD + approve/reject (admin + operator)
-        Route::get('leave-types', [LeaveController::class, 'types']);
-        Route::get('leaves/balance/{employee}', [LeaveController::class, 'balance']);
-        Route::apiResource('leaves', LeaveController::class);
+        Route::middleware('permission:leaves.view,employees.view')->group(function () {
+            Route::get('leave-types', [LeaveController::class, 'types']);
+            Route::get('leaves/balance/{employee}', [LeaveController::class, 'balance']);
+            Route::apiResource('leaves', LeaveController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('leaves', LeaveController::class)->except(['index', 'show']);
         Route::post('leaves/{leave}/approve', [LeaveController::class, 'approve']);
         Route::post('leaves/{leave}/reject', [LeaveController::class, 'reject']);
 
         // Operations Dashboard
-        Route::get('operations/dashboard', [OperationsController::class, 'dashboard']);
+        Route::get('operations/dashboard', [OperationsController::class, 'dashboard'])->middleware('permission:operations.view');
 
         // Vehicle Handovers
-        Route::apiResource('vehicle-handovers', VehicleHandoverController::class);
+        Route::middleware('permission:vehicles.view,employees.view')->group(function () {
+            Route::apiResource('vehicle-handovers', VehicleHandoverController::class)->only(['index', 'show']);
+        });
+        Route::middleware('permission:vehicles.edit,employees.edit')->group(function () {
+            Route::apiResource('vehicle-handovers', VehicleHandoverController::class)->only(['store', 'destroy']);
+        });
     });
 
     // ═══════════════════════════════════════════════════════════════════
@@ -132,68 +163,94 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     // ═══════════════════════════════════════════════════════════════════
     Route::middleware('role:admin')->group(function () {
 
-        // Deletion Integrity Checks
-        Route::get('employees/{employee}/deletion-check', [EmployeeController::class, 'deletionCheck']);
-        Route::get('vehicles/{vehicle}/deletion-check', [VehicleController::class, 'deletionCheck']);
-        Route::get('clients/{client}/deletion-check', [ClientController::class, 'deletionCheck']);
-        Route::get('contracts/{contract}/deletion-check', [ContractController::class, 'deletionCheck']);
-        Route::get('custody-types/{custody_type}/deletion-check', [CustodyTypeController::class, 'deletionCheck']);
+        // Deletion Integrity Checks — the question is only asked by someone about to delete.
+        Route::get('employees/{employee}/deletion-check', [EmployeeController::class, 'deletionCheck'])->middleware('permission:employees.delete');
+        Route::get('vehicles/{vehicle}/deletion-check', [VehicleController::class, 'deletionCheck'])->middleware('permission:vehicles.delete');
+        Route::get('clients/{client}/deletion-check', [ClientController::class, 'deletionCheck'])->middleware('permission:clients.delete');
+        Route::get('contracts/{contract}/deletion-check', [ContractController::class, 'deletionCheck'])->middleware('permission:contracts.delete');
+        Route::get('custody-types/{custody_type}/deletion-check', [CustodyTypeController::class, 'deletionCheck'])->middleware('permission:settings.edit');
 
         // Clients — full CRUD
-        Route::apiResource('clients', ClientController::class);
+        Route::middleware('permission:clients.view')->group(function () {
+            Route::apiResource('clients', ClientController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('clients', ClientController::class)->except(['index', 'show']);
 
-        // Contracts — full CRUD + lock
-        Route::apiResource('contracts', ContractController::class);
-        Route::post('contracts/{contract}/lock', [ContractController::class, 'lock']);
-        Route::get('roles/permissions', [RoleController::class, 'availablePermissions']);
-        Route::apiResource('roles', RoleController::class);
-        Route::post('contracts/{contract}/monthly-parameters', [ContractController::class, 'storeMonthlyParameter']);
-        Route::post('contracts/{contract}/bonuses', [ContractController::class, 'storeBonus']);
-        Route::delete('contracts/{contract}/bonuses/{bonus}', [ContractController::class, 'destroyBonus']);
-        Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
+        // Contracts — full CRUD
+        Route::middleware('permission:contracts.view')->group(function () {
+            Route::apiResource('contracts', ContractController::class)->only(['index', 'show']);
+            Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
+        });
+        Route::apiResource('contracts', ContractController::class)->except(['index', 'show']);
 
-        // Contract Assignments & Overrides
-        Route::apiResource('contract-assignments', ContractAssignmentController::class)->parameters([
-            'contract-assignments' => 'assignment',
-        ]);
-        Route::post('contract-assignments/{assignment}/overrides', [ContractAssignmentController::class, 'storeOverride']);
-        Route::put('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'updateOverride']);
-        Route::delete('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'destroyOverride']);
+        // Roles — who may do what. Only the settings screen edits them.
+        Route::middleware('permission:settings.view')->group(function () {
+            Route::get('roles/permissions', [RoleController::class, 'availablePermissions']);
+            Route::apiResource('roles', RoleController::class)->only(['index']);
+        });
+        Route::middleware('permission:settings.edit')->group(function () {
+            Route::apiResource('roles', RoleController::class)->except(['index']);
+        });
+
+        // Contract Assignments & Overrides — set from the employee's profile
+        Route::get('contract-assignments', [ContractAssignmentController::class, 'index'])
+            ->middleware('permission:employees.view,contracts.view,daily_logs.view');
+        Route::middleware('permission:employees.edit')->group(function () {
+            Route::apiResource('contract-assignments', ContractAssignmentController::class)
+                ->except(['index'])
+                ->parameters(['contract-assignments' => 'assignment']);
+            Route::post('contract-assignments/{assignment}/overrides', [ContractAssignmentController::class, 'storeOverride']);
+            Route::put('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'updateOverride']);
+            Route::delete('contract-assignments/overrides/{override}', [ContractAssignmentController::class, 'destroyOverride']);
+        });
 
         // Supervisor cost allocations
-        Route::get('supervisor-allocations', [SupervisorAllocationController::class, 'index']);
-        Route::post('supervisor-allocations', [SupervisorAllocationController::class, 'store']);
+        Route::get('supervisor-allocations', [SupervisorAllocationController::class, 'index'])->middleware('permission:employees.view');
+        Route::post('supervisor-allocations', [SupervisorAllocationController::class, 'store'])->middleware('permission:employees.edit');
 
         // Currency Exchange Rates
-        Route::apiResource('currency-exchange-rates', CurrencyExchangeRateController::class)->only(['index', 'store', 'destroy']);
+        Route::get('currency-exchange-rates', [CurrencyExchangeRateController::class, 'index'])->middleware('permission:settings.view');
+        Route::middleware('permission:settings.edit')->group(function () {
+            Route::apiResource('currency-exchange-rates', CurrencyExchangeRateController::class)->only(['store', 'destroy']);
+        });
 
-        // Keeta Importer
-        Route::post('keta/preview', [KetaImportController::class, 'preview']);
-        Route::post('keta/confirm', [KetaImportController::class, 'confirm']);
+        // Keeta Importer — it writes daily logs, so that is the permission it needs.
+        Route::middleware('permission:daily_logs.create')->group(function () {
+            Route::post('keta/preview', [KetaImportController::class, 'preview']);
+            Route::post('keta/confirm', [KetaImportController::class, 'confirm']);
+        });
 
         // Employees — full CRUD + balance
         Route::post('employees/bulk-delete', [EmployeeController::class, 'bulkDestroy']);
-        Route::apiResource('employees', EmployeeController::class);
-        Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
-        Route::get('employees/{employee}/history', [EmployeeController::class, 'history']);
+        Route::middleware('permission:employees.view')->group(function () {
+            Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
+            Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
+            Route::get('employees/{employee}/history', [EmployeeController::class, 'history']);
+            Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);
+        });
+        Route::apiResource('employees', EmployeeController::class)->except(['index', 'show']);
 
         // One search box across contracts, employees, vehicles, clients and violations.
         Route::get('search', GlobalSearchController::class);
 
         // Employee Documents
-        Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);
-        Route::post('employees/{employee}/documents', [EmployeeDocumentController::class, 'store']);
-        Route::put('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'update']);
-        Route::delete('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'destroy']);
+        Route::middleware('permission:employees.edit')->group(function () {
+            Route::post('employees/{employee}/documents', [EmployeeDocumentController::class, 'store']);
+            Route::put('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'update']);
+            Route::delete('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'destroy']);
+        });
 
-        // Evaluation Criteria (company settings)
-        Route::get('evaluation-criteria', [EvaluationController::class, 'criteriaIndex']);
-        Route::post('evaluation-criteria', [EvaluationController::class, 'criteriaStore']);
-        Route::put('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaUpdate']);
-        Route::delete('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaDestroy']);
-
-        // Employee Evaluations
-        Route::apiResource('evaluations', EvaluationController::class);
+        // Evaluation Criteria (company settings) & Employee Evaluations
+        Route::get('evaluation-criteria', [EvaluationController::class, 'criteriaIndex'])->middleware('permission:evaluations.view');
+        Route::middleware('permission:evaluations.edit')->group(function () {
+            Route::post('evaluation-criteria', [EvaluationController::class, 'criteriaStore']);
+            Route::put('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaUpdate']);
+            Route::delete('evaluation-criteria/{criterion}', [EvaluationController::class, 'criteriaDestroy']);
+            Route::apiResource('evaluations', EvaluationController::class)->only(['update']);
+        });
+        Route::apiResource('evaluations', EvaluationController::class)->only(['index', 'show'])->middleware('permission:evaluations.view');
+        Route::apiResource('evaluations', EvaluationController::class)->only(['store'])->middleware('permission:evaluations.create');
+        Route::apiResource('evaluations', EvaluationController::class)->only(['destroy'])->middleware('permission:evaluations.delete');
 
         // Vehicles — create/update/delete (operators can only view)
         Route::post('vehicles/bulk-delete', [VehicleController::class, 'bulkDestroy']);
@@ -205,17 +262,25 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::put('maintenance/{maintenance}', [MaintenanceController::class, 'update']);
         Route::delete('maintenance/{maintenance}', [MaintenanceController::class, 'destroy']);
         Route::post('maintenance/{maintenance}/approve', [MaintenanceController::class, 'approve']);
-        Route::post('maintenance/{maintenance}/reject', [MaintenanceController::class, 'reject']);
+        Route::post('maintenance/{maintenance}/reject', [MaintenanceController::class, 'reject'])->middleware('permission:maintenance.edit');
 
         // Custody Items — full CRUD + return
-        Route::apiResource('custody', CustodyController::class);
+        Route::middleware('permission:custody.view')->group(function () {
+            Route::apiResource('custody', CustodyController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('custody', CustodyController::class)->except(['index', 'show']);
         Route::post('custody/{custody}/return', [CustodyController::class, 'returnItem']);
 
-        // Custody Types — manage types
-        Route::apiResource('custody-types', CustodyTypeController::class)->except(['show']);
+        // Custody Types — a lookup for the custody form, managed from settings
+        Route::get('custody-types', [CustodyTypeController::class, 'index'])->middleware('permission:custody.view,settings.view');
+        Route::middleware('permission:settings.edit')->group(function () {
+            Route::apiResource('custody-types', CustodyTypeController::class)->except(['index', 'show']);
+        });
 
         // Driver Expenses
-        Route::apiResource('driver-expenses', DriverExpenseController::class);
+        Route::apiResource('driver-expenses', DriverExpenseController::class)->only(['show'])
+            ->middleware('permission:driver_expenses.view,employees.view,payroll.view');
+        Route::apiResource('driver-expenses', DriverExpenseController::class)->except(['show']);
 
         // Read-only view over all six spending screens at once. Adds nothing and changes nothing:
         // each row links back to the screen that owns it.
@@ -223,14 +288,18 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // ── Import/Export ─────────────────────────────────────
         Route::prefix('import')->group(function () {
-            Route::get('entity-types', [ImportController::class, 'entityTypes']);
-            Route::get('fields/{entity}', [ImportController::class, 'fields']);
-            Route::post('upload', [ImportController::class, 'upload']);
-            Route::post('preview', [ImportController::class, 'preview']);
-            Route::post('confirm', [ImportController::class, 'confirm']);
-            Route::get('logs', [ImportController::class, 'logs']);
-            Route::get('status/{id}', [ImportController::class, 'status']);
-            Route::get('template/{entity}', [ImportController::class, 'template']);
+            Route::middleware('permission:settings.view')->group(function () {
+                Route::get('entity-types', [ImportController::class, 'entityTypes']);
+                Route::get('fields/{entity}', [ImportController::class, 'fields']);
+                Route::get('logs', [ImportController::class, 'logs']);
+                Route::get('status/{id}', [ImportController::class, 'status']);
+                Route::get('template/{entity}', [ImportController::class, 'template']);
+            });
+            Route::middleware('permission:settings.edit')->group(function () {
+                Route::post('upload', [ImportController::class, 'upload']);
+                Route::post('preview', [ImportController::class, 'preview']);
+                Route::post('confirm', [ImportController::class, 'confirm']);
+            });
         });
     });
 
@@ -241,19 +310,29 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
 
         // Payroll
         Route::prefix('payroll')->group(function () {
-            Route::get('consolidated/{year}/{month}', [PayrollController::class, 'consolidatedSheet']);
+            Route::get('consolidated/{year}/{month}', [PayrollController::class, 'consolidatedSheet'])
+                ->middleware('permission:payroll.view,contract_payroll.view');
             Route::post('consolidated/{year}/{month}/approve', [PayrollController::class, 'approveConsolidatedSheet']);
             Route::post('consolidated/{year}/{month}/unapprove', [PayrollController::class, 'unapproveConsolidatedSheet']);
+            // Recording what was actually paid out — money leaving the company, so it takes the
+            // same authority as editing payroll or approving it.
+            Route::post('consolidated/{year}/{month}/disbursements', [PayrollController::class, 'storeDisbursement'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            Route::put('disbursements/{disbursement}', [PayrollController::class, 'updateDisbursement'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            Route::delete('disbursements/{disbursement}', [PayrollController::class, 'destroyDisbursement'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::get('contract-sheet/{contract}', [PayrollController::class, 'contractSheet']);
             Route::post('contract-sheet/{contract}/approve', [PayrollController::class, 'approveContractSheet']);
             Route::post('contract-sheet/{contract}/unapprove', [PayrollController::class, 'unapproveContractSheet']);
-            Route::get('contract-sheet/{contract}/adjustments', [PayrollController::class, 'getContractAdjustments']);
+            Route::get('contract-sheet/{contract}/adjustments', [PayrollController::class, 'getContractAdjustments'])
+                ->middleware('permission:payroll.view,contract_payroll.view');
             Route::post('contract-sheet/{contract}/adjustments', [PayrollController::class, 'storeContractAdjustment']);
             Route::delete('contract-sheet/adjustments/{adjustment}', [PayrollController::class, 'destroyContractAdjustment']);
         });
 
         // Reports
-        Route::prefix('reports')->group(function () {
+        Route::prefix('reports')->middleware('permission:reports.view')->group(function () {
             Route::get('deductions', [ReportController::class, 'deductions']);
             Route::get('violations', [ReportController::class, 'violations']);
             Route::get('expiring-docs', [ReportController::class, 'expiringDocs']);
@@ -267,39 +346,56 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         });
 
         // Settings
-        Route::get('settings', [SettingsController::class, 'index']);
-        Route::put('settings', [SettingsController::class, 'update']);
+        Route::get('settings', [SettingsController::class, 'index'])->middleware('permission:settings.view');
+        Route::put('settings', [SettingsController::class, 'update'])->middleware('permission:settings.edit');
 
         // WhatsApp
-        Route::post('whatsapp/test-connection', [WhatsAppController::class, 'testConnection']);
-        Route::post('whatsapp/send', [WhatsAppController::class, 'sendMessage']);
+        Route::middleware('permission:settings.edit')->group(function () {
+            Route::post('whatsapp/test-connection', [WhatsAppController::class, 'testConnection']);
+            Route::post('whatsapp/send', [WhatsAppController::class, 'sendMessage']);
+        });
 
         // ── Phase 2: New Modules ──────────────────────────────
 
         // Driver Guarantees
-        Route::apiResource('guarantees', DriverGuaranteeController::class)->except(['update']);
+        Route::middleware('permission:guarantees.view')->group(function () {
+            Route::apiResource('guarantees', DriverGuaranteeController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('guarantees', DriverGuaranteeController::class)->only(['store', 'destroy']);
         Route::post('guarantees/{guarantee}/return', [DriverGuaranteeController::class, 'returnItem']);
 
         // Vehicle Expenses
-        Route::get('vehicle-expenses/summary', [VehicleExpenseController::class, 'summary']);
-        Route::apiResource('vehicle-expenses', VehicleExpenseController::class);
+        Route::middleware('permission:vehicle_expenses.view')->group(function () {
+            Route::get('vehicle-expenses/summary', [VehicleExpenseController::class, 'summary']);
+            Route::apiResource('vehicle-expenses', VehicleExpenseController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('vehicle-expenses', VehicleExpenseController::class)->except(['index', 'show']);
 
         // Salary Advances
         // No destroy: an advance is written off through cancel, which keeps the record. The route
         // was registered without a method behind it and answered 500 to anyone who found it.
-        Route::apiResource('salary-advances', SalaryAdvanceController::class)->except(['update', 'destroy']);
+        Route::middleware('permission:salary_advances.view')->group(function () {
+            Route::apiResource('salary-advances', SalaryAdvanceController::class)->only(['index', 'show']);
+        });
+        Route::apiResource('salary-advances', SalaryAdvanceController::class)->only(['store']);
         Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
 
         // Operational Advances (Phase 16)
-        Route::post('operational-advances/{id}/approve', [OperationalAdvanceController::class, 'approve']);
-        Route::post('operational-advances/{id}/reject', [OperationalAdvanceController::class, 'reject']);
-        Route::post('operational-advances/{id}/expense', [OperationalAdvanceController::class, 'registerExpense']);
-        Route::post('operational-advances/{id}/return', [OperationalAdvanceController::class, 'registerReturn']);
+        Route::middleware('permission:op_advances.edit')->group(function () {
+            Route::post('operational-advances/{id}/approve', [OperationalAdvanceController::class, 'approve']);
+            Route::post('operational-advances/{id}/reject', [OperationalAdvanceController::class, 'reject']);
+        });
+        Route::middleware('permission:op_advances.create,op_advances.edit')->group(function () {
+            Route::post('operational-advances/{id}/expense', [OperationalAdvanceController::class, 'registerExpense']);
+            Route::post('operational-advances/{id}/return', [OperationalAdvanceController::class, 'registerReturn']);
+        });
 
         // Client Collections (Phase 16)
-        Route::get('contracts/{contractId}/collections', [ClientCollectionController::class, 'index']);
-        Route::post('contracts/{contractId}/collections', [ClientCollectionController::class, 'store']);
-        Route::delete('contracts/{contractId}/collections/{id}', [ClientCollectionController::class, 'destroy']);
+        Route::get('contracts/{contractId}/collections', [ClientCollectionController::class, 'index'])->middleware('permission:contracts.view');
+        Route::middleware('permission:contracts.edit')->group(function () {
+            Route::post('contracts/{contractId}/collections', [ClientCollectionController::class, 'store']);
+            Route::delete('contracts/{contractId}/collections/{id}', [ClientCollectionController::class, 'destroy']);
+        });
 
     });
 

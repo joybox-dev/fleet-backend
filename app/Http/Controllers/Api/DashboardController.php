@@ -6,12 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Models\Employee;
-use App\Models\MaintenanceRecord;
 use App\Models\Vehicle;
-use App\Models\VehicleAssignment;
-use App\Models\VehicleExpense;
-use App\Models\Violation;
-use App\Services\ContractRevenueService;
+use App\Services\ContractProfitabilityService;
 use App\Services\MoneyAtRiskService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -183,13 +179,8 @@ class DashboardController extends Controller
         usort($employeeAlerts, $sortBySeverity);
         usort($contractAlerts, $sortBySeverity);
 
-        // Compute summary counts per severity.
-        //
-        // A document that was never entered used to be counted as «expired», so a fleet whose
-        // paperwork simply had not been typed in yet reported hundreds of expiries — four per
-        // employee and four per vehicle, every one of them a date nobody had filled. They are
-        // their own thing: a gap in the records, not a lapsed permit, and each needs a different
-        // action.
+        // A document that was never entered is a gap in the records, not a lapsed permit, and each
+        // needs a different action; they are counted apart.
         $allAlerts = array_merge($vehicleAlerts, $employeeAlerts, $contractAlerts);
         $count = fn (string $severity) => count(array_filter($allAlerts, fn ($a) => $a['severity'] === $severity));
 
@@ -238,10 +229,6 @@ class DashboardController extends Controller
     }
 
     /**
-     * GET /api/dashboard/summary
-     * Main screen: fleet status, pending cash, today's orders.
-     */
-    /**
      * GET /api/dashboard/money-at-risk
      * What the operation is losing or has not collected this month.
      */
@@ -251,10 +238,14 @@ class DashboardController extends Controller
         $month = (int) ($request->query('month') ?: now()->month);
 
         return response()->json(
-            MoneyAtRiskService::forMonth(app('current_company_id'), $year, $month)
+            MoneyAtRiskService::forMonth($this->currentCompanyId(), $year, $month)
         );
     }
 
+    /**
+     * GET /api/dashboard/summary
+     * Main screen: fleet status, pending cash, today's orders.
+     */
     public function summary(): JsonResponse
     {
         // Fleet status breakdown — from meeting: available/working/maintenance/idle
@@ -296,7 +287,7 @@ class DashboardController extends Controller
         // Today's activity
         $today = now()->toDateString();
         $todayStats = DailyLog::whereDate('log_date', $today)
-            ->selectRaw('COUNT(*) as logs, SUM(orders_count) as total_orders, SUM(income_amount) as total_income')
+            ->selectRaw('COUNT(*) as logs, SUM(orders_count) as total_orders')
             ->first();
 
         // Expiring documents alert counts (within 60 days)
@@ -332,7 +323,6 @@ class DashboardController extends Controller
                 'date' => $today,
                 'logs_entered' => (int) ($todayStats->logs ?? 0),
                 'total_orders' => (int) ($todayStats->total_orders ?? 0),
-                'total_income' => (float) ($todayStats->total_income ?? 0),
             ],
             'alerts' => [
                 'vehicle_docs' => $vehicleAlertsCount,
@@ -343,98 +333,11 @@ class DashboardController extends Controller
 
     /**
      * GET /api/dashboard/contracts-profitability
-     * Calculate and return Expected vs Actual contract profitability with timeframe filters.
-     */
-    public function __construct(private PayrollController $payroll) {}
-
-    /**
-     * What a contract actually pays its drivers for a range of months, read from the payroll sheet
-     * — the same figure the contract's own dashboard shows, so the two screens cannot disagree.
      *
-     * @param  array<int, array{start: string, end: string}>  $months
-     * @return array{0: float, 1: float} base salaries, then everything paid on top of them
+     * Expected against actual profit per contract over a month, a quarter, a half or a year. The
+     * month figures come from ContractProfitabilityService — the same ones the contract's own
+     * dashboard and the reports show — summed over the months of the period.
      */
-    private function driverCostFromPayroll(Request $request, Contract $contract, array $months): array
-    {
-        $salaries = 0.0;
-        $commissions = 0.0;
-
-        foreach ($months as $m) {
-            $start = Carbon::parse($m['start']);
-
-            $sheetRequest = Request::createFrom($request);
-            $sheetRequest->merge(['year' => (int) $start->year, 'month' => (int) $start->month]);
-
-            $sheet = json_decode(
-                $this->payroll->contractSheet($sheetRequest, $contract->id)->getContent(),
-                true
-            );
-
-            foreach ($sheet['drivers'] ?? [] as $row) {
-                $gross = (float) ($row['gross_contract_earnings'] ?? 0);
-                $base = (float) ($row['base_salary'] ?? 0);
-
-                $salaries += $base;
-                $commissions += $gross - $base;
-            }
-        }
-
-        return [round($salaries, 3), round($commissions, 3)];
-    }
-
-    /**
-     * What the company itself pays for accidents and fines on a contract — the share not borne by
-     * the driver. Read the same way the contract's own dashboard reads it.
-     *
-     * @return array{0: float, 1: float} accidents, then fines
-     */
-    private function companyBorneIncidentCost(Contract $contract, string $startDate, string $endDate): array
-    {
-        $vehicleIds = DailyLog::where('contract_id', $contract->id)
-            ->whereBetween('log_date', [$startDate, $endDate])
-            ->distinct()->pluck('vehicle_id')->filter()->all();
-
-        $driverIds = DailyLog::where('contract_id', $contract->id)
-            ->whereBetween('log_date', [$startDate, $endDate])
-            ->distinct()->pluck('employee_id')->filter()->all();
-
-        $accidents = 0.0;
-        if ($vehicleIds) {
-            $records = MaintenanceRecord::whereIn('vehicle_id', $vehicleIds)
-                ->whereBetween('maintenance_date', [$startDate, $endDate])
-                ->whereIn('status', ['approved', 'completed'])
-                ->get();
-
-            foreach ($records as $record) {
-                $companyShare = (float) ($record->company_bearing_percentage ?? 100);
-                $cost = (float) ($record->actual_cost ?? $record->estimated_cost ?? 0);
-                $accidents += $cost * ($companyShare / 100.0);
-            }
-        }
-
-        $fines = 0.0;
-        if ($driverIds || $vehicleIds) {
-            $violations = Violation::whereBetween('violation_date', [$startDate, $endDate])
-                ->where(function ($q) use ($driverIds, $vehicleIds) {
-                    if ($driverIds) {
-                        $q->whereIn('employee_id', $driverIds);
-                    }
-                    if ($vehicleIds) {
-                        $q->orWhereIn('vehicle_id', $vehicleIds);
-                    }
-                })
-                ->get();
-
-            foreach ($violations as $violation) {
-                $total = (float) ($violation->amount ?? 0);
-                $driverShare = (float) ($violation->driver_deduction ?? 0);
-                $fines += max(0.0, $total - $driverShare);
-            }
-        }
-
-        return [round($accidents, 3), round($fines, 3)];
-    }
-
     public function contractsProfitability(Request $request): JsonResponse
     {
         $period = $request->input('period', 'monthly');
@@ -443,200 +346,50 @@ class DashboardController extends Controller
         $quarter = $request->integer('quarter', (int) ceil(date('n') / 3));
         $half = $request->integer('half', (int) ceil(date('n') / 6));
 
-        // Determine date range & months count
         if ($period === 'quarterly') {
             $startDate = Carbon::create($year, ($quarter - 1) * 3 + 1, 1)->startOfMonth();
             $endDate = $startDate->copy()->addMonths(2)->endOfMonth();
-            $monthsCount = 3;
         } elseif ($period === 'semi-annually') {
             $startDate = Carbon::create($year, ($half - 1) * 6 + 1, 1)->startOfMonth();
             $endDate = $startDate->copy()->addMonths(5)->endOfMonth();
-            $monthsCount = 6;
         } elseif ($period === 'annually') {
             $startDate = Carbon::create($year, 1, 1)->startOfYear();
             $endDate = $startDate->copy()->endOfYear();
-            $monthsCount = 12;
         } else {
-            // monthly
             $startDate = Carbon::create($year, $month, 1)->startOfMonth();
             $endDate = $startDate->copy()->endOfMonth();
-            $monthsCount = 1;
         }
 
-        $startDateStr = $startDate->toDateString();
-        $endDateStr = $endDate->toDateString();
+        $months = [];
+        $cursor = $startDate->copy();
+        while ($cursor->lte($endDate)) {
+            $months[] = [(int) $cursor->year, (int) $cursor->month];
+            $cursor->addMonth();
+        }
+        $monthsCount = count($months);
 
-        // 1. Fetch all contracts for the current company
+        $companyId = $this->currentCompanyId();
         $contracts = Contract::with('client:id,name')->get();
 
-        // 2. Fetch driver log sums in the period
-        // Loop month-by-month to perform base salary allocation precisely
-        $months = [];
-        $temp = $startDate->copy();
-        while ($temp->lte($endDate)) {
-            $months[] = [
-                'start' => $temp->copy()->startOfMonth()->toDateString(),
-                'end' => $temp->copy()->endOfMonth()->toDateString(),
-            ];
-            $temp->addMonth();
-        }
-
-        $salaryAllocationsByMonth = [];
-        foreach ($months as $m) {
-            $monthStart = $m['start'];
-            $monthEnd = $m['end'];
-
-            // Log counts per employee in this month
-            $employeeTotalDays = DailyLog::whereBetween('log_date', [$monthStart, $monthEnd])
-                ->selectRaw('employee_id, COUNT(*) as total_days')
-                ->groupBy('employee_id')
-                ->pluck('total_days', 'employee_id')
-                ->toArray();
-
-            // Logs count per employee per contract in this month
-            $employeeContractDays = DailyLog::whereBetween('log_date', [$monthStart, $monthEnd])
-                ->selectRaw('employee_id, contract_id, COUNT(*) as days')
-                ->groupBy('employee_id', 'contract_id')
-                ->get()
-                ->groupBy('employee_id');
-
-            // Employee salaries
-            $employees = Employee::whereIn('id', array_keys($employeeTotalDays))
-                ->pluck('actual_salary', 'id')
-                ->toArray();
-
-            $salaryAllocationsByMonth[] = [
-                'total_days' => $employeeTotalDays,
-                'contract_days' => $employeeContractDays,
-                'salaries' => $employees,
-            ];
-        }
-
-        // 3. Load all vehicle expenses in the range
-        // Assign expenses based on daily logs or vehicle assignments covering the date
-        $vehicleExpenses = VehicleExpense::whereBetween('expense_date', [$startDateStr, $endDateStr])
-            ->get();
-
-        $vehicleExpenseAllocations = [];
-        foreach ($vehicleExpenses as $exp) {
-            $expenseDate = $exp->expense_date->toDateString();
-            $vehicleId = $exp->vehicle_id;
-            $amount = (float) $exp->amount;
-
-            $log = DailyLog::where('vehicle_id', $vehicleId)
-                ->whereDate('log_date', $expenseDate)
-                ->first();
-
-            $contractId = null;
-            if ($log) {
-                $contractId = $log->contract_id;
-            } else {
-                $assignment = VehicleAssignment::where('vehicle_id', $vehicleId)
-                    ->whereDate('assigned_date', '<=', $expenseDate)
-                    ->where(function ($q) use ($expenseDate) {
-                        $q->whereNull('unassigned_date')
-                            ->orWhereDate('unassigned_date', '>=', $expenseDate);
-                    })
-                    ->first();
-                if ($assignment) {
-                    $contractId = $assignment->contract_id;
+        $sums = [];
+        foreach ($months as [$y, $m]) {
+            foreach (ContractProfitabilityService::forCompanyMonth($companyId, $y, $m, $contracts) as $contractId => $row) {
+                foreach (['orders', 'revenue', 'unpriced_orders', 'driver_salaries', 'driver_commissions', 'driver_cost',
+                    'vehicle_costs', 'maintenance_cost', 'violations_cost', 'supervisors_cost', 'expenses', 'profit'] as $key) {
+                    $sums[$contractId][$key] = ($sums[$contractId][$key] ?? 0) + $row[$key];
                 }
-            }
-
-            if ($contractId) {
-                $vehicleExpenseAllocations[$contractId] = ($vehicleExpenseAllocations[$contractId] ?? 0) + $amount;
+                $sums[$contractId]['revenue_details'] = array_merge($sums[$contractId]['revenue_details'] ?? [], $row['revenue_details']);
             }
         }
 
-        // 4. Calculate profitability per contract
         $data = [];
         foreach ($contracts as $contract) {
-            $expectedProfit = ((float) $contract->expected_monthly_profit) * $monthsCount;
-
-            // The stored per-log income is still the primary figure — a contract billed at a flat
-            // rate_per_order fills it and it is what was actually invoiced. But that rate is
-            // 0.000 on every contract that moved to client_pricing_rules, which is all fourteen
-            // live ones, so the column is 0 on all 2,209 logs and this screen showed no revenue
-            // at all against 1,823.398 of driver cost. When it comes to nothing, price from the
-            // rules instead — that way past months are right without touching stored data, and a
-            // contract that does fill the column keeps billing exactly as before.
-            $logsRevenue = (float) DailyLog::where('contract_id', $contract->id)
-                ->whereBetween('log_date', [$startDateStr, $endDateStr])
-                ->sum('income_amount');
-
-            $billed = ['revenue' => $logsRevenue, 'unpriced_orders' => 0, 'details' => []];
-            if ($logsRevenue == 0.0) {
-                $revenueLogs = DailyLog::with('vehicle:id,vehicle_type_id')
-                    ->where('contract_id', $contract->id)
-                    ->whereBetween('log_date', [$startDateStr, $endDateStr])
-                    ->get(['id', 'orders_count', 'zone', 'notes', 'vehicle_id']);
-
-                $billed = ContractRevenueService::forContractMonth($contract, $revenueLogs, $monthsCount);
-            }
-
-            $fixedRevenue = 0;
-            if ($contract->payment_type === 'fixed' || $contract->payment_type === 'hybrid') {
-                foreach ($months as $m) {
-                    $mStart = Carbon::parse($m['start']);
-                    $mEnd = Carbon::parse($m['end']);
-                    $contractStart = Carbon::parse($contract->start_date);
-                    $contractEnd = $contract->end_date ? Carbon::parse($contract->end_date) : null;
-
-                    if ($contractStart->lte($mEnd) && (! $contractEnd || $contractEnd->gte($mStart))) {
-                        $fixedRevenue += (float) $contract->fixed_monthly;
-                    }
-                }
-            }
-            $logsRevenue = $billed['revenue'];
-            $actualRevenue = $logsRevenue + $fixedRevenue;
-
-            $driverCommissions = (float) DailyLog::where('contract_id', $contract->id)
-                ->whereBetween('log_date', [$startDateStr, $endDateStr])
-                ->sum('driver_commission');
-
-            $allocatedSalaries = 0;
-            foreach ($salaryAllocationsByMonth as $alloc) {
-                foreach ($alloc['total_days'] as $empId => $totalDays) {
-                    if ($totalDays <= 0) {
-                        continue;
-                    }
-                    $empContractLogs = $alloc['contract_days']->get($empId);
-                    if (! $empContractLogs) {
-                        continue;
-                    }
-
-                    $cLog = $empContractLogs->firstWhere('contract_id', $contract->id);
-                    if ($cLog) {
-                        $daysOnContract = $cLog->days;
-                        $salary = (float) ($alloc['salaries'][$empId] ?? 0);
-                        $allocatedSalaries += $salary * ($daysOnContract / $totalDays);
-                    }
-                }
-            }
-
-            // Both figures above read columns the contract payroll path never fills:
-            // `daily_logs.driver_commission` and `employees.actual_salary`, which is 0.000 on every
-            // driver paid from the contract's own pricing rules. This screen therefore reported no
-            // expenses at all, so «actual profit» came out equal to revenue and a contract losing
-            // 3,160 KWD was ranked as making 1,500 — while the contract's own dashboard, reading
-            // the payroll sheet, showed the loss. Same month, same contract, opposite sign.
-            //
-            // When they come to nothing, take the cost from the payroll sheet, which is what the
-            // driver is actually paid. A contract that does fill the columns keeps its old figures.
-            if ($driverCommissions + $allocatedSalaries == 0.0) {
-                [$allocatedSalaries, $driverCommissions] = $this->driverCostFromPayroll($request, $contract, $months);
-            }
-
-            $vehicleCosts = (float) ($vehicleExpenseAllocations[$contract->id] ?? 0);
-
-            // The company's own share of accidents and fines is as much a cost of running the
-            // contract as the drivers are, and the contract's own dashboard has always counted it.
-            // Leaving it out here made the same contract read 920 KWD cheaper on this screen.
-            [$accidentsCost, $violationsCost] = $this->companyBorneIncidentCost($contract, $startDateStr, $endDateStr);
-
-            $actualExpenses = $driverCommissions + $allocatedSalaries + $vehicleCosts + $accidentsCost + $violationsCost;
-            $actualProfit = $actualRevenue - $actualExpenses;
-            $variance = $actualProfit - $expectedProfit;
+            $sum = $sums[$contract->id] ?? [];
+            // The form captures a total over the contract's life; the model derives the monthly
+            // figure from it. Either is the expectation for one month.
+            $expectedMonthly = (float) ($contract->expected_monthly_profit ?? $contract->expected_total_profit ?? 0);
+            $expectedProfit = round($expectedMonthly * $monthsCount, 3);
+            $actualProfit = round((float) ($sum['profit'] ?? 0), 3);
 
             $data[] = [
                 'id' => $contract->id,
@@ -644,30 +397,26 @@ class DashboardController extends Controller
                 'contract_number' => $contract->contract_number,
                 'client_name' => $contract->client?->name ?? '—',
                 'payment_type' => $contract->payment_type,
-                'expected_monthly_profit' => (float) $contract->expected_monthly_profit,
+                'expected_monthly_profit' => $expectedMonthly,
                 'expected_profit' => $expectedProfit,
-                'actual_revenue' => $actualRevenue,
+                'total_orders' => (int) ($sum['orders'] ?? 0),
+                'actual_revenue' => round((float) ($sum['revenue'] ?? 0), 3),
                 // Orders the client rules could not price. Without this the shortfall looks like
                 // a quiet month rather than a pricing rule that needs filling in.
-                'unpriced_orders' => $billed['unpriced_orders'],
-                'revenue_details' => $billed['details'],
-                'actual_expenses' => $actualExpenses,
+                'unpriced_orders' => (int) ($sum['unpriced_orders'] ?? 0),
+                'revenue_details' => $sum['revenue_details'] ?? [],
+                'actual_expenses' => round((float) ($sum['expenses'] ?? 0), 3),
                 'actual_profit' => $actualProfit,
-                'variance' => $variance,
-                'driver_commissions' => $driverCommissions,
-                'allocated_salaries' => $allocatedSalaries,
-                'vehicle_costs' => $vehicleCosts,
+                'variance' => round($actualProfit - $expectedProfit, 3),
+                'driver_commissions' => round((float) ($sum['driver_commissions'] ?? 0), 3),
+                'allocated_salaries' => round((float) ($sum['driver_salaries'] ?? 0), 3),
+                'driver_cost' => round((float) ($sum['driver_cost'] ?? 0), 3),
+                'vehicle_costs' => round((float) ($sum['vehicle_costs'] ?? 0), 3),
+                'maintenance_cost' => round((float) ($sum['maintenance_cost'] ?? 0), 3),
+                'violations_cost' => round((float) ($sum['violations_cost'] ?? 0), 3),
+                'supervisors_cost' => round((float) ($sum['supervisors_cost'] ?? 0), 3),
             ];
         }
-
-        // Filter out contracts that don't have expected profit and haven't active transactions in timeframe to keep it clean (optional)
-        // But for transparency we show all contracts.
-
-        $sortedByProfit = $data;
-        usort($sortedByProfit, fn ($a, $b) => $b['actual_profit'] <=> $a['actual_profit']);
-
-        $bestContracts = array_slice($sortedByProfit, 0, 5);
-        $worstContracts = array_slice(array_reverse($sortedByProfit), 0, 5);
 
         return response()->json([
             'period' => $period,
@@ -675,12 +424,10 @@ class DashboardController extends Controller
             'month' => $month,
             'quarter' => $quarter,
             'half' => $half,
-            'start_date' => $startDateStr,
-            'end_date' => $endDateStr,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
             'months_count' => $monthsCount,
             'contracts' => $data,
-            'best_contracts' => $bestContracts,
-            'worst_contracts' => $worstContracts,
         ]);
     }
 }

@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\Company;
-use App\Models\User;
-use App\Models\Employee;
-use App\Models\Vehicle;
+use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\DailyLog;
-use App\Models\VehicleHandover;
+use App\Models\Employee;
+use App\Models\User;
+use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -16,11 +18,16 @@ class Phase13ExtraFeaturesTest extends TestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private User $user;
+
     private Employee $employee;
+
     private Vehicle $vehicle;
-    private \App\Models\Client $client;
-    private \App\Models\Contract $contract;
+
+    private Client $client;
+
+    private Contract $contract;
 
     protected function setUp(): void
     {
@@ -44,12 +51,12 @@ class Phase13ExtraFeaturesTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->client = \App\Models\Client::create([
+        $this->client = Client::create([
             'name' => 'Test Client',
             'company_id' => $this->company->id,
         ]);
 
-        $this->contract = \App\Models\Contract::create([
+        $this->contract = Contract::create([
             'client_id' => $this->client->id,
             'contract_number' => 'CON-TEST',
             'name' => 'Test Contract',
@@ -125,6 +132,15 @@ class Phase13ExtraFeaturesTest extends TestCase
     public function test_daily_log_validation_mandates_odometer_photo()
     {
         $this->actingAs($this->user);
+
+        // A day is only accepted inside the driver's assignment on the contract.
+        ContractAssignment::create([
+            'employee_id' => $this->employee->id,
+            'contract_id' => $this->contract->id,
+            'start_date' => '2026-05-01',
+            'status' => 'active',
+            'company_id' => $this->company->id,
+        ]);
 
         // Try creating daily log with odometer_end but NO odometer_photo_path. Should fail validation.
         $response = $this->postJson('/api/daily-logs', [

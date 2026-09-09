@@ -14,9 +14,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Saving one month of daily logs used to fire DailyLogObserver once per row, and every firing
- * rebuilt every payroll slip in the month's draft run. A 31-day month therefore paid for 31
- * identical rebuilds and the request took 23 seconds. The rebuild must happen once.
+ * Saving a month of daily logs writes every row, once, and nothing else happens on the way.
+ *
+ * Every saved row used to fire DailyLogObserver, which rebuilt every slip in the retired legacy
+ * payroll run — 31 identical rebuilds for a 31-day month, 23 seconds a request — and stamped a
+ * `driver_commission` column that only the reports read, and then trusted over the payroll sheet.
+ * The observer no longer recalculates anything: a month is priced when a screen asks for it, from
+ * the logs as they stand.
  */
 class DailyLogBulkRecalculationTest extends TestCase
 {
@@ -51,7 +55,6 @@ class DailyLogBulkRecalculationTest extends TestCase
             'password' => bcrypt('password'),
             'role' => 'admin',
             'company_id' => $this->company->id,
-            'is_active' => true,
         ]);
 
         $client = Client::create(['name' => 'C', 'company_id' => $this->company->id]);
@@ -61,8 +64,8 @@ class DailyLogBulkRecalculationTest extends TestCase
             'employee_number' => 'EMP-RC-1',
             'company_id' => $this->company->id,
             'status' => 'active',
+            'role_category' => 'driver',
             'date_of_joining' => '2026-01-01',
-            'basic_salary' => 300,
         ]);
 
         $this->vehicle = Vehicle::create([
@@ -82,7 +85,6 @@ class DailyLogBulkRecalculationTest extends TestCase
             'end_date' => '2026-12-31',
             'company_id' => $this->company->id,
             'currency' => 'KWD',
-            'rate_per_order' => 1.000,
         ]);
 
         ContractAssignment::create([
@@ -113,26 +115,32 @@ class DailyLogBulkRecalculationTest extends TestCase
         return ['logs' => $logs];
     }
 
-    public function test_the_month_is_still_recalculated_after_a_bulk_save(): void
+    public function test_a_bulk_save_writes_every_row_once(): void
     {
         $this->postJson('/api/daily-logs/bulk', $this->julyPayload(3))->assertOk();
 
-        $this->assertSame(
-            3,
-            DailyLog::withoutGlobalScopes()->where('employee_id', $this->driver->id)->count()
-        );
+        $rows = DailyLog::withoutGlobalScopes()->where('employee_id', $this->driver->id)->get();
 
-        // recalculateEmployeeCommissions ran and stamped the month's logs.
-        $this->assertSame(
-            15,
-            (int) DailyLog::withoutGlobalScopes()->where('employee_id', $this->driver->id)->sum('orders_count')
-        );
+        $this->assertCount(3, $rows);
+        $this->assertSame(15, (int) $rows->sum('orders_count'));
+
+        // Saved again, the same three days are replaced, not duplicated.
+        $this->postJson('/api/daily-logs/bulk', $this->julyPayload(3))->assertOk();
+        $this->assertSame(3, DailyLog::withoutGlobalScopes()->where('employee_id', $this->driver->id)->count());
     }
 
-    /**
-     * A single-row save is unchanged: it still recalculates immediately.
-     */
-    public function test_a_single_row_save_still_recalculates_inline(): void
+    public function test_nothing_is_stamped_on_the_row_by_the_save(): void
+    {
+        $this->postJson('/api/daily-logs/bulk', $this->julyPayload(1))->assertOk();
+
+        $log = DailyLog::withoutGlobalScopes()->where('employee_id', $this->driver->id)->firstOrFail();
+
+        // The retired engine's columns stay empty: the month is priced when it is read.
+        $this->assertEquals(0.0, (float) $log->driver_commission);
+        $this->assertEquals(0.0, (float) $log->income_amount);
+    }
+
+    public function test_a_single_row_save_is_unaffected(): void
     {
         $log = DailyLog::create([
             'employee_id' => $this->driver->id,

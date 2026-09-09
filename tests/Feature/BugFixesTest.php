@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Client;
 use App\Models\Company;
 use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\DailyLog;
 use App\Models\DriverGuarantee;
 use App\Models\Employee;
@@ -14,6 +15,7 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use App\Models\VehicleExpense;
+use App\Models\VehicleType;
 use App\Models\Violation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -172,21 +174,16 @@ class BugFixesTest extends TestCase
             'plate_number' => 'V-1001',
         ]);
 
-        // 1. Math check in store: online + cash must equal orders_count
-        $response = $this->actingAs($this->user1)
-            ->postJson('/api/daily-logs', [
-                'employee_id' => $employee->id,
-                'vehicle_id' => $vehicle->id,
-                'contract_id' => $contract->id,
-                'log_date' => '2026-05-21',
-                'orders_count' => 10,
-                'orders_online' => 6,
-                'orders_cash' => 3, // 6 + 3 = 9 !== 10
-            ]);
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors('orders_count');
+        ContractAssignment::create([
+            'company_id' => $this->company1->id,
+            'employee_id' => $employee->id,
+            'contract_id' => $contract->id,
+            'start_date' => '2026-01-01',
+            'status' => 'active',
+        ]);
 
-        // Valid math store
+        // 1. A day is written with its total; the online/cash split is recorded as sent, never
+        //    demanded to add up — nothing prices from it.
         $response = $this->actingAs($this->user1)
             ->postJson('/api/daily-logs', [
                 'employee_id' => $employee->id,
@@ -195,7 +192,7 @@ class BugFixesTest extends TestCase
                 'log_date' => '2026-05-21',
                 'orders_count' => 10,
                 'orders_online' => 6,
-                'orders_cash' => 4, // 6 + 4 = 10
+                'orders_cash' => 4,
                 'odometer_start' => 1000,
                 'odometer_end' => 1050,
                 'odometer_photo_path' => 'test-photo.jpg',
@@ -203,13 +200,19 @@ class BugFixesTest extends TestCase
         $response->assertStatus(201);
         $logId = $response->json('id');
 
-        // 2. Math check in update
+        // 2. A reading taken needs its photo
         $response = $this->actingAs($this->user1)
-            ->putJson("/api/daily-logs/{$logId}", [
-                'orders_count' => 15, // online=6, cash=4 (sum=10 !== 15)
+            ->postJson('/api/daily-logs', [
+                'employee_id' => $employee->id,
+                'vehicle_id' => $vehicle->id,
+                'contract_id' => $contract->id,
+                'log_date' => '2026-05-22',
+                'orders_count' => 3,
+                'odometer_start' => 1050,
+                'odometer_end' => 1090,
             ]);
         $response->assertStatus(422);
-        $response->assertJsonValidationErrors('orders_count');
+        $response->assertJsonValidationErrors('odometer_photo_path');
 
         // 3. Odometer consistency in update (end must be >= start)
         $response = $this->actingAs($this->user1)
@@ -598,7 +601,9 @@ class BugFixesTest extends TestCase
     }
 
     /**
-     * Test Contract Profitability Calculation algorithm
+     * The main dashboard's profitability reads the contract's own pricing rules and its payroll
+     * sheet — not `daily_logs.income_amount`, `driver_commission` or `employees.actual_salary`,
+     * the three columns the contract path never fills.
      */
     public function test_contract_profitability_calculation(): void
     {
@@ -609,17 +614,21 @@ class BugFixesTest extends TestCase
             'name' => 'Client A',
         ]);
 
+        $type = VehicleType::create(['company_id' => $this->company1->id, 'name' => 'Car', 'name_ar' => 'سيارة']);
+
         $contract = Contract::create([
             'company_id' => $this->company1->id,
             'client_id' => $client->id,
             'contract_number' => 'C-PROFIT',
             'name' => 'Profitability Contract',
-            'payment_type' => 'hybrid',
-            'rate_per_order' => 1.5,
-            'fixed_monthly' => 500,
             'start_date' => '2026-05-01',
             'end_date' => '2026-10-31', // 6 months
             'expected_total_profit' => 6000, // expected_monthly_profit = 1000
+            'default_required_work_days' => 26,
+            'client_payment_method' => 'fixed',
+            'client_pricing_rules' => [(string) $type->id => ['payment_method' => 'fixed', 'fixed_amount' => 500]],
+            'driver_payment_method' => 'fixed',
+            'driver_pricing_rules' => [(string) $type->id => ['payment_method' => 'fixed', 'fixed_amount' => 300]],
         ]);
 
         $this->assertEquals(1000.0, (float) $contract->fresh()->expected_monthly_profit);
@@ -628,48 +637,40 @@ class BugFixesTest extends TestCase
             'company_id' => $this->company1->id,
             'name' => 'Driver Profit Test',
             'date_of_joining' => '2026-01-01',
-            'pay_type' => 'hybrid',
-            'official_salary' => 300,
-            'actual_salary' => 300,
-            'rate_per_order' => 0.25,
+            'role_category' => 'driver',
+            'status' => 'active',
         ]);
 
         $vehicle = Vehicle::create([
             'company_id' => $this->company1->id,
             'plate_number' => 'V-PROFIT',
+            'vehicle_type_id' => $type->id,
         ]);
 
-        // Assign vehicle to driver and contract
-        $assignment = VehicleAssignment::create([
+        ContractAssignment::create([
             'company_id' => $this->company1->id,
-            'vehicle_id' => $vehicle->id,
             'employee_id' => $employee->id,
             'contract_id' => $contract->id,
-            'assigned_date' => '2026-05-01',
-            'is_active' => true,
+            'start_date' => '2026-05-01',
+            'status' => 'active',
         ]);
 
-        // Create log on 2026-05-15
-        $log = DailyLog::create([
+        // One working day of ten orders on 2026-05-15.
+        DailyLog::create([
             'company_id' => $this->company1->id,
             'employee_id' => $employee->id,
             'vehicle_id' => $vehicle->id,
             'contract_id' => $contract->id,
             'log_date' => '2026-05-15',
             'orders_count' => 10,
-            'orders_online' => 5,
-            'orders_cash' => 5,
-            'rate_per_order' => 1.5,
-            'income_amount' => 15,
-            'driver_commission' => 2.5,
+            'driver_status' => 'working',
             'cash_collected' => 20,
             'cash_pending' => 20,
-            'odometer_photo_path' => 'test.jpg',
             'created_by' => $this->user1->id,
         ]);
 
-        // Create a vehicle expense
-        $expense = VehicleExpense::create([
+        // A vehicle expense on a day the vehicle worked this contract belongs to the contract.
+        VehicleExpense::create([
             'company_id' => $this->company1->id,
             'vehicle_id' => $vehicle->id,
             'expense_type' => 'Fuel',
@@ -677,7 +678,6 @@ class BugFixesTest extends TestCase
             'expense_date' => '2026-05-15',
         ]);
 
-        // Query profitability API
         $response = $this->actingAs($this->user1)
             ->getJson('/api/dashboard/contracts-profitability?period=monthly&year=2026&month=5');
 
@@ -686,10 +686,13 @@ class BugFixesTest extends TestCase
 
         $this->assertNotNull($resContract);
         $this->assertEquals(1000.0, (float) $resContract['expected_profit']);
-        $this->assertEquals(515.0, (float) $resContract['actual_revenue']); // 500 fixed + 15 log income
+        // The client's flat monthly fee for the type that worked.
+        $this->assertEquals(500.0, (float) $resContract['actual_revenue']);
         $this->assertEquals(100.0, (float) $resContract['vehicle_costs']);
-        $this->assertEquals(2.5, (float) $resContract['driver_commissions']);
-        $this->assertEquals(300.0, (float) $resContract['allocated_salaries']); // 100% of 300 base salary
-        $this->assertEquals(-887.5, (float) $resContract['variance']); // 112.5 - 1000
+        // One paid day of a 300.000 salary over the contract's 26 days — the payroll sheet's figure.
+        $this->assertEquals(11.538, (float) $resContract['allocated_salaries']);
+        $this->assertEquals(0.0, (float) $resContract['driver_commissions']);
+        $this->assertEquals(388.462, (float) $resContract['actual_profit']); // 500 − 11.538 − 100
+        $this->assertEquals(-611.538, (float) $resContract['variance']);
     }
 }

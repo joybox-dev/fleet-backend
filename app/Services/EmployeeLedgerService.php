@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Http\Controllers\Api\PayrollController;
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\ConsolidatedPayrollRun;
 use App\Models\Contract;
@@ -14,10 +13,13 @@ use App\Models\DailyLog;
 use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\MaintenanceRecord;
+use App\Models\PayrollDisbursement;
 use App\Models\SalaryAdvance;
 use App\Models\Vehicle;
+use App\Models\VehicleType;
 use App\Models\Violation;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 /**
  * One employee's month-by-month record: what they earned, what came off, and what was left.
@@ -64,19 +66,37 @@ class EmployeeLedgerService
             ->get()
             ->groupBy(fn ($d) => $d->run ? $d->run->year.'-'.$d->run->month : 'unknown');
 
+        // What was actually paid out, per month it was paid against. A month is owed until one
+        // of these says otherwise.
+        $paid = PayrollDisbursement::withoutGlobalScopes()
+            ->where('employee_id', $employee->id)
+            ->with(['run:id,year,month', 'createdBy:id,name'])
+            ->orderBy('paid_at')
+            ->orderBy('id')
+            ->get();
+        $paidByMonth = $paid->groupBy(fn ($p) => $p->run ? $p->run->year.'-'.$p->run->month : 'unknown');
+
         $rows = [];
         foreach ($months as [$year, $month]) {
             $key = $year.'-'.$month;
             $run = $approvedRuns->get($key);
             $snapshotRow = $run ? self::driverFromSnapshot($run, $employee->id) : null;
 
-            $rows[] = $snapshotRow
+            $row = $snapshotRow
                 ? self::fromSnapshot($year, $month, $snapshotRow, $charged->get($key), self::cashCollected(
                     $employee->id,
                     sprintf('%04d-%02d-01', $year, $month),
                     Carbon::create($year, $month, 1)->endOfMonth()->toDateString()
                 ))
                 : self::projected($employee, $year, $month);
+
+            $paidRows = $paidByMonth->get($key, collect());
+            $row['disbursements'] = $paidRows->map(fn (PayrollDisbursement $p) => $p->toRow())->values()->all();
+            $row['disbursed_bank'] = round((float) $paidRows->sum('bank_amount'), 3);
+            $row['disbursed_cash'] = round((float) $paidRows->sum('cash_amount'), 3);
+            $row['disbursed_total'] = round($row['disbursed_bank'] + $row['disbursed_cash'], 3);
+
+            $rows[] = $row;
         }
 
         usort($rows, fn ($a, $b) => [$b['year'], $b['month']] <=> [$a['year'], $a['month']]);
@@ -96,13 +116,88 @@ class EmployeeLedgerService
             'sources' => self::SOURCES,
             'months' => $rows,
             'totals' => self::sumRows($rows),
-            // What actually stands against the driver today: every approved month applied in the
-            // order it was approved. Anything since is a review copy and has taken nothing off him.
+            // What actually stands between the driver and the company today: every approved month
+            // applied in the order it was approved, less every payment recorded against one. An
+            // open month is a review copy and has taken nothing off him.
             'settled_balance' => $settledBalance,
             'settled_through' => $settledThrough,
             'unapproved_months' => collect($rows)->where('carries_forward', false)
                 ->where('has_activity', true)->pluck('label')->values()->all(),
+            'movements' => self::movements($employee, $approvedRuns, $paid, $fromYm, $toYm),
         ];
+    }
+
+    /**
+     * The account as a sequence of dated movements rather than a stack of months: an approved
+     * month enters on the day it was approved, a payment on the day it was made — whichever month
+     * it settles. The owner's own requirement: a payment shows on the day it happened, not folded
+     * into the month it belongs to, so the statement reads like a bank's.
+     *
+     * The running figure here and the month chain land on the same balance; they only differ in
+     * the order the same entries are read.
+     *
+     * @param  Collection<string, ConsolidatedPayrollRun>  $approvedRuns
+     * @param  Collection<int, PayrollDisbursement>  $paid
+     * @return array<int, array<string, mixed>>
+     */
+    private static function movements(Employee $employee, $approvedRuns, $paid, ?string $fromYm, ?string $toYm): array
+    {
+        $entries = [];
+
+        foreach ($approvedRuns as $run) {
+            $driver = self::driverFromSnapshot($run, $employee->id);
+            if (! $driver) {
+                continue;
+            }
+            $label = sprintf('%02d/%d', $run->month, $run->year);
+            $entries[] = [
+                'date' => $run->approved_at?->toDateString(),
+                'at' => $run->approved_at?->toDateTimeString(),
+                'order' => 0,
+                'kind' => 'month',
+                'label' => "اعتماد كشف {$label} — صافي الشهر",
+                'month_label' => $label,
+                'amount' => round((float) ($driver['final_net_payout'] ?? 0), 3),
+                'run_id' => (int) $run->id,
+            ];
+        }
+
+        foreach ($paid as $p) {
+            $label = $p->run ? sprintf('%02d/%d', $p->run->month, $p->run->year) : '—';
+            $parts = [];
+            if ((float) $p->bank_amount > 0) {
+                $parts[] = 'تحويل بنكي '.number_format((float) $p->bank_amount, 3);
+            }
+            if ((float) $p->cash_amount > 0) {
+                $parts[] = 'نقداً '.number_format((float) $p->cash_amount, 3);
+            }
+            $entries[] = [
+                'date' => $p->paid_at?->toDateString(),
+                'at' => $p->created_at?->toDateTimeString(),
+                'order' => 1,
+                'kind' => 'disbursement',
+                'label' => "صرف راتب {$label} — ".implode(' + ', $parts),
+                'month_label' => $label,
+                'amount' => -$p->total(),
+                'disbursement' => $p->toRow(),
+            ];
+        }
+
+        usort($entries, fn ($a, $b) => [$a['date'], $a['order'], $a['at']] <=> [$b['date'], $b['order'], $b['at']]);
+
+        $balance = 0.0;
+        foreach ($entries as $i => $entry) {
+            $balance = round($balance + $entry['amount'], 3);
+            $entries[$i]['balance_after'] = $balance;
+        }
+
+        // The balance after each line is built over the whole account, then the window is cut —
+        // a statement for one month still has to show where it started from.
+        return array_values(array_filter($entries, function ($entry) use ($fromYm, $toYm) {
+            $ym = substr((string) $entry['date'], 0, 7);
+
+            return ! (($fromYm && $ym < $fromYm) || ($toYm && $ym > $toYm));
+        }));
     }
 
     /**
@@ -123,6 +218,10 @@ class EmployeeLedgerService
      * A month that is not approved shows the balance that actually stands today, and says plainly
      * that it adds nothing to it. That figure is never hidden: a carried balance the driver cannot
      * see on his own account is the failure this screen exists to prevent.
+     *
+     * What a month hands on is its net less what was paid against it. An approved month nobody
+     * has paid stays owed to the driver in full; one that ended as a debt stays against him. The
+     * rule itself lives in PayrollBalanceService so the consolidated sheet reads the same figure.
      *
      * @param  array<int, array<string, mixed>>  $rows  newest month first
      * @param  array<string, int>  $approvalOrder  "year-month" => the run's approval sequence
@@ -145,7 +244,10 @@ class EmployeeLedgerService
         foreach (array_keys($approvedKeys) as $i) {
             $rows[$i]['carried_in'] = round($balance, 3);
             $rows[$i]['carried_in_from'] = $from;
-            $balance = round($balance + (float) $rows[$i]['net_payout'], 3);
+            $balance = round($balance + PayrollBalanceService::contribution(
+                (float) $rows[$i]['net_payout'],
+                (float) ($rows[$i]['disbursed_total'] ?? 0)
+            ), 3);
             $rows[$i]['closing_balance'] = $balance;
             $rows[$i]['carries_forward'] = true;
             // Only an approved month can be where the balance turned: an open month has taken
@@ -324,6 +426,11 @@ class EmployeeLedgerService
             ], $driver['contracts_worked'] ?? []),
             'gross_earnings' => round((float) ($driver['gross_contract_earnings'] ?? 0), 3),
             'manual_adjustments' => round((float) ($driver['manual_adjustments_total'] ?? 0), 3),
+            // The settlements themselves, not just their total. An approved month listed its
+            // contracts and its charges but not the bonus or write-off between them, so the lines
+            // on the statement did not reach the month's own closing figure. The contract sheet
+            // froze each one as a line of its own working; they are read back from there.
+            'manual_adjustment_items' => self::adjustmentLinesFromSnapshot($driver),
             'deductions' => $deductions,
             'deductions_total' => round((float) ($driver['deductions_total'] ?? array_sum($deductions)), 3),
             'net_payout' => round((float) ($driver['final_net_payout'] ?? 0), 3),
@@ -336,6 +443,38 @@ class EmployeeLedgerService
             ])->values()->all(),
             'has_activity' => true,
         ];
+    }
+
+    /**
+     * The manual settlements frozen inside an approved month, one per line, in the shape the open
+     * month uses. The contract sheet appends each settlement to the driver's working as a line
+     * labelled «زيادة / مكافأة يدوية (reason)» or «خصم يدوي (reason)», already signed, and the
+     * consolidated snapshot keeps that working per contract.
+     *
+     * @param  array<string, mixed>  $driver  a driver row of a consolidated snapshot
+     * @return array<int, array{amount: float, reason: string, contract_name: string}>
+     */
+    private static function adjustmentLinesFromSnapshot(array $driver): array
+    {
+        $items = [];
+
+        foreach ($driver['contracts_worked'] ?? [] as $contract) {
+            foreach ($contract['calculation_details'] ?? [] as $line) {
+                $label = (string) ($line['label'] ?? '');
+                if (! str_contains($label, 'يدوي')) {
+                    continue;
+                }
+                // "خصم يدوي (السبب)" → "السبب"; the label is kept whole when it has no bracket.
+                $reason = preg_match('/\((.*)\)\s*$/u', $label, $m) ? $m[1] : $label;
+                $items[] = [
+                    'amount' => round((float) ($line['amount'] ?? 0), 3),
+                    'reason' => $reason,
+                    'contract_name' => (string) ($contract['contract_name'] ?? ''),
+                ];
+            }
+        }
+
+        return $items;
     }
 
     /**
@@ -559,66 +698,46 @@ class EmployeeLedgerService
         $vehicleTypeById = Vehicle::withoutGlobalScopes()
             ->whereIn('id', $logs->pluck('vehicle_id')->filter()->unique()->all())
             ->pluck('vehicle_type_id', 'id');
+        $vehicleTypeNames = VehicleType::withoutGlobalScopes()
+            ->whereIn('id', $vehicleTypeById->values()->filter()->unique()->values())
+            ->get()
+            ->mapWithKeys(fn ($t) => [(int) $t->id => ($t->name_ar ?: $t->name)]);
 
-        $overrides = $assignment->overrides ?: collect();
+        // Priced by the very routine the contract sheet uses — by override window and by vehicle
+        // type driven, with the contract's working-day cap spent across the stretches — so an open
+        // month here cannot disagree with the sheet it will one day be frozen from. This used to
+        // carry its own copy of that split, minus the cap.
+        $priced = ContractSheetService::priceDriverMonth(
+            $employee,
+            $contract,
+            $assignment,
+            $logs,
+            $assignment->overrides ?: collect(),
+            $vehicleTypeById,
+            $vehicleTypeNames,
+            $effStart
+        );
+        $calc = $priced['calc'];
+        $gross = (float) ($calc['gross_contract_earnings'] ?? 0);
+        $orders = (int) ($calc['orders_count'] ?? 0);
 
-        // Split by vehicle type as well as by override, which is what the contract sheet does.
-        //
-        // Pricing rules are per vehicle type, so a driver who spent half the month on a bike and
-        // half on a small car has two prices, not one. Resolving a single type for the whole month
-        // gave up whenever he had driven more than one and priced the month at 0.000 — and because
-        // this screen subtracts his deductions from that, a driver who had earned 234.000 was shown
-        // owing the company 73.000. It never showed on an approved month, which is read from its
-        // frozen sheet; every open month was wrong.
-        $segments = [];
-        foreach ($logs as $logRow) {
-            $date = substr((string) $logRow->log_date, 0, 10);
-            $override = $overrides->first(function ($ov) use ($date) {
-                $from = $ov->effective_from ? substr((string) $ov->effective_from, 0, 10) : null;
-                $to = $ov->effective_to ? substr((string) $ov->effective_to, 0, 10) : null;
-
-                return (! $from || $from <= $date) && (! $to || $to >= $date);
-            });
-            $segVtId = $vehicleTypeById[$logRow->vehicle_id] ?? null;
-            $key = ($override ? 'ov:'.$override->id : 'base').'|vt:'.($segVtId ?? 'none');
-            $segments[$key] ??= [
-                'override' => $override,
-                'vt_id' => $segVtId === null ? null : (int) $segVtId,
-                'logs' => collect(),
-            ];
-            $segments[$key]['logs']->push($logRow);
-        }
-
-        $gross = 0.0;
-        $orders = 0;
-        $label = '';
         // Why the salary is the number it is: the engine already explains itself line by line —
         // the base for the days worked, a target missed, a bonus earned, orders left unpriced.
         // The statement shows that working rather than a total the reader has to take on trust.
         $lines = [];
-
-        foreach ($segments as $segment) {
-            $calc = ContractPayrollService::calculateDriverContractPayroll(
-                $employee, $contract, $assignment, $segment['override'], $segment['logs'], $segment['vt_id']
-            );
-            $gross += (float) ($calc['gross_contract_earnings'] ?? 0);
-            $orders += (int) ($calc['orders_count'] ?? 0);
-
-            foreach ($calc['calculation_details'] ?? [] as $line) {
-                $lines[] = [
-                    'label' => $line['label'] ?? '',
-                    'formula' => $line['formula'] ?? '',
-                    'amount' => round((float) ($line['amount'] ?? 0), 3),
-                    'is_unpriced' => (bool) ($line['is_unpriced'] ?? false),
-                ];
-            }
-
-            if ($label === '') {
-                $method = $segment['override']?->override_type
-                    ?? ($contract->driver_pricing_rules[$segment['vt_id']]['payment_method'] ?? null);
-                $label = $method ? PayrollController::getPaymentMethodLabel($method) : '';
-            }
+        foreach ($calc['calculation_details'] ?? [] as $line) {
+            $lines[] = [
+                'label' => $line['label'] ?? '',
+                'formula' => $line['formula'] ?? '',
+                'amount' => round((float) ($line['amount'] ?? 0), 3),
+                'is_unpriced' => (bool) ($line['is_unpriced'] ?? false),
+            ];
         }
+
+        $vtIds = $priced['vehicle_type_ids'];
+        $method = $priced['active_override']?->override_type
+            ?? (count($vtIds) === 1 ? ($contract->driver_pricing_rules[$vtIds[0]]['payment_method'] ?? null) : null);
+        $label = $method ? ContractPayrollService::paymentMethodLabel($method) : '';
 
         return [
             'contract_id' => $contract->id,
@@ -661,9 +780,11 @@ class EmployeeLedgerService
         $orders = 0;
         $days = 0;
         $cash = 0.0;
+        $disbursed = 0.0;
 
         foreach ($rows as $row) {
             $cash += $row['cash_collected'] ?? 0;
+            $disbursed += $row['disbursed_total'] ?? 0;
             $gross += $row['gross_earnings'];
             $net += $row['net_payout'];
             $orders += $row['orders_count'];
@@ -684,6 +805,7 @@ class EmployeeLedgerService
             'deductions' => $deductions,
             'deductions_total' => round(array_sum($deductions), 3),
             'net_payout' => round($net, 3),
+            'disbursed_total' => round($disbursed, 3),
         ];
     }
 }

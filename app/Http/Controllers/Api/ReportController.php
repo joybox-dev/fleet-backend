@@ -6,23 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Models\Employee;
-use App\Models\MaintenanceRecord;
 use App\Models\Vehicle;
 use App\Models\Violation;
+use App\Services\ContractProfitabilityService;
 use App\Services\ContractRevenueService;
 use App\Services\DeductionsReportService;
-use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
 
 class ReportController extends Controller
 {
-    /**
-     * GET /api/reports/expiring-docs
-     * Vehicles + employees with documents expiring within 60 days.
-     * From meeting: red = expired, warning = approaching.
-     */
     /**
      * GET /api/reports/deductions
      * Every deduction on every employee, and whether it has been taken yet.
@@ -34,10 +27,15 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            DeductionsReportService::build(app('current_company_id'))
+            DeductionsReportService::build($this->currentCompanyId())
         );
     }
 
+    /**
+     * GET /api/reports/expiring-docs
+     * Vehicles + employees with documents expiring within 60 days.
+     * From meeting: red = expired, warning = approaching.
+     */
     public function expiringDocs(Request $request): JsonResponse
     {
         $days = (int) $request->get('days', 60);
@@ -166,15 +164,29 @@ class ReportController extends Controller
 
         $byDriver = DailyLog::with('employee:id,name')
             ->whereBetween('log_date', [$from, $to])
-            ->selectRaw('employee_id, SUM(orders_count) as total_orders, SUM(income_amount) as total_income')
+            ->selectRaw('employee_id, SUM(orders_count) as total_orders')
             ->groupBy('employee_id')
             ->orderByDesc('total_orders')
             ->get();
 
+        // Billed from each contract's client rules over the range — the stored per-log income
+        // was a flat rate no live contract has, so this read 0.000 on every week.
+        $totalIncome = 0.0;
+        $logs = DailyLog::with('vehicle:id,vehicle_type_id')
+            ->whereBetween('log_date', [$from, $to])
+            ->get(['id', 'contract_id', 'vehicle_id', 'orders_count', 'zone', 'notes']);
+        $contracts = Contract::whereIn('id', $logs->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
+        foreach ($logs->groupBy('contract_id') as $contractId => $contractLogs) {
+            $contract = $contracts->get($contractId);
+            if ($contract) {
+                $totalIncome += ContractRevenueService::forContractMonth($contract, $contractLogs)['revenue'];
+            }
+        }
+
         return response()->json([
             'period' => ['from' => $from, 'to' => $to],
             'total_orders' => $byDriver->sum('total_orders'),
-            'total_income' => $byDriver->sum('total_income'),
+            'total_income' => round($totalIncome, 3),
             'top_5_drivers' => $byDriver->take(5),
             'all_drivers' => $byDriver,
         ]);
@@ -200,133 +212,23 @@ class ReportController extends Controller
     /**
      * GET /api/reports/vehicle-profitability?year=2026&month=4
      *
-     * Per-vehicle P&L for the given month:
-     *  - Income:      SUM(daily_logs.income_amount)
-     *  - Maintenance: SUM(maintenance_records.actual_cost) where company paid (approved/completed, NOT driver-liable)
-     *  - Violations:  SUM(violations.amount) where company-liable (is_driver_liable = false)
-     *  - Net Profit:  income - (maintenance + violations)
+     * Per-vehicle P&L for the month, read from ContractProfitabilityService: the vehicle's share
+     * of the revenue and driver pay of every contract it worked, less the repairs and fines the
+     * company bore on it. The old report summed `daily_logs.income_amount` — 0.000 on every live
+     * log — and showed every vehicle as a loss.
      */
     public function vehicleProfitability(Request $request): JsonResponse
     {
         $year = (int) $request->get('year', now()->year);
         $month = (int) $request->get('month', now()->month);
-        $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
-        $endDate = Carbon::parse($startDate)->endOfMonth()->toDateString();
 
-        $vehicles = Vehicle::select('id', 'plate_number', 'make', 'model', 'status')
-            ->whereIn('status', ['working', 'available', 'maintenance'])
-            ->get();
-        $vehicleIds = $vehicles->pluck('id');
-
-        // ── 1. All daily logs for the month ──
-        $logs = DailyLog::whereIn('vehicle_id', $vehicleIds)
-            ->whereBetween('log_date', [$startDate, $endDate])
-            ->get();
-        $logsByVehicle = $logs->groupBy('vehicle_id');
-
-        // ── 2. Revenue per vehicle (per_order: income_amount, fixed: proportional fixed_monthly) ──
-        $contractIds = $logs->pluck('contract_id')->unique();
-        $contracts = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
-        $revenueMap = [];
-        foreach ($logs->groupBy('contract_id') as $cId => $cLogs) {
-            $contract = $contracts[$cId] ?? null;
-            if (! $contract) {
-                continue;
-            }
-            foreach ($cLogs->groupBy('vehicle_id') as $vId => $vLogs) {
-                if ($contract->payment_type === 'fixed') {
-                    $totalOnContract = $cLogs->sum('orders_count');
-                    $vehicleOrders = $vLogs->sum('orders_count');
-                    $share = $totalOnContract > 0
-                        ? (float) $contract->fixed_monthly * ($vehicleOrders / $totalOnContract)
-                        : 0;
-                    $revenueMap[$vId] = ($revenueMap[$vId] ?? 0) + $share;
-                } else {
-                    $revenueMap[$vId] = ($revenueMap[$vId] ?? 0) + (float) $vLogs->sum('income_amount');
-                }
-            }
-        }
-
-        // ── 3. Driver cost per vehicle (proportional allocation) ──
-        $employeeIds = $logs->pluck('employee_id')->unique();
-        $employees = Employee::whereIn('id', $employeeIds)->get()->keyBy('id');
-        $totalOrdersByEmp = DailyLog::whereIn('employee_id', $employeeIds)
-            ->whereBetween('log_date', [$startDate, $endDate])
-            ->groupBy('employee_id')
-            ->selectRaw('employee_id, SUM(orders_count) as total')
-            ->pluck('total', 'employee_id');
-
-        $driverCostMap = [];
-        foreach ($logsByVehicle as $vId => $vLogs) {
-            $cost = 0;
-            foreach ($vLogs->groupBy('employee_id') as $empId => $empLogs) {
-                $emp = $employees[$empId] ?? null;
-                if (! $emp) {
-                    continue;
-                }
-                $ordersHere = $empLogs->sum('orders_count');
-                $totalOrders = $totalOrdersByEmp[$empId] ?? 0;
-                $cost += $empLogs->sum('driver_commission');
-                if ((float) $emp->actual_salary > 0 && $totalOrders > 0) {
-                    $cost += (float) $emp->actual_salary * ($ordersHere / $totalOrders);
-                }
-            }
-            $driverCostMap[$vId] = round($cost, 3);
-        }
-
-        // ── 4. Company-paid maintenance ──
-        $maintenance = MaintenanceRecord::whereIn('vehicle_id', $vehicleIds)
-            ->whereBetween('maintenance_date', [$startDate, $endDate])
-            ->whereIn('status', ['approved', 'completed'])
-            ->where(fn ($q) => $q->where('is_driver_liable', false)->orWhereNull('is_driver_liable'))
-            ->groupBy('vehicle_id')
-            ->selectRaw('vehicle_id, SUM(COALESCE(actual_cost, estimated_cost)) as total')
-            ->pluck('total', 'vehicle_id')->map(fn ($v) => (float) $v);
-
-        // ── 5. Company-liable violations ──
-        $violations = Violation::whereIn('vehicle_id', $vehicleIds)
-            ->whereBetween('violation_date', [$startDate, $endDate])
-            ->where('is_driver_liable', false)
-            ->groupBy('vehicle_id')
-            ->selectRaw('vehicle_id, SUM(amount) as total')
-            ->pluck('total', 'vehicle_id')->map(fn ($v) => (float) $v);
-
-        // ── 6. Assemble P&L ──
-        $rows = $vehicles->map(function ($v) use ($revenueMap, $driverCostMap, $maintenance, $violations, $logsByVehicle) {
-            $rev = round($revenueMap[$v->id] ?? 0, 3);
-            $drv = round($driverCostMap[$v->id] ?? 0, 3);
-            $mnt = round($maintenance[$v->id] ?? 0, 3);
-            $vio = round($violations[$v->id] ?? 0, 3);
-            $net = round($rev - $drv - $mnt - $vio, 3);
-            $vLogs = $logsByVehicle[$v->id] ?? collect();
-
-            return [
-                'vehicle_id' => $v->id,
-                'plate_number' => $v->plate_number,
-                'label' => trim("{$v->make} {$v->model}"),
-                'status' => $v->status,
-                'total_orders' => (int) $vLogs->sum('orders_count'),
-                'revenue' => $rev,
-                'driver_cost' => $drv,
-                'total_maintenance' => $mnt,
-                'total_violations' => $vio,
-                'net_profit' => $net,
-            ];
-        })->sortByDesc('net_profit')->values();
-
-        $totals = [
-            'revenue' => round($rows->sum('revenue'), 3),
-            'driver_cost' => round($rows->sum('driver_cost'), 3),
-            'total_maintenance' => round($rows->sum('total_maintenance'), 3),
-            'total_violations' => round($rows->sum('total_violations'), 3),
-            'net_profit' => round($rows->sum('net_profit'), 3),
-        ];
+        $result = ContractProfitabilityService::forVehiclesMonth($this->currentCompanyId(), $year, $month);
 
         return response()->json([
             'year' => $year,
             'month' => $month,
-            'vehicles' => $rows,
-            'totals' => $totals,
+            'vehicles' => $result['vehicles'],
+            'totals' => $result['totals'],
         ]);
     }
 
@@ -363,126 +265,48 @@ class ReportController extends Controller
 
     /**
      * GET /api/reports/contract-profitability
-     * RP-010: Full P&L per contract — Revenue, Driver Cost, Net Profit.
+     * RP-010: Full P&L per contract — the same figures the contract's dashboard shows.
      */
-    /**
-     * What a contract's drivers earned for the month, taken from the payroll sheet — the figure the
-     * payroll screens pay from, rather than a stored column the contract path never writes.
-     *
-     * @param  Collection  $logs  that contract's logs for the period
-     */
-    private function driverPayFromSheet(Contract $contract, $logs): float
-    {
-        $dates = $logs->pluck('log_date')->filter();
-        if ($dates->isEmpty()) {
-            return 0.0;
-        }
-
-        $months = $dates
-            ->map(fn ($d) => Carbon::parse($d)->format('Y-n'))
-            ->unique();
-
-        $total = 0.0;
-        foreach ($months as $ym) {
-            [$year, $month] = array_map('intval', explode('-', $ym));
-
-            $request = Request::createFrom(request());
-            $request->merge(['year' => $year, 'month' => $month]);
-
-            $sheet = json_decode(
-                app(PayrollController::class)->contractSheet($request, $contract->id)->getContent(),
-                true
-            );
-
-            foreach ($sheet['drivers'] ?? [] as $row) {
-                $total += (float) ($row['gross_contract_earnings'] ?? 0);
-            }
-        }
-
-        return round($total, 3);
-    }
-
     public function contractProfitability(Request $request): JsonResponse
     {
         $month = (int) $request->query('month', now()->month);
         $year = (int) $request->query('year', now()->year);
-        $startDate = "{$year}-".str_pad($month, 2, '0', STR_PAD_LEFT).'-01';
-        $endDate = Carbon::parse($startDate)->endOfMonth()->toDateString();
 
-        $contracts = Contract::with('client:id,name')->get();
-
-        // All logs for the month
-        $allLogs = DailyLog::whereBetween('log_date', [$startDate, $endDate])->get();
-        $logsByContract = $allLogs->groupBy('contract_id');
-
-        // Employees + total orders per employee in the ENTIRE month
-        $employeeIds = $allLogs->pluck('employee_id')->unique();
-        $employees = Employee::whereIn('id', $employeeIds)->get()->keyBy('id');
-        $totalOrdersByEmp = $allLogs->groupBy('employee_id')
-            ->map(fn ($logs) => (int) $logs->sum('orders_count'));
-
-        $rows = $contracts->map(function ($c) use ($logsByContract, $employees, $totalOrdersByEmp) {
-            $cLogs = $logsByContract[$c->id] ?? collect();
-            $ordersCount = (int) $cLogs->sum('orders_count');
-
-            // Revenue (fixed enum: 'fixed' not 'fixed_monthly')
-            $revenue = $c->payment_type === 'fixed'
-                ? max((float) $cLogs->sum('income_amount'), (float) $c->fixed_monthly)
-                : (float) $cLogs->sum('income_amount');
-
-            // Driver cost (exact chronological commissions + proportional base salary allocation)
-            $driverCost = 0;
-            foreach ($cLogs->groupBy('employee_id') as $empId => $empLogs) {
-                $emp = $employees[$empId] ?? null;
-                if (! $emp) {
-                    continue;
-                }
-                $ordersHere = $empLogs->sum('orders_count');
-                $totalOrders = $totalOrdersByEmp[$empId] ?? 0;
-                $driverCost += $empLogs->sum('driver_commission');
-                if ((float) $emp->actual_salary > 0 && $totalOrders > 0) {
-                    $driverCost += (float) $emp->actual_salary * ($ordersHere / $totalOrders);
-                }
-            }
-            $driverCost = round($driverCost, 3);
-
-            // Both figures above read columns the contract payroll path never fills —
-            // `daily_logs.income_amount`, `daily_logs.driver_commission` and
-            // `employees.actual_salary` — so this report showed 0.000 revenue against 0.000 cost on
-            // contracts carrying four thousand orders apiece. Price from the contract's own rules
-            // and read the pay from the payroll sheet, the way every other screen now does.
-            if ($revenue == 0.0) {
-                $revenue = (float) ContractRevenueService::forContractMonth($c, $cLogs)['revenue'];
-            }
-            if ($driverCost == 0.0) {
-                $driverCost = $this->driverPayFromSheet($c, $cLogs);
-            }
-
-            return [
-                'contract_id' => $c->id,
-                'contract_name' => $c->name,
-                'client_name' => $c->client?->name ?? '—',
-                'payment_type' => $c->payment_type,
-                'is_active' => $c->is_active,
-                'total_orders' => $ordersCount,
-                'revenue' => round($revenue, 3),
-                'driver_cost' => $driverCost,
-                'net_profit' => round($revenue - $driverCost, 3),
-            ];
-        })->sortByDesc('net_profit')->values();
-
-        $totals = [
-            'revenue' => round($rows->sum('revenue'), 3),
-            'driver_cost' => round($rows->sum('driver_cost'), 3),
-            'net_profit' => round($rows->sum('net_profit'), 3),
-            'total_orders' => $rows->sum('total_orders'),
-        ];
+        $rows = collect(ContractProfitabilityService::forCompanyMonth($this->currentCompanyId(), $year, $month))
+            ->map(fn (array $row) => [
+                'contract_id' => $row['contract_id'],
+                'contract_name' => $row['contract_name'],
+                'client_name' => $row['client_name'],
+                'payment_type' => $row['payment_type'],
+                'is_active' => $row['is_active'],
+                'total_orders' => $row['orders'],
+                'unpriced_orders' => $row['unpriced_orders'],
+                'revenue' => $row['revenue'],
+                'driver_cost' => $row['driver_cost'],
+                'vehicle_costs' => $row['vehicle_costs'],
+                'maintenance_cost' => $row['maintenance_cost'],
+                'violations_cost' => $row['violations_cost'],
+                'supervisors_cost' => $row['supervisors_cost'],
+                'net_profit' => $row['profit'],
+            ])
+            ->sortByDesc('net_profit')
+            ->values();
 
         return response()->json([
             'year' => $year,
             'month' => $month,
-            'contracts' => $rows,
-            'totals' => $totals,
+            'contracts' => $rows->all(),
+            'totals' => [
+                'revenue' => round($rows->sum('revenue'), 3),
+                'driver_cost' => round($rows->sum('driver_cost'), 3),
+                'vehicle_costs' => round($rows->sum('vehicle_costs'), 3),
+                'maintenance_cost' => round($rows->sum('maintenance_cost'), 3),
+                'violations_cost' => round($rows->sum('violations_cost'), 3),
+                'supervisors_cost' => round($rows->sum('supervisors_cost'), 3),
+                'net_profit' => round($rows->sum('net_profit'), 3),
+                'total_orders' => (int) $rows->sum('total_orders'),
+                'unpriced_orders' => (int) $rows->sum('unpriced_orders'),
+            ],
         ]);
     }
 
