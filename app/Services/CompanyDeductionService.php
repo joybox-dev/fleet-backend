@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\CustodyItem;
 use App\Models\DriverExpense;
+use App\Models\Employee;
 use App\Models\MaintenanceRecord;
+use App\Models\PayrollDeductionOverride;
 use App\Models\SalaryAdvance;
 use App\Models\Violation;
 use Carbon\Carbon;
@@ -49,19 +51,58 @@ class CompanyDeductionService
         $settled = self::settledSourceKeys();
         $result = [];
 
-        $add = function (int $employeeId, string $type, ?int $sourceId, float $amount, string $label) use (&$result, $settled) {
-            if ($amount <= 0) {
-                return;
-            }
+        // The owner's decisions about individual charges — take this one in a later month, take
+        // a different instalment this month. Loaded once for every company these employees belong
+        // to and consulted per charge; a charge with no decision follows the ordinary rule.
+        $overrides = PayrollDeductionOverride::withoutGlobalScopes()
+            ->whereIn('company_id', Employee::withoutGlobalScopes()->withTrashed()->whereIn('id', $employeeIds)->pluck('company_id')->unique())
+            ->with('createdBy:id,name')
+            ->orderBy('year')->orderBy('month')->orderBy('id')
+            ->get()
+            ->groupBy(fn ($o) => "{$o->source_type}:{$o->source_id}");
+        // Payroll keeps offering a landed deferral until a sheet collects it; the statement shows
+        // it in its target month only, so the months do not each count it again.
+        $decide = fn (string $type, ?int $sourceId): array => $sourceId === null
+            ? ['include' => true, 'own' => null, 'deferred_from' => null, 'amount' => null]
+            : PayrollDeductionOverride::decide($overrides->get("{$type}:{$sourceId}"), $year, $month, $originatedInMonthOnly);
+
+        $add = function (int $employeeId, string $type, ?int $sourceId, float $amount, string $label, ?array $decision = null) use (&$result, $settled, $decide) {
             if ($sourceId !== null && isset($settled["{$type}:{$sourceId}"])) {
                 return;
             }
-            $result[$employeeId] ??= ['items' => [], 'total' => 0.0];
+            $decision ??= $decide($type, $sourceId);
+
+            // A charge the owner decided to leave out of this month is still shown, as his
+            // decision, so the sheet says why the figure is smaller than the records suggest.
+            $leftOut = ! $decision['include'] || ($decision['amount'] !== null && $decision['amount'] <= 0);
+            if ($leftOut) {
+                if ($decision['own']) {
+                    $result[$employeeId] ??= ['items' => [], 'total' => 0.0, 'deferred' => []];
+                    $result[$employeeId]['deferred'][] = [
+                        'source_type' => $type,
+                        'source_id' => $sourceId,
+                        'amount' => round($amount, 3),
+                        'label' => $label,
+                        'override' => $decision['own']->toRow(),
+                    ];
+                }
+
+                return;
+            }
+            if ($amount <= 0) {
+                return;
+            }
+            if ($decision['deferred_from']) {
+                $label .= " — مؤجَّلة من {$decision['deferred_from']}";
+            }
+            $result[$employeeId] ??= ['items' => [], 'total' => 0.0, 'deferred' => []];
             $result[$employeeId]['items'][] = [
                 'source_type' => $type,
                 'source_id' => $sourceId,
                 'amount' => round($amount, 3),
                 'label' => $label,
+                'deferred_from' => $decision['deferred_from'],
+                'override' => $decision['own']?->toRow(),
             ];
             $result[$employeeId]['total'] = round($result[$employeeId]['total'] + $amount, 3);
         };
@@ -85,6 +126,35 @@ class CompanyDeductionService
                 (float) $v->driver_deduction,
                 'مخالفة مرورية'.($v->reference_number ? " ({$v->reference_number})" : '')
             ));
+
+        // Fines whose deferral has landed by this month. A fine belongs to the month of its date,
+        // so these lie outside the window above and are fetched by id; $decide then says whether
+        // this particular month takes them.
+        $here = PayrollDeductionOverride::index($year, $month);
+        $deferredInFineIds = $overrides->flatten(1)
+            ->filter(fn ($o) => $o->source_type === ConsolidatedPayrollDeduction::SOURCE_VIOLATION
+                && $o->action === PayrollDeductionOverride::ACTION_DEFER
+                && $o->deferIndex() !== null
+                && ($originatedInMonthOnly ? $o->deferIndex() === $here : $o->deferIndex() <= $here))
+            ->pluck('source_id')->unique()->values();
+        if ($deferredInFineIds->isNotEmpty()) {
+            Violation::withoutGlobalScopes()
+                ->whereNull('deleted_at')
+                ->whereIn('id', $deferredInFineIds)
+                ->whereIn('employee_id', $employeeIds)
+                ->where(fn ($q) => $q->where('violation_date', '<', $startDate)->orWhere('violation_date', '>', $endDate))
+                ->where('is_deducted', false)
+                ->where('is_driver_liable', true)
+                ->where('driver_deduction', '>', 0)
+                ->get()
+                ->each(fn ($v) => $add(
+                    (int) $v->employee_id,
+                    ConsolidatedPayrollDeduction::SOURCE_VIOLATION,
+                    (int) $v->id,
+                    (float) $v->driver_deduction,
+                    'مخالفة مرورية'.($v->reference_number ? " ({$v->reference_number})" : '')
+                ));
+        }
 
         // Driver-liable maintenance. Cumulative up to the month end, because a repair approved
         // in an earlier month may never have been collected — the ledger is what stops it being
@@ -165,7 +235,7 @@ class CompanyDeductionService
             ->where('status', 'active')
             ->whereDate('advance_date', '<=', $endDate)
             ->get()
-            ->each(function ($advance) use ($add, $year, $month, $settled, $originatedInMonthOnly) {
+            ->each(function ($advance) use ($add, $decide, $year, $month, $settled, $originatedInMonthOnly) {
                 if (isset($settled['advance:'.$advance->id.":{$year}-{$month}"])) {
                     return;
                 }
@@ -179,12 +249,24 @@ class CompanyDeductionService
                 // two advances at once, or a month closed out of turn, must still read true.
                 $index = (int) $advance->paid_installments + 1;
                 $total = max((int) $advance->total_installments, $index);
+                $label = "قسط سلفة {$index} من {$total}";
+
+                // The owner may set this month's instalment himself — less, more, or nothing —
+                // without touching the advance's own schedule. Never more than what is left.
+                $decision = $decide(ConsolidatedPayrollDeduction::SOURCE_ADVANCE, (int) $advance->id);
+                if ($decision['amount'] !== null && $decision['amount'] > 0) {
+                    $chosen = round(min($decision['amount'], (float) $advance->remaining_balance), 3);
+                    $label .= ' — معدَّل هذا الشهر (القسط الأصلي '.number_format($due, 3).')';
+                    $due = $chosen;
+                }
+
                 $add(
                     (int) $advance->employee_id,
                     ConsolidatedPayrollDeduction::SOURCE_ADVANCE,
                     (int) $advance->id,
                     $due,
-                    "قسط سلفة {$index} من {$total}"
+                    $label,
+                    $decision
                 );
             });
 

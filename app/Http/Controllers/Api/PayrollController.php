@@ -9,8 +9,11 @@ use App\Models\ConsolidatedPayrollRun;
 use App\Models\Contract;
 use App\Models\ContractPayrollAdjustment;
 use App\Models\ContractPayrollRun;
+use App\Models\CustodyItem;
 use App\Models\DriverExpense;
 use App\Models\Employee;
+use App\Models\MaintenanceRecord;
+use App\Models\PayrollDeductionOverride;
 use App\Models\PayrollDisbursement;
 use App\Models\SalaryAdvance;
 use App\Models\Violation;
@@ -660,6 +663,121 @@ class PayrollController extends Controller
         $disbursement->delete();
 
         return response()->json(['message' => 'تم حذف حركة الصرف.']);
+    }
+
+    /**
+     * POST /api/payroll/consolidated/{year}/{month}/deduction-overrides
+     *
+     * The owner's word on one charge before the month is approved: take it in a later month, or
+     * take a different instalment of an advance this month. Recorded with a reason and a name,
+     * read by the approval, kept through an unapproval. It never waives a charge: a fine the
+     * driver should not pay is corrected on the fine itself, where the record lives.
+     */
+    public function storeDeductionOverride(Request $request, $year, $month): JsonResponse
+    {
+        $year = (int) $year;
+        $month = (int) $month;
+        $companyId = $this->currentCompanyId();
+
+        if ($this->monthIsApproved($companyId, $year, $month)) {
+            return response()->json(['message' => "شهر {$month}/{$year} معتمد — فكّ اعتماده أولاً لتغيير قرارات الخصم."], 422);
+        }
+
+        $data = $request->validate([
+            'source_type' => 'required|in:violation,maintenance,custody,driver_expense,advance',
+            'source_id' => 'required|integer',
+            'action' => 'required|in:defer,amount',
+            'amount' => 'nullable|numeric|min:0',
+            'defer_to_year' => 'nullable|integer|min:2020|max:2100',
+            'defer_to_month' => 'nullable|integer|min:1|max:12',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $source = $this->deductionSource($data['source_type'], (int) $data['source_id'], $companyId);
+        if (! $source) {
+            return response()->json(['message' => 'البند غير موجود.'], 422);
+        }
+
+        $chargedAlready = ($data['source_type'] !== 'advance' && ConsolidatedPayrollDeduction::withoutGlobalScopes()
+            ->where('source_type', $data['source_type'])->where('source_id', $source->id)->exists())
+            || (in_array($data['source_type'], ['violation', 'driver_expense'], true) && $source->is_deducted);
+        if ($chargedAlready) {
+            return response()->json(['message' => 'هذا البند خُصم فعلاً في شهر معتمد — لا قرار عليه.'], 422);
+        }
+
+        $values = ['action' => $data['action'], 'amount' => null, 'defer_to_year' => null, 'defer_to_month' => null];
+
+        if ($data['action'] === 'defer') {
+            $toYear = (int) ($data['defer_to_year'] ?? 0);
+            $toMonth = (int) ($data['defer_to_month'] ?? 0);
+            if (! $toYear || ! $toMonth) {
+                throw ValidationException::withMessages(['defer_to_month' => 'حدّد الشهر الذي يُخصم فيه.']);
+            }
+            if (PayrollDeductionOverride::index($toYear, $toMonth) <= PayrollDeductionOverride::index($year, $month)) {
+                throw ValidationException::withMessages(['defer_to_month' => 'التأجيل يكون إلى شهر بعد هذا الشهر.']);
+            }
+            if ($this->monthIsApproved($companyId, $toYear, $toMonth)) {
+                throw ValidationException::withMessages(['defer_to_month' => "شهر {$toMonth}/{$toYear} معتمد سلفاً — اختر شهراً مفتوحاً."]);
+            }
+            $values['defer_to_year'] = $toYear;
+            $values['defer_to_month'] = $toMonth;
+        } else {
+            if ($data['source_type'] !== 'advance') {
+                throw ValidationException::withMessages(['action' => 'تعديل المبلغ متاح لأقساط السلف فقط؛ المخالفة أو المصروف يُعدَّل على سجله نفسه.']);
+            }
+            $amount = round((float) ($data['amount'] ?? 0), 3);
+            if ($amount > (float) $source->remaining_balance + 0.0005) {
+                throw ValidationException::withMessages(['amount' => 'المبلغ أكبر من المتبقي على السلفة ('.number_format((float) $source->remaining_balance, 3).').']);
+            }
+            $values['amount'] = $amount;
+        }
+
+        $override = PayrollDeductionOverride::updateOrCreate(
+            ['company_id' => $companyId, 'year' => $year, 'month' => $month, 'source_type' => $data['source_type'], 'source_id' => $source->id],
+            $values + ['reason' => $data['reason'], 'created_by' => $request->user()?->id]
+        );
+
+        return response()->json([
+            'message' => $data['action'] === 'defer' ? 'سُجِّل التأجيل.' : 'سُجِّل قسط هذا الشهر.',
+            'override' => $override->load('createdBy:id,name')->toRow(),
+        ], 201);
+    }
+
+    /**
+     * DELETE /api/payroll/deduction-overrides/{override}
+     */
+    public function destroyDeductionOverride(PayrollDeductionOverride $override): JsonResponse
+    {
+        if ($this->monthIsApproved((int) $override->company_id, (int) $override->year, (int) $override->month)) {
+            return response()->json(['message' => 'الشهر معتمد — فكّ اعتماده أولاً.'], 422);
+        }
+
+        $override->delete();
+
+        return response()->json(['message' => 'أُلغي القرار؛ يعود البند إلى قاعدته الأصلية.']);
+    }
+
+    private function monthIsApproved(int $companyId, int $year, int $month): bool
+    {
+        return ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->exists();
+    }
+
+    private function deductionSource(string $type, int $id, int $companyId): ?object
+    {
+        $model = match ($type) {
+            'violation' => Violation::class,
+            'maintenance' => MaintenanceRecord::class,
+            'custody' => CustodyItem::class,
+            'driver_expense' => DriverExpense::class,
+            'advance' => SalaryAdvance::class,
+        };
+
+        return $model::withoutGlobalScopes()->whereNull('deleted_at')->where('company_id', $companyId)->find($id);
     }
 
     /**

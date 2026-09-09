@@ -9,6 +9,7 @@ use App\Models\ContractPayrollRun;
 use App\Models\DailyLog;
 use App\Models\DriverContractOverride;
 use App\Models\Employee;
+use App\Models\PayrollDeductionOverride;
 use App\Models\Vehicle;
 use App\Models\VehicleType;
 use App\Models\Violation;
@@ -54,6 +55,9 @@ class ContractSheetService
             if (is_array($frozen) && ! empty($frozen['drivers'])) {
                 $frozen['is_approved'] = true;
                 $frozen['approved_run'] = $approvedRun;
+                // A deferral decided after the sheet was frozen changes nothing frozen; it is laid
+                // over the rows so the screen can say the fine is now taken in another month.
+                $frozen['drivers'] = self::withDeferredFines($frozen['drivers'], $contract, $companyId, $year, $month, $startDate, $endDate);
 
                 return $frozen;
             }
@@ -132,31 +136,10 @@ class ContractSheetService
         // every fine off a driver on BOTH his contracts' sheets. An older fine that names no
         // contract is placed on the driver's only contract for the month; a driver who worked
         // several is owed the charge once, against the person, which the consolidated sheet settles.
-        $contractsPerEmployee = ContractAssignment::withoutGlobalScopes()
-            ->whereIn('employee_id', $employeeIds)
-            ->whereDate('start_date', '<=', $endDate)
-            ->where(function ($q) use ($startDate) {
-                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate);
-            })
-            ->get()
-            ->groupBy('employee_id')
-            ->map(fn ($rows) => $rows->pluck('contract_id')->filter()->unique()->values()->all());
+        $allViolations = self::finesOnContract($contract, $employeeIds, $startDate, $endDate);
 
-        $allViolations = Violation::withoutGlobalScopes()
-            ->whereNull('deleted_at')
-            ->whereIn('employee_id', $employeeIds)
-            ->whereBetween('violation_date', [$startDate, $endDate])
-            ->get()
-            ->filter(function ($v) use ($contract, $contractsPerEmployee) {
-                if ($v->charge_contract_id !== null) {
-                    return (int) $v->charge_contract_id === (int) $contract->id;
-                }
-
-                $worked = $contractsPerEmployee[$v->employee_id] ?? [];
-
-                return count($worked) === 1 && (int) $worked[0] === (int) $contract->id;
-            })
-            ->groupBy('employee_id');
+        // Fines the owner decided to take in a later month: not charged here, but named.
+        $deferredFineIds = self::deferredFineIds($companyId, $year, $month);
 
         // Fetch manual contract payroll adjustments
         $allAdjustments = ContractPayrollAdjustment::withoutGlobalScopes()
@@ -247,9 +230,11 @@ class ContractSheetService
             // A fine already marked `is_deducted` was collected by a previously approved
             // consolidated month; charging it again here would take it off the driver twice.
             $empViolations = $allViolations->get($empId, collect());
-            $outstandingViolations = $empViolations->filter(fn ($v) => ! $v->is_deducted);
+            $isDeferred = fn ($v) => in_array((int) $v->id, $deferredFineIds, true);
+            $outstandingViolations = $empViolations->filter(fn ($v) => ! $v->is_deducted && ! $isDeferred($v));
             $violSum = (float) $outstandingViolations->sum('driver_deduction');
             $violAlreadyDeducted = (float) $empViolations->filter(fn ($v) => (bool) $v->is_deducted)->sum('driver_deduction');
+            $violDeferred = (float) $empViolations->filter(fn ($v) => ! $v->is_deducted && $isDeferred($v))->sum('driver_deduction');
             $totalContractDeductions = $violSum;
 
             // Manual adjustments calculation for this driver
@@ -331,6 +316,7 @@ class ContractSheetService
                 'unpriced_orders' => self::unpricedOrders($calcResult['calculation_details'] ?? []),
                 'violations_deduction' => $violSum,
                 'violations_already_deducted' => round($violAlreadyDeducted, 3),
+                'violations_deferred' => round($violDeferred, 3),
                 'manual_adjustments' => [
                     'total' => $netAdjustment,
                     'additions' => $additionsSum,
@@ -556,6 +542,89 @@ class ContractSheetService
             fn ($line) => ! empty($line['is_unpriced']) ? (int) ($line['orders'] ?? 0) : 0,
             $details
         ));
+    }
+
+    /**
+     * The month's traffic fines that belong on this contract, grouped by employee.
+     *
+     * A fine belongs to the contract it was raised against. Ignoring charge_contract_id took
+     * every fine off a driver on BOTH his contracts' sheets. An older fine that names no contract
+     * is placed on the driver's only contract for the month; a driver who worked several is owed
+     * the charge once, against the person, which the consolidated sheet settles.
+     *
+     * @param  Collection<int, int>  $employeeIds
+     * @return Collection<int, Collection<int, Violation>>
+     */
+    private static function finesOnContract(Contract $contract, Collection $employeeIds, string $startDate, string $endDate): Collection
+    {
+        $contractsPerEmployee = ContractAssignment::withoutGlobalScopes()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereDate('start_date', '<=', $endDate)
+            ->where(function ($q) use ($startDate) {
+                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate);
+            })
+            ->get()
+            ->groupBy('employee_id')
+            ->map(fn ($rows) => $rows->pluck('contract_id')->filter()->unique()->values()->all());
+
+        return Violation::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('violation_date', [$startDate, $endDate])
+            ->get()
+            ->filter(function ($v) use ($contract, $contractsPerEmployee) {
+                if ($v->charge_contract_id !== null) {
+                    return (int) $v->charge_contract_id === (int) $contract->id;
+                }
+
+                $worked = $contractsPerEmployee[$v->employee_id] ?? [];
+
+                return count($worked) === 1 && (int) $worked[0] === (int) $contract->id;
+            })
+            ->groupBy('employee_id');
+    }
+
+    /**
+     * Ids of the fines the owner decided to take in a month other than this one.
+     *
+     * @return array<int, int>
+     */
+    private static function deferredFineIds(int $companyId, int $year, int $month): array
+    {
+        return PayrollDeductionOverride::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('source_type', 'violation')
+            ->get()
+            ->groupBy('source_id')
+            ->filter(fn ($rows) => ! PayrollDeductionOverride::decide($rows, $year, $month)['include'])
+            ->keys()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * Frozen rows with `violations_deferred` laid over them — the frozen fine stays as approved.
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private static function withDeferredFines(array $rows, Contract $contract, int $companyId, int $year, int $month, string $startDate, string $endDate): array
+    {
+        $deferredIds = self::deferredFineIds($companyId, $year, $month);
+        if ($deferredIds === []) {
+            return $rows;
+        }
+
+        $employeeIds = collect($rows)->pluck('employee_id')->filter()->unique()->values();
+        $fines = self::finesOnContract($contract, $employeeIds, $startDate, $endDate);
+
+        foreach ($rows as $i => $row) {
+            $rows[$i]['violations_deferred'] = round((float) $fines->get($row['employee_id'] ?? 0, collect())
+                ->filter(fn ($v) => ! $v->is_deducted && in_array((int) $v->id, $deferredIds, true))
+                ->sum('driver_deduction'), 3);
+        }
+
+        return $rows;
     }
 
     /**

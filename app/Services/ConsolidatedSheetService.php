@@ -9,6 +9,7 @@ use App\Models\Contract;
 use App\Models\ContractPayrollRun;
 use App\Models\DailyLog;
 use App\Models\Employee;
+use App\Models\PayrollDeductionOverride;
 use App\Models\PayrollDisbursement;
 use Carbon\Carbon;
 
@@ -153,7 +154,7 @@ class ConsolidatedSheetService
                 'notes' => $consolidatedRun->notes,
             ];
 
-            return self::withDisbursements($frozen, $companyId, $consolidatedRun);
+            return self::withDisbursements($frozen, $companyId, $year, $month, $startDate, $endDate, $consolidatedRun);
         }
 
         $driversList = [];
@@ -186,6 +187,8 @@ class ConsolidatedSheetService
             $d['pending_deductions_total'] = $pendingTotal;
             $d['deductions_total'] = $applied;
             $d['deduction_items'] = $pending['items'];
+            // Charges the owner has decided to leave out of this month — shown as his decision.
+            $d['deferred_items'] = $pending['deferred'] ?? [];
 
             foreach ([
                 'violations' => ConsolidatedPayrollDeduction::SOURCE_VIOLATION,
@@ -253,7 +256,7 @@ class ConsolidatedSheetService
             })->values()->all(),
             'unapproved_contracts' => $unapprovedContracts->values()->all(),
             'drivers' => $driversList,
-        ], $companyId, null);
+        ], $companyId, $year, $month, $startDate, $endDate, null);
     }
 
     /**
@@ -265,7 +268,67 @@ class ConsolidatedSheetService
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    private static function withDisbursements(array $data, int $companyId, ?ConsolidatedPayrollRun $run): array
+    /**
+     * Charges deferred into this month (or earlier, and still uncollected) whose driver is not on
+     * the sheet, resolved through the same rules that would charge them if he were.
+     *
+     * @param  array<int, int>  $onSheet  employee id => position, for the drivers with a row
+     * @return array<int, array{employee_id: int, employee_name: string, source_type: string, label: string, amount: float, deferred_from: ?string}>
+     */
+    private static function deferredChargesOffSheet(int $companyId, int $year, int $month, array $onSheet, string $startDate, string $endDate): array
+    {
+        $here = PayrollDeductionOverride::index($year, $month);
+        $landed = PayrollDeductionOverride::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('action', PayrollDeductionOverride::ACTION_DEFER)
+            ->get()
+            ->filter(fn ($o) => $o->deferIndex() !== null && $o->deferIndex() <= $here);
+        if ($landed->isEmpty()) {
+            return [];
+        }
+
+        // The employees those charges belong to, minus the ones already on the sheet.
+        $employeeIds = [];
+        foreach ($landed->groupBy('source_type') as $type => $rows) {
+            $model = PayrollDeductionOverride::sourceModel($type);
+            if (! $model) {
+                continue;
+            }
+            $column = PayrollDeductionOverride::employeeColumn($type);
+            foreach ($model::withoutGlobalScopes()->whereIn('id', $rows->pluck('source_id'))->pluck($column) as $employeeId) {
+                if ($employeeId && ! isset($onSheet[(int) $employeeId])) {
+                    $employeeIds[(int) $employeeId] = true;
+                }
+            }
+        }
+        if ($employeeIds === []) {
+            return [];
+        }
+
+        $names = Employee::withoutGlobalScopes()->withTrashed()->whereIn('id', array_keys($employeeIds))->pluck('name', 'id');
+        $pending = CompanyDeductionService::pendingFor(array_keys($employeeIds), $startDate, $endDate, $year, $month);
+
+        $out = [];
+        foreach ($pending as $employeeId => $bucket) {
+            foreach ($bucket['items'] as $item) {
+                if (empty($item['deferred_from'])) {
+                    continue;
+                }
+                $out[] = [
+                    'employee_id' => (int) $employeeId,
+                    'employee_name' => $names[$employeeId] ?? "#{$employeeId}",
+                    'source_type' => $item['source_type'],
+                    'label' => $item['label'],
+                    'amount' => round((float) $item['amount'], 3),
+                    'deferred_from' => $item['deferred_from'],
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    private static function withDisbursements(array $data, int $companyId, int $year, int $month, string $startDate, string $endDate, ?ConsolidatedPayrollRun $run): array
     {
         $opening = PayrollBalanceService::openingBalances($companyId, $run?->id);
 
@@ -364,6 +427,11 @@ class ConsolidatedSheetService
             ->sortBy('balance')
             ->values()
             ->all();
+
+        // A charge the owner sent to this month for a driver who has no row here — no work, no
+        // approved contract yet — is still waiting. It cannot be taken from this sheet, but it
+        // must be seen, or a deferral becomes a way to lose a charge.
+        $data['deferred_charges_off_sheet'] = self::deferredChargesOffSheet($companyId, $year, $month, $onSheet, $startDate, $endDate);
 
         $company = Company::find($companyId);
         $data['company_name'] = $company?->name_ar ?: $company?->name;

@@ -322,6 +322,12 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::delete('disbursements/{disbursement}', [PayrollController::class, 'destroyDisbursement'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
+            // Deciding, before approval, that a charge waits for a later month or that an
+            // instalment is different this month — the same authority as approving.
+            Route::post('consolidated/{year}/{month}/deduction-overrides', [PayrollController::class, 'storeDeductionOverride'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            Route::delete('deduction-overrides/{override}', [PayrollController::class, 'destroyDeductionOverride'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::get('contract-sheet/{contract}', [PayrollController::class, 'contractSheet']);
             Route::post('contract-sheet/{contract}/approve', [PayrollController::class, 'approveContractSheet']);
             Route::post('contract-sheet/{contract}/unapprove', [PayrollController::class, 'unapproveContractSheet']);
