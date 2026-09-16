@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\Vehicle;
 use App\Services\ContractProfitabilityService;
 use App\Services\MoneyAtRiskService;
+use App\Services\OwnerPulseService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -243,6 +244,17 @@ class DashboardController extends Controller
     }
 
     /**
+     * GET /api/dashboard/pulse
+     *
+     * The owner's row: revenue by day, this month's contribution, pending cash as one figure, and
+     * the decisions waiting on him. See OwnerPulseService.
+     */
+    public function pulse(): JsonResponse
+    {
+        return response()->json(OwnerPulseService::forDay($this->currentCompanyId(), Carbon::today()));
+    }
+
+    /**
      * GET /api/dashboard/summary
      * Main screen: fleet status, pending cash, today's orders.
      */
@@ -334,9 +346,10 @@ class DashboardController extends Controller
     /**
      * GET /api/dashboard/contracts-profitability
      *
-     * Expected against actual profit per contract over a month, a quarter, a half or a year. The
-     * month figures come from ContractProfitabilityService — the same ones the contract's own
-     * dashboard and the reports show — summed over the months of the period.
+     * Per contract over a month, a quarter, a half or a year: the revenue against the revenue the
+     * owner expected of it, and the profit after the expenses on record. The month figures come
+     * from ContractProfitabilityService — the same ones the contract's own dashboard and the
+     * reports show — summed over the months of the period.
      */
     public function contractsProfitability(Request $request): JsonResponse
     {
@@ -385,10 +398,15 @@ class DashboardController extends Controller
         $data = [];
         foreach ($contracts as $contract) {
             $sum = $sums[$contract->id] ?? [];
-            // The form captures a total over the contract's life; the model derives the monthly
-            // figure from it. Either is the expectation for one month.
-            $expectedMonthly = (float) ($contract->expected_monthly_profit ?? $contract->expected_total_profit ?? 0);
-            $expectedProfit = round($expectedMonthly * $monthsCount, 3);
+            // The owner budgets revenue, not profit — «I expect 15,000 from this contract; 14,000
+            // came, so I know something is wrong». The expectation is the contract's own monthly
+            // revenue figure over the months of the period, and both the gap and the achievement
+            // are stated against it, uncapped: a contract that beat its budget says by how much.
+            // Measuring profit against an expected profit, as this did, put a 100% achievement
+            // next to a shortfall on the same row.
+            $expectedMonthlyRevenue = round((float) ($contract->expected_monthly_revenue ?? 0), 3);
+            $expectedRevenue = round($expectedMonthlyRevenue * $monthsCount, 3);
+            $actualRevenue = round((float) ($sum['revenue'] ?? 0), 3);
             $actualProfit = round((float) ($sum['profit'] ?? 0), 3);
 
             $data[] = [
@@ -397,17 +415,20 @@ class DashboardController extends Controller
                 'contract_number' => $contract->contract_number,
                 'client_name' => $contract->client?->name ?? '—',
                 'payment_type' => $contract->payment_type,
-                'expected_monthly_profit' => $expectedMonthly,
-                'expected_profit' => $expectedProfit,
+                'expected_monthly_revenue' => $expectedMonthlyRevenue,
+                'expected_revenue' => $expectedRevenue,
+                'revenue_variance' => $expectedRevenue > 0 ? round($actualRevenue - $expectedRevenue, 3) : null,
+                'achievement_pct' => $expectedRevenue > 0 ? round($actualRevenue / $expectedRevenue * 100, 1) : null,
                 'total_orders' => (int) ($sum['orders'] ?? 0),
-                'actual_revenue' => round((float) ($sum['revenue'] ?? 0), 3),
+                'actual_revenue' => $actualRevenue,
                 // Orders the client rules could not price. Without this the shortfall looks like
                 // a quiet month rather than a pricing rule that needs filling in.
                 'unpriced_orders' => (int) ($sum['unpriced_orders'] ?? 0),
                 'revenue_details' => $sum['revenue_details'] ?? [],
                 'actual_expenses' => round((float) ($sum['expenses'] ?? 0), 3),
+                // Profit after the expenses on record — not «net profit», which the owner reads
+                // as the last word when the expense books are not yet complete.
                 'actual_profit' => $actualProfit,
-                'variance' => round($actualProfit - $expectedProfit, 3),
                 'driver_commissions' => round((float) ($sum['driver_commissions'] ?? 0), 3),
                 'allocated_salaries' => round((float) ($sum['driver_salaries'] ?? 0), 3),
                 'driver_cost' => round((float) ($sum['driver_cost'] ?? 0), 3),

@@ -624,6 +624,7 @@ class BugFixesTest extends TestCase
             'start_date' => '2026-05-01',
             'end_date' => '2026-10-31', // 6 months
             'expected_total_profit' => 6000, // expected_monthly_profit = 1000
+            'expected_monthly_revenue' => 400, // the owner's revenue budget for a month
             'default_required_work_days' => 26,
             'client_payment_method' => 'fixed',
             'client_pricing_rules' => [(string) $type->id => ['payment_method' => 'fixed', 'fixed_amount' => 500]],
@@ -685,14 +686,17 @@ class BugFixesTest extends TestCase
         $resContract = collect($response->json('contracts'))->firstWhere('id', $contract->id);
 
         $this->assertNotNull($resContract);
-        $this->assertEquals(1000.0, (float) $resContract['expected_profit']);
-        // The client's flat monthly fee for the type that worked.
+        // The client's flat monthly fee for the type that worked, read against the revenue the
+        // owner budgeted — uncapped, so beating the budget reads as 125%, not as 100%.
         $this->assertEquals(500.0, (float) $resContract['actual_revenue']);
+        $this->assertEquals(400.0, (float) $resContract['expected_revenue']);
+        $this->assertEquals(100.0, (float) $resContract['revenue_variance']);
+        $this->assertEquals(125.0, (float) $resContract['achievement_pct']);
+        $this->assertArrayNotHasKey('expected_profit', $resContract, 'profit is no longer measured against a budget');
         $this->assertEquals(100.0, (float) $resContract['vehicle_costs']);
         // One paid day of a 300.000 salary over the contract's 26 days — the payroll sheet's figure.
         $this->assertEquals(11.538, (float) $resContract['allocated_salaries']);
         $this->assertEquals(0.0, (float) $resContract['driver_commissions']);
         $this->assertEquals(388.462, (float) $resContract['actual_profit']); // 500 − 11.538 − 100
-        $this->assertEquals(-611.538, (float) $resContract['variance']);
     }
 }

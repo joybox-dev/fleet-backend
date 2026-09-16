@@ -4,14 +4,14 @@ namespace App\Models;
 
 use App\Traits\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Vehicle extends Model
 {
-    use SoftDeletes, BelongsToCompany;
+    use BelongsToCompany, SoftDeletes;
 
     protected $fillable = [
         'plate_number', 'make', 'model', 'year', 'color', 'vin', 'status',
@@ -22,13 +22,16 @@ class Vehicle extends Model
         'food_authority_license_expiry', 'next_service_due',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
         'vehicle_type_id',
+        // A vehicle held by an authority: who holds it and until when (status «reserved»).
+        'reserved_by', 'reserved_until', 'reserved_note',
     ];
 
     protected $casts = [
         'monthly_fuel_allowance' => 'decimal:3',
-        'rental_price'           => 'decimal:3',
-        'installment_price'      => 'decimal:3',
-        'vehicle_type_id'        => 'integer',
+        'rental_price' => 'decimal:3',
+        'installment_price' => 'decimal:3',
+        'vehicle_type_id' => 'integer',
+        'reserved_until' => 'date',
     ];
 
     public function vehicleType(): BelongsTo

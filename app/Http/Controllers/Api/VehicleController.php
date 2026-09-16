@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-
+use App\Models\ContractAssignment;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class VehicleController extends Controller
@@ -17,15 +17,15 @@ class VehicleController extends Controller
         $perPage = $request->boolean('all') ? 5000 : min(max($request->integer('per_page', 50), 5), 1000);
         $vehicles = Vehicle::query()
             ->with(['vehicleType:id,name,name_ar', 'activeAssignment.employee:id,name', 'activeAssignment.contract:id,name'])
-            ->when($request->status, fn($q) => $q->where('status', $request->status))
-            ->when($request->vehicle_type_id, fn($q) => $q->where('vehicle_type_id', $request->vehicle_type_id))
+            ->when($request->status, fn ($q) => $q->where('status', $request->status))
+            ->when($request->vehicle_type_id, fn ($q) => $q->where('vehicle_type_id', $request->vehicle_type_id))
             ->when($request->contract_id, function ($q) use ($request) {
                 $contractId = $request->contract_id;
                 $q->whereHas('activeAssignment.employee.contractAssignments', function ($ca) use ($contractId) {
                     $ca->where('contract_id', $contractId)->where('status', 'active');
                 });
             })
-            ->when($request->search, fn($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
+            ->when($request->search, fn ($q) => $q->where('plate_number', 'like', "%{$request->search}%"))
             ->orderBy('plate_number')
             ->paginate($perPage);
 
@@ -42,46 +42,44 @@ class VehicleController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('vehicles.create')) {
+        if (! $request->user()->can('vehicles.create')) {
             return response()->json(['message' => 'غير مصرح لك بإضافة مركبة جديدة.'], 403);
         }
 
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'plate_number'                      => [
+            'plate_number' => [
                 'required',
                 'string',
                 Rule::unique('vehicles', 'plate_number')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
-            'make'                              => 'nullable|string|max:100',
-            'model'                             => 'nullable|string|max:100',
-            'year'                              => 'nullable|integer|min:2000|max:2030',
-            'color'                             => 'nullable|string|max:50',
-            'vin'                               => [
+            'make' => 'nullable|string|max:100',
+            'model' => 'nullable|string|max:100',
+            'year' => 'nullable|integer|min:2000|max:2030',
+            'color' => 'nullable|string|max:50',
+            'vin' => [
                 'nullable',
                 'string',
                 Rule::unique('vehicles', 'vin')->where('company_id', $companyId)->whereNull('deleted_at'),
             ],
-            'oil_change_interval_km'            => 'nullable|integer|min:1000',
-            'monthly_fuel_allowance'            => 'nullable|numeric|min:0',
-            'insurance_expiry'                  => 'nullable|date',
-            'comprehensive_insurance_expiry'    => 'nullable|date',
-            'food_authority_license_expiry'     => 'nullable|date',
-            'next_service_due'                  => 'nullable|date',
-            'notes'                             => 'nullable|string',
-            'ownership_type'                    => 'nullable|string|in:rented,installment,owned',
-            'rental_price'                      => 'nullable|numeric|min:0',
-            'installment_price'                 => 'nullable|numeric|min:0',
-            'vehicle_type_id'                   => 'nullable|exists:vehicle_types,id',
+            'oil_change_interval_km' => 'nullable|integer|min:1000',
+            'monthly_fuel_allowance' => 'nullable|numeric|min:0',
+            'insurance_expiry' => 'nullable|date',
+            'comprehensive_insurance_expiry' => 'nullable|date',
+            'food_authority_license_expiry' => 'nullable|date',
+            'next_service_due' => 'nullable|date',
+            'notes' => 'nullable|string',
+            'ownership_type' => 'nullable|string|in:rented,installment,owned',
+            'rental_price' => 'nullable|numeric|min:0',
+            'installment_price' => 'nullable|numeric|min:0',
+            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
-        $validated = array_filter($validated, fn($v) => $v !== null);
+        $validated = array_filter($validated, fn ($v) => $v !== null);
 
         $vehicle = Vehicle::create($validated);
-
-
 
         return response()->json($vehicle, 201);
     }
@@ -101,23 +99,36 @@ class VehicleController extends Controller
 
     public function update(Request $request, Vehicle $vehicle): JsonResponse
     {
-        if (!$request->user()->can('vehicles.edit')) {
+        if (! $request->user()->can('vehicles.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل بيانات المركبات.'], 403);
         }
 
         $validated = $request->validate([
-            'status'                            => 'sometimes|in:available,working,maintenance,idle',
-            'ownership_type'                    => 'sometimes|string|in:rented,installment,owned',
-            'rental_price'                      => 'nullable|numeric|min:0',
-            'installment_price'                 => 'nullable|numeric|min:0',
-            'monthly_fuel_allowance'            => 'sometimes|numeric|min:0',
-            'insurance_expiry'                  => 'nullable|date',
-            'comprehensive_insurance_expiry'    => 'nullable|date',
-            'food_authority_license_expiry'     => 'nullable|date',
-            'next_service_due'                  => 'nullable|date',
-            'notes'                             => 'nullable|string',
-            'vehicle_type_id'                   => 'nullable|exists:vehicle_types,id',
+            'status' => 'sometimes|in:available,working,maintenance,idle,reserved',
+            // Held by an authority (interior, traffic, municipality…): who holds it, until when.
+            'reserved_by' => 'nullable|string|max:120|required_if:status,reserved',
+            'reserved_until' => 'nullable|date',
+            'reserved_note' => 'nullable|string|max:255',
+            'ownership_type' => 'sometimes|string|in:rented,installment,owned',
+            'rental_price' => 'nullable|numeric|min:0',
+            'installment_price' => 'nullable|numeric|min:0',
+            'monthly_fuel_allowance' => 'sometimes|numeric|min:0',
+            'insurance_expiry' => 'nullable|date',
+            'comprehensive_insurance_expiry' => 'nullable|date',
+            'food_authority_license_expiry' => 'nullable|date',
+            'next_service_due' => 'nullable|date',
+            'notes' => 'nullable|string',
+            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
+        ], [
+            'reserved_by.required_if' => 'اذكر الجهة التي حجزت المركبة (الداخلية، المرور، البلدية…).',
         ]);
+
+        // Leaving the held state clears who held it: a stale authority next to «available» misleads.
+        if (($validated['status'] ?? $vehicle->status) !== 'reserved') {
+            $validated['reserved_by'] = null;
+            $validated['reserved_until'] = null;
+            $validated['reserved_note'] = null;
+        }
 
         $vehicle->update($validated);
 
@@ -127,6 +138,7 @@ class VehicleController extends Controller
     public function deletionCheck(Vehicle $vehicle): JsonResponse
     {
         $blocks = $vehicle->getDeletionBlocks();
+
         return response()->json([
             'is_deletable' => empty($blocks),
             'blocks' => $blocks,
@@ -135,12 +147,12 @@ class VehicleController extends Controller
 
     public function destroy(Request $request, Vehicle $vehicle): JsonResponse
     {
-        if (!$request->user()->can('vehicles.delete')) {
+        if (! $request->user()->can('vehicles.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف المركبات.'], 403);
         }
 
         $blocks = $vehicle->getDeletionBlocks();
-        if (!empty($blocks)) {
+        if (! empty($blocks)) {
             return response()->json([
                 'message' => 'لا يمكن حذف المركبة لوجود ارتباطات نشطة.',
                 'errors' => $blocks,
@@ -148,6 +160,7 @@ class VehicleController extends Controller
         }
 
         $vehicle->delete();
+
         return response()->json(['message' => 'Vehicle deleted.']);
     }
 
@@ -160,19 +173,28 @@ class VehicleController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'employee_id'   => [
+            'employee_id' => [
                 'required',
-                \Illuminate\Validation\Rule::exists('employees', 'id')
+                Rule::exists('employees', 'id')
                     ->where('company_id', $companyId)
                     ->where('role_category', 'driver'),
             ],
-            'contract_id'   => 'nullable|exists:contracts,id',
+            'contract_id' => 'nullable|exists:contracts,id',
             'assigned_date' => 'required|date',
-            'notes'         => 'nullable|string',
+            'notes' => 'nullable|string',
         ]);
 
+        // A vehicle held by an authority is not on the road, whatever the assignment would say.
+        if ($vehicle->status === 'reserved') {
+            $until = $vehicle->reserved_until ? ' حتى '.$vehicle->reserved_until->toDateString() : '';
+
+            return response()->json([
+                'message' => 'المركبة محجوزة لدى '.($vehicle->reserved_by ?: 'جهة رسمية').$until.' — لا تُعيَّن لسائق قبل فكّ الحجز.',
+            ], 422);
+        }
+
         // Check contract compatibility
-        $activeAssignments = \App\Models\ContractAssignment::where('employee_id', $validated['employee_id'])
+        $activeAssignments = ContractAssignment::where('employee_id', $validated['employee_id'])
             ->where('status', 'active')
             ->get();
 
@@ -181,8 +203,8 @@ class VehicleController extends Controller
             if ($contract && $contract->vehicle_type_id !== null && $vehicle->vehicle_type_id !== null) {
                 if ($contract->vehicle_type_id !== $vehicle->vehicle_type_id) {
                     return response()->json([
-                        'message' => 'نوع هذه المركبة لا يتوافق مع العقد النشط المعين عليه السائق (' . $contract->name . ').',
-                        'errors' => ['vehicle_id' => ['نوع المركبة غير متوافق مع العقد المعين عليه السائق.']]
+                        'message' => 'نوع هذه المركبة لا يتوافق مع العقد النشط المعين عليه السائق ('.$contract->name.').',
+                        'errors' => ['vehicle_id' => ['نوع المركبة غير متوافق مع العقد المعين عليه السائق.']],
                     ], 422);
                 }
             }
@@ -194,12 +216,12 @@ class VehicleController extends Controller
             ->update(['is_active' => false, 'unassigned_date' => $validated['assigned_date']]);
 
         $assignment = VehicleAssignment::create([
-            'vehicle_id'    => $vehicle->id,
-            'employee_id'   => $validated['employee_id'],
-            'contract_id'   => $validated['contract_id'] ?? null,
+            'vehicle_id' => $vehicle->id,
+            'employee_id' => $validated['employee_id'],
+            'contract_id' => $validated['contract_id'] ?? null,
             'assigned_date' => $validated['assigned_date'],
-            'is_active'     => true,
-            'notes'         => $validated['notes'] ?? null,
+            'is_active' => true,
+            'notes' => $validated['notes'] ?? null,
         ]);
 
         $vehicle->update(['status' => 'working']);
@@ -222,14 +244,14 @@ class VehicleController extends Controller
 
         if ($activeAssignment && $validated['unassigned_date'] < $activeAssignment->assigned_date) {
             return response()->json([
-                'message' => 'تاريخ تسليم السيارة لا يمكن أن يكون قبل تاريخ استلامها (' . $activeAssignment->assigned_date . ')'
+                'message' => 'تاريخ تسليم السيارة لا يمكن أن يكون قبل تاريخ استلامها ('.$activeAssignment->assigned_date.')',
             ], 422);
         }
 
         if ($activeAssignment) {
             $activeAssignment->update([
                 'is_active' => false,
-                'unassigned_date' => $validated['unassigned_date']
+                'unassigned_date' => $validated['unassigned_date'],
             ]);
         }
 
@@ -251,19 +273,19 @@ class VehicleController extends Controller
         $vehicle->update(['odometer_km' => $validated['odometer_km']]);
 
         $kmSinceOilChange = $vehicle->odometer_km - $vehicle->last_oil_change_km;
-        $oilChangeDue     = $kmSinceOilChange >= $vehicle->oil_change_interval_km;
+        $oilChangeDue = $kmSinceOilChange >= $vehicle->oil_change_interval_km;
 
         return response()->json([
-            'odometer_km'          => $vehicle->odometer_km,
-            'km_since_oil_change'  => $kmSinceOilChange,
-            'oil_change_due'       => $oilChangeDue,
-            'oil_change_at_km'     => $vehicle->last_oil_change_km + $vehicle->oil_change_interval_km,
+            'odometer_km' => $vehicle->odometer_km,
+            'km_since_oil_change' => $kmSinceOilChange,
+            'oil_change_due' => $oilChangeDue,
+            'oil_change_at_km' => $vehicle->last_oil_change_km + $vehicle->oil_change_interval_km,
         ]);
     }
 
     public function bulkDestroy(Request $request): JsonResponse
     {
-        if (!$request->user()->can('vehicles.delete')) {
+        if (! $request->user()->can('vehicles.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف المركبات.'], 403);
         }
 
@@ -280,18 +302,19 @@ class VehicleController extends Controller
         $allBlocks = [];
         foreach ($vehicles as $vehicle) {
             $blocks = $vehicle->getDeletionBlocks();
-            if (!empty($blocks)) {
+            if (! empty($blocks)) {
                 $allBlocks[$vehicle->plate_number] = $blocks;
             }
         }
 
-        if (!empty($allBlocks)) {
+        if (! empty($allBlocks)) {
             $flatErrors = [];
             foreach ($allBlocks as $plate => $reasons) {
                 foreach ($reasons as $reason) {
                     $flatErrors[] = "{$plate}: {$reason}";
                 }
             }
+
             return response()->json([
                 'message' => 'لا يمكن حذف بعض المركبات المحددة لوجود ارتباطات نشطة.',
                 'errors' => $flatErrors,
@@ -306,7 +329,7 @@ class VehicleController extends Controller
 
         return response()->json([
             'message' => "تم حذف $count من المركبات بنجاح.",
-            'deleted_count' => $count
+            'deleted_count' => $count,
         ]);
     }
 }

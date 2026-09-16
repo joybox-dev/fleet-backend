@@ -22,11 +22,13 @@ class ContractRevenueService
 {
     /**
      * @param  iterable  $logs  daily logs for one contract-month, with `vehicle` loaded
-     * @return array{revenue: float, orders: int, unpriced_orders: int, details: array<int, array<string, mixed>>}
+     * @param  float  $fixedShare  how much of a flat monthly fee to count: 1.0 for a month, 1/30 for one of its days, 0 to leave it out
+     * @return array{revenue: float, fixed_revenue: float, orders: int, unpriced_orders: int, details: array<int, array<string, mixed>>}
      */
-    public static function forContractMonth(Contract $contract, iterable $logs, int $monthsCount = 1): array
+    public static function forContractMonth(Contract $contract, iterable $logs, int $monthsCount = 1, float $fixedShare = 1.0): array
     {
         $rules = self::rules($contract);
+        $fixedRevenue = 0.0;
 
         // Orders split by vehicle type, and within a type by zone. A log's type comes from the
         // vehicle actually driven; the contract's own type is the fallback for a log with none.
@@ -94,8 +96,9 @@ class ContractRevenueService
             }
 
             if ($method === 'fixed' || $method === 'hybrid') {
-                $fixed = round((float) ($rule['fixed_amount'] ?? 0) * $monthsCount, 3);
+                $fixed = round((float) ($rule['fixed_amount'] ?? 0) * $monthsCount * $fixedShare, 3);
                 $revenue += $fixed;
+                $fixedRevenue += $fixed;
                 $details[] = self::line('مبلغ شهري ثابت', $bucket['orders'], 0.0, $fixed, $fixed <= 0.0);
 
                 continue;
@@ -137,9 +140,143 @@ class ContractRevenueService
 
         return [
             'revenue' => round($revenue, 3),
+            'fixed_revenue' => round($fixedRevenue, 3),
             'orders' => $orders,
             'unpriced_orders' => $unpriced,
             'details' => $details,
+        ];
+    }
+
+    /**
+     * The same month split by driver: what each driver's own orders billed the client, priced by
+     * the rule that priced the contract. Zone orders carry their own rate; a tier rate is the one
+     * the contract's whole volume earned, so a driver is never re-tiered on his volume alone; a
+     * flat monthly fee is shared by days logged, since the client pays for coverage, not orders.
+     * Each type's driver shares are settled to the fils against the contract's own figure, so the
+     * driver rows always add up to the contract row.
+     *
+     * @param  iterable  $logs  daily logs for one contract-month, with `vehicle` loaded
+     * @return array{contract: array{revenue: float, orders: int, unpriced_orders: int}, drivers: array<int, array{revenue: float, orders: int, unpriced_orders: int, days: int}>}
+     */
+    public static function forContractDrivers(Contract $contract, iterable $logs): array
+    {
+        $rules = self::rules($contract);
+
+        // type => orders/days for the type and per driver, with each driver's zone split.
+        $byType = [];
+        $drivers = [];
+        foreach ($logs as $log) {
+            $empId = (int) $log->employee_id;
+            $count = max(0, (int) $log->orders_count);
+            $vtId = (string) ($log->vehicle?->vehicle_type_id ?? $contract->vehicle_type_id ?? '');
+
+            $drivers[$empId] ??= ['revenue' => 0.0, 'orders' => 0, 'unpriced_orders' => 0, 'days' => 0];
+            $drivers[$empId]['orders'] += $count;
+            $drivers[$empId]['days']++;
+
+            $byType[$vtId] ??= ['orders' => 0, 'days' => 0, 'drivers' => []];
+            $byType[$vtId]['orders'] += $count;
+            $byType[$vtId]['days']++;
+            $byType[$vtId]['drivers'][$empId] ??= ['orders' => 0, 'days' => 0, 'zones' => []];
+            $byType[$vtId]['drivers'][$empId]['orders'] += $count;
+            $byType[$vtId]['drivers'][$empId]['days']++;
+            if ($count > 0) {
+                foreach (self::zoneCounts($log, $count) as $zone => $zoneCount) {
+                    $byType[$vtId]['drivers'][$empId]['zones'][$zone] = ($byType[$vtId]['drivers'][$empId]['zones'][$zone] ?? 0) + $zoneCount;
+                }
+            }
+        }
+
+        $contractRevenue = 0.0;
+        $contractOrders = 0;
+        $contractUnpriced = 0;
+
+        foreach ($byType as $vtId => $type) {
+            $contractOrders += $type['orders'];
+            // forContractMonth never opens a bucket for a type with no orders; neither is one priced here.
+            if ($type['orders'] <= 0) {
+                continue;
+            }
+
+            $rule = $rules[$vtId] ?? null;
+            $method = is_array($rule) ? ($rule['payment_method'] ?? null) : null;
+            $amounts = [];
+            $unpricedBy = [];
+            $typeAmount = 0.0;
+
+            if (! is_array($rule) || ! in_array($method, ['tiers', 'fixed', 'hybrid', 'zones'], true)) {
+                foreach ($type['drivers'] as $empId => $share) {
+                    $unpricedBy[$empId] = $share['orders'];
+                }
+            } elseif ($method === 'tiers') {
+                [$typeAmount] = self::priceByTier($rule, $type['orders']);
+                $rate = $typeAmount > 0 ? $typeAmount / $type['orders'] : 0.0;
+                foreach ($type['drivers'] as $empId => $share) {
+                    if ($typeAmount > 0) {
+                        $amounts[$empId] = $share['orders'] * $rate;
+                    } else {
+                        $unpricedBy[$empId] = $share['orders'];
+                    }
+                }
+            } elseif ($method === 'fixed' || $method === 'hybrid') {
+                $typeAmount = round((float) ($rule['fixed_amount'] ?? 0), 3);
+                foreach ($type['drivers'] as $empId => $share) {
+                    $amounts[$empId] = $type['days'] > 0 ? $typeAmount * $share['days'] / $type['days'] : 0.0;
+                }
+            } else {
+                $zoneTotals = [];
+                foreach ($type['drivers'] as $empId => $share) {
+                    $amounts[$empId] = 0.0;
+                    foreach ($share['zones'] as $zone => $zoneCount) {
+                        $zoneTotals[$zone] = ($zoneTotals[$zone] ?? 0) + $zoneCount;
+                        [, $rate] = self::zoneRate($rule, (string) $zone);
+                        if ($rate <= 0.0) {
+                            $unpricedBy[$empId] = ($unpricedBy[$empId] ?? 0) + $zoneCount;
+
+                            continue;
+                        }
+                        $amounts[$empId] += $zoneCount * $rate;
+                    }
+                }
+                // The contract prices each zone as one rounded line; the type figure is that sum.
+                foreach ($zoneTotals as $zone => $zoneCount) {
+                    [, $rate] = self::zoneRate($rule, (string) $zone);
+                    $typeAmount += round($zoneCount * $rate, 3);
+                }
+            }
+
+            // Round each share, then settle the rounding residue on the largest one, so the drivers
+            // add up to exactly what the contract billed for this type.
+            $rounded = array_map(fn (float $amount) => round($amount, 3), $amounts);
+            if ($rounded !== []) {
+                $residue = round($typeAmount - array_sum($rounded), 3);
+                if (abs($residue) >= 0.0005) {
+                    $largest = array_keys($rounded, max($rounded))[0];
+                    $rounded[$largest] = round($rounded[$largest] + $residue, 3);
+                }
+            }
+            foreach ($rounded as $empId => $amount) {
+                $drivers[$empId]['revenue'] += $amount;
+            }
+            foreach ($unpricedBy as $empId => $unpricedCount) {
+                $drivers[$empId]['unpriced_orders'] += $unpricedCount;
+            }
+            $contractRevenue += $typeAmount;
+            $contractUnpriced += array_sum($unpricedBy);
+        }
+
+        foreach ($drivers as &$driver) {
+            $driver['revenue'] = round($driver['revenue'], 3);
+        }
+        unset($driver);
+
+        return [
+            'contract' => [
+                'revenue' => round($contractRevenue, 3),
+                'orders' => $contractOrders,
+                'unpriced_orders' => $contractUnpriced,
+            ],
+            'drivers' => $drivers,
         ];
     }
 

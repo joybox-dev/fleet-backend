@@ -53,7 +53,7 @@ class ContractProfitabilityService
      *
      * @return array<int, array<string, mixed>>
      */
-    public static function forCompanyMonth(int $companyId, int $year, int $month, ?Collection $contracts = null): array
+    public static function forCompanyMonth(int $companyId, int $year, int $month, ?Collection $contracts = null, bool $withSheet = false): array
     {
         $contracts ??= Contract::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
@@ -64,7 +64,7 @@ class ContractProfitabilityService
 
         $rows = [];
         foreach ($contracts as $contract) {
-            $rows[$contract->id] = self::contractRow($contract, $context, false);
+            $rows[$contract->id] = self::contractRow($contract, $context, $withSheet);
         }
 
         return $rows;

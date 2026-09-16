@@ -10,7 +10,9 @@ use App\Models\Vehicle;
 use App\Models\Violation;
 use App\Services\ContractProfitabilityService;
 use App\Services\ContractRevenueService;
+use App\Services\ContributionReportService;
 use App\Services\DeductionsReportService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -308,6 +310,87 @@ class ReportController extends Controller
                 'unpriced_orders' => (int) $rows->sum('unpriced_orders'),
             ],
         ]);
+    }
+
+    /**
+     * GET /api/reports/contract-revenue
+     *
+     * What each contract billed its client in a month, priced from the logs alone — no payroll
+     * sheets built. The receivables screen sets collections against this and needs nothing more;
+     * it used to pull the whole profitability report for one column.
+     */
+    public function contractRevenue(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'year' => 'nullable|integer|min:2020|max:2100',
+            'month' => 'nullable|integer|min:1|max:12',
+        ]);
+        $year = (int) ($validated['year'] ?? now()->year);
+        $month = (int) ($validated['month'] ?? now()->month);
+        $start = Carbon::create($year, $month, 1)->startOfMonth();
+        $end = $start->copy()->endOfMonth()->toDateString();
+
+        $logsByContract = DailyLog::with('vehicle:id,vehicle_type_id')
+            ->whereBetween('log_date', [$start->toDateString(), $end])
+            ->get(['id', 'contract_id', 'vehicle_id', 'orders_count', 'zone', 'notes'])
+            ->groupBy('contract_id');
+
+        $contracts = Contract::with('client:id,name')
+            ->whereIn('id', $logsByContract->keys()->filter()->all())
+            ->orderBy('name')
+            ->get();
+
+        $rows = [];
+        foreach ($contracts as $contract) {
+            $billed = ContractRevenueService::forContractMonth($contract, $logsByContract->get($contract->id));
+            // A month opened with empty rows and nothing delivered has nothing to collect.
+            if ((int) $billed['orders'] <= 0 && (float) $billed['revenue'] <= 0.0005) {
+                continue;
+            }
+            $rows[] = [
+                'contract_id' => $contract->id,
+                'contract_name' => $contract->name,
+                'client_name' => $contract->client?->name ?? '—',
+                'is_active' => (bool) $contract->is_active,
+                'total_orders' => (int) $billed['orders'],
+                'unpriced_orders' => (int) $billed['unpriced_orders'],
+                'revenue' => round((float) $billed['revenue'], 3),
+            ];
+        }
+
+        return response()->json([
+            'year' => $year,
+            'month' => $month,
+            'contracts' => $rows,
+            'totals' => [
+                'revenue' => round(array_sum(array_column($rows, 'revenue')), 3),
+                'total_orders' => (int) array_sum(array_column($rows, 'total_orders')),
+                'unpriced_orders' => (int) array_sum(array_column($rows, 'unpriced_orders')),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/reports/contribution
+     *
+     * Contribution per contract and per driver for a month: the driver's orders priced by his
+     * contract's client rules, against what he earned in the contract sheet. See
+     * ContributionReportService. `contract_id` narrows both tables to one contract.
+     */
+    public function contribution(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'year' => 'nullable|integer|min:2020|max:2100',
+            'month' => 'nullable|integer|min:1|max:12',
+            'contract_id' => 'nullable|integer',
+        ]);
+
+        return response()->json(ContributionReportService::forMonth(
+            $this->currentCompanyId(),
+            (int) ($validated['year'] ?? now()->year),
+            (int) ($validated['month'] ?? now()->month),
+            isset($validated['contract_id']) ? (int) $validated['contract_id'] : null,
+        ));
     }
 
     /**

@@ -84,6 +84,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::get('dashboard/expiry-alerts', [DashboardController::class, 'expiryAlerts']);
     Route::get('dashboard/contracts-profitability', [DashboardController::class, 'contractsProfitability']);
     Route::get('dashboard/money-at-risk', [DashboardController::class, 'moneyAtRisk']);
+    Route::get('dashboard/pulse', [DashboardController::class, 'pulse']);
 
     // ═══════════════════════════════════════════════════════════════════
     // OPERATOR + ADMIN: Daily operations
@@ -348,6 +349,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('vehicle-profitability', [ReportController::class, 'vehicleProfitability']);
             Route::get('driver-status', [ReportController::class, 'driverStatus']);
             Route::get('contract-profitability', [ReportController::class, 'contractProfitability']);
+            Route::get('contribution', [ReportController::class, 'contribution']);
+            Route::get('contract-revenue', [ReportController::class, 'contractRevenue']);
             Route::get('missing-docs', [ReportController::class, 'missingDocs']);
         });
 
