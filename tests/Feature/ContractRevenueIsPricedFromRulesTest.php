@@ -213,6 +213,68 @@ class ContractRevenueIsPricedFromRulesTest extends TestCase
         $this->assertSame(30, $billed['unpriced_orders'], 'the other 30 carry no zone');
     }
 
+    /**
+     * Days saved before the per-zone split existed name their zone in the `zone` column. The
+     * fallback that reads it sat after the code that fills in the unattributed remainder, so it
+     * was never reached: 206 orders on the client's live contract were billed at nothing while the
+     * drivers were paid for them.
+     */
+    public function test_a_day_that_names_its_zone_only_in_the_column_is_billed_at_that_zone(): void
+    {
+        $contract = $this->contract([
+            '2' => [
+                'payment_method' => 'zones',
+                'zones' => [
+                    ['id' => 'z1', 'name' => 'اكسبريس', 'price' => '1.500'],
+                    ['id' => 'z2', 'name' => 'العادي', 'price' => '1.000'],
+                ],
+            ],
+        ]);
+
+        $this->log($contract, 9)->update(['zone' => 'اكسبريس']);
+
+        $billed = $this->bill($contract);
+
+        $this->assertSame(13.5, $billed['revenue'], '9 orders at the express rate');
+        $this->assertSame(0, $billed['unpriced_orders']);
+    }
+
+    public function test_the_zone_column_does_not_price_the_remainder_of_a_split_day(): void
+    {
+        $contract = $this->contract([
+            '2' => [
+                'payment_method' => 'zones',
+                'zones' => [['id' => 'z1', 'name' => 'اكسبريس', 'price' => '2.000']],
+            ],
+        ]);
+
+        // The editor writes the day's leading zone into the column beside the split; the split is
+        // what was entered, and what it leaves out is still waiting for a zone.
+        $this->log($contract, 50, ['z1' => 20])->update(['zone' => 'اكسبريس']);
+
+        $billed = $this->bill($contract);
+
+        $this->assertSame(40.0, $billed['revenue']);
+        $this->assertSame(30, $billed['unpriced_orders']);
+    }
+
+    public function test_a_zone_column_that_matches_no_rule_is_reported_not_invented(): void
+    {
+        $contract = $this->contract([
+            '2' => [
+                'payment_method' => 'zones',
+                'zones' => [['id' => 'z1', 'name' => 'اكسبريس', 'price' => '2.000']],
+            ],
+        ]);
+
+        $this->log($contract, 12)->update(['zone' => 'منطقة لا يعرفها العقد']);
+
+        $billed = $this->bill($contract);
+
+        $this->assertSame(0.0, $billed['revenue']);
+        $this->assertSame(12, $billed['unpriced_orders']);
+    }
+
     public function test_a_vehicle_type_with_no_client_rule_bills_nothing_and_says_so(): void
     {
         $contract = $this->contract([

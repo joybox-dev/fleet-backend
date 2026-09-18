@@ -609,6 +609,47 @@ class ExcelImportTest extends TestCase
         $this->assertSame(0, Employee::where('employee_number', 'E-3')->count());
     }
 
+    /**
+     * What the update mode was built for: the client has 128 employees on file and no IBAN on any
+     * of them. One file — number and IBAN — fills them in, and the bank is read off each IBAN.
+     */
+    public function test_ibans_are_filled_in_for_people_already_on_file()
+    {
+        $one = Employee::create(['name' => 'First', 'employee_number' => 'E-1', 'date_of_joining' => '2025-01-01', 'pay_type' => 'fixed', 'official_salary' => 120, 'status' => 'on_leave']);
+        $two = Employee::create(['name' => 'Second', 'employee_number' => 'E-2', 'date_of_joining' => '2025-01-01', 'pay_type' => 'fixed', 'official_salary' => 120]);
+        Employee::create(['name' => 'Third', 'employee_number' => 'E-3', 'date_of_joining' => '2025-01-01', 'pay_type' => 'fixed', 'official_salary' => 120]);
+
+        $rows = [
+            ['Number', 'IBAN'],
+            ['E-1', 'kw74 nbok 0000 0000 0000 1000 3721 51'],   // as a bank letter prints it
+            ['E-2', 'KW52KFHO0000000000001234567891'],          // one digit off
+            ['E-3', 'KW74NBOK0000000000001000372151'],          // the same account as E-1
+        ];
+        $mapping = ['A' => 'employee_number', 'B' => 'iban'];
+
+        [, $preview] = $this->preview('employees', $rows, $mapping, 'upsert');
+
+        $this->assertSame([true, false, false], array_column($preview['rows'], 'is_valid'));
+        $this->assertSame(
+            [['field' => 'iban', 'label' => 'رقم IBAN', 'from' => null, 'to' => 'KW74NBOK0000000000001000372151'], ['field' => 'bank_name', 'label' => 'البنك', 'from' => null, 'to' => 'بنك الكويت الوطني']],
+            $preview['rows'][0]['changes']
+        );
+        $this->assertStringContainsString('رقم IBAN غير صحيح', $preview['rows'][1]['errors']['iban'][0]);
+        $this->assertStringContainsString('مكرر داخل الملف', $preview['rows'][2]['errors']['iban'][0]);
+
+        $log = $this->import('employees', $rows, $mapping, 'upsert');
+        $this->assertSame([1, 2], [$log->rows_updated, $log->rows_failed]);
+
+        $this->assertSame('KW74NBOK0000000000001000372151', $one->fresh()->iban, 'stored without the spaces');
+        $this->assertSame('بنك الكويت الوطني', $one->fresh()->bank_name);
+        $this->assertSame('on_leave', $one->fresh()->status, 'nothing else moved');
+        $this->assertNull($two->fresh()->iban);
+
+        // Once E-1 holds it, a later file cannot give the same account to somebody else.
+        [, $later] = $this->preview('employees', [['Number', 'IBAN'], ['E-2', 'KW74 NBOK 0000 0000 0000 1000 3721 51']], $mapping, 'upsert');
+        $this->assertSame('«رقم IBAN» مسجَّل في النظام لسجل آخر: First.', $later['rows'][0]['errors']['iban'][0]);
+    }
+
     public function test_an_update_that_names_a_deleted_record_says_that_it_is_deleted()
     {
         $gone = Employee::create(['name' => 'Left Last Year', 'employee_number' => 'E-7', 'date_of_joining' => '2024-01-01', 'pay_type' => 'fixed', 'official_salary' => 100]);

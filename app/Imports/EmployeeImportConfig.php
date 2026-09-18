@@ -2,7 +2,9 @@
 
 namespace App\Imports;
 
+use App\Helpers\Iban;
 use App\Models\Employee;
+use App\Rules\Iban as IbanRule;
 
 /**
  * Employee Import Configuration
@@ -33,6 +35,8 @@ class EmployeeImportConfig
             ['key' => 'employee_type',     'label' => 'نوع الموظف',       'required' => true,  'type' => 'enum:overseas,local_transfer'],
             ['key' => 'pay_type',          'label' => 'نظام الدفع',       'required' => true,  'type' => 'enum:fixed,per_order,hybrid'],
             ['key' => 'official_salary',   'label' => 'الراتب الرسمي',    'required' => true,  'type' => 'numeric'],
+            ['key' => 'iban',              'label' => 'رقم IBAN',         'required' => false, 'type' => 'iban'],
+            ['key' => 'bank_name',         'label' => 'البنك',            'required' => false, 'type' => 'string'],
             ['key' => 'actual_salary',     'label' => 'الراتب الفعلي',    'required' => false, 'type' => 'numeric'],
             ['key' => 'rate_per_order',    'label' => 'عمولة الطلب',      'required' => false, 'type' => 'numeric'],
             ['key' => 'target_orders_monthly', 'label' => 'تارغت الطلبات الشهري', 'required' => false, 'type' => 'integer'],
@@ -66,6 +70,8 @@ class EmployeeImportConfig
             'employee_type' => 'required|in:overseas,local_transfer',
             'pay_type' => 'required|in:fixed,per_order,hybrid',
             'official_salary' => 'required|numeric|min:0',
+            'iban' => ['nullable', 'string', new IbanRule],
+            'bank_name' => 'nullable|string|max:100',
             'actual_salary' => 'nullable|numeric|min:0',
             'rate_per_order' => 'nullable|numeric|min:0',
             'target_orders_monthly' => 'nullable|integer|min:0',
@@ -123,7 +129,7 @@ class EmployeeImportConfig
      */
     public static function uniqueWithinCompany(): array
     {
-        return ['civil_id', 'phone'];
+        return ['civil_id', 'phone', 'iban'];
     }
 
     /** The column that names a record in a message about it. */
@@ -142,13 +148,21 @@ class EmployeeImportConfig
     }
 
     /**
-     * Turn what the file says into what the table stores. Employees need nothing resolved.
+     * Turn what the file says into what the table stores. A Kuwaiti IBAN names its own bank, so a
+     * file that carries the IBAN column alone still fills in the bank.
      *
      * @param  array<string, mixed>  $data
      * @return array{0: array<string, mixed>, 1: array<string, array<int, string>>}
      */
     public static function resolve(array $data, int $companyId): array
     {
+        if (! empty($data['iban']) && empty($data['bank_name']) && Iban::isValid($data['iban'])) {
+            $bank = Iban::bankName($data['iban']);
+            if ($bank !== null) {
+                $data['bank_name'] = $bank;
+            }
+        }
+
         return [$data, []];
     }
 }

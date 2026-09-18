@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\Iban;
 use App\Imports\EmployeeImportConfig;
 use App\Imports\VehicleImportConfig;
 use App\Models\ImportLog;
@@ -610,6 +611,7 @@ class ImportService
             'numeric' => 'رقم، مثال: 120.500',
             'integer' => 'عدد صحيح، مثال: 150',
             'date' => 'تاريخ، مثال: 2026-01-31',
+            'iban' => 'رقم IBAN كاملاً كما في كشف البنك، مثال: KW81CBKU0000000000001234560101 — الآيبان الكويتي 30 خانة، والمسافات لا تضر',
             default => 'نص',
         };
     }
@@ -635,6 +637,10 @@ class ImportService
 
         if ($type === 'date') {
             return $this->normalizeDate($value);
+        }
+        if ($type === 'iban') {
+            // As it is stored, so «KW81 cbku …» is recognised as the account already on file.
+            return Iban::normalize($value);
         }
         if (in_array($type, ['numeric', 'integer'], true)) {
             return str_replace([',', ' ', '٬'], '', $value);

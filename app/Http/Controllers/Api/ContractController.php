@@ -29,7 +29,8 @@ class ContractController extends Controller
                     ->orWhereNull('vehicle_type_id');
             }))
             ->withCount([
-                'assignments as active_drivers_count' => fn ($q) => $q->where('status', 'active'),
+                // On the contract TODAY: an assignment ended by its date keeps its «active» flag.
+                'assignments as active_drivers_count' => fn ($q) => $q->current(),
             ])
             ->withSum([
                 'dailyLogs as current_month_orders' => fn ($q) => $q->whereBetween('log_date', [$startOfMonth, $endOfMonth]),

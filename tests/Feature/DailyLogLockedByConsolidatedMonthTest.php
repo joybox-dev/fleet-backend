@@ -169,6 +169,43 @@ class DailyLogLockedByConsolidatedMonthTest extends TestCase
         $this->assertSame(0, DailyLog::withoutGlobalScopes()->where('contract_id', $this->other->id)->count());
     }
 
+    /**
+     * Creating a day and saving the month grid were locked; rewriting the same day from the list,
+     * or deleting it, was not — so a closed month's orders could still move under its frozen sheet.
+     */
+    public function test_a_day_of_the_closed_month_cannot_be_rewritten_or_deleted(): void
+    {
+        $day = DailyLog::withoutGlobalScopes()->where('contract_id', $this->approved->id)->firstOrFail();
+
+        $this->putJson("/api/daily-logs/{$day->id}", ['orders_count' => 9, 'orders_online' => 9])
+            ->assertStatus(422)
+            ->assertJsonPath('message', fn ($m) => str_contains($m, 'المجمّع'));
+        $this->putJson("/api/daily-logs/{$day->id}", ['driver_status' => 'paid_leave'])->assertStatus(422);
+        $this->deleteJson("/api/daily-logs/{$day->id}")->assertStatus(422);
+
+        $day->refresh();
+        $this->assertSame(0, (int) $day->orders_count);
+        $this->assertSame('working', $day->driver_status);
+        $this->assertNull($day->deleted_at);
+    }
+
+    /**
+     * The forms send every field back, touched or not. What pay and billing never read — the cash
+     * he handed over, the odometer — stays correctable after the month is closed.
+     */
+    public function test_cash_on_a_closed_day_can_still_be_corrected_when_nothing_else_moves(): void
+    {
+        $day = DailyLog::withoutGlobalScopes()->where('contract_id', $this->approved->id)->firstOrFail();
+
+        $this->putJson("/api/daily-logs/{$day->id}", [
+            'orders_count' => 0, 'orders_online' => 0, 'orders_cash' => 0,
+            'late_login' => false, 'early_logout' => false, 'zone' => null, 'notes' => '',
+            'cash_collected' => 12.5,
+        ])->assertOk();
+
+        $this->assertSame(12.5, (float) $day->fresh()->cash_collected);
+    }
+
     public function test_an_open_month_still_accepts_logs(): void
     {
         // April was never approved; nothing about March may reach into it.

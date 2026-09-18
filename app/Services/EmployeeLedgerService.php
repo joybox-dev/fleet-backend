@@ -11,6 +11,7 @@ use App\Models\ContractPayrollRun;
 use App\Models\CustodyItem;
 use App\Models\DailyLog;
 use App\Models\DriverExpense;
+use App\Models\DriverOpeningBalance;
 use App\Models\Employee;
 use App\Models\MaintenanceRecord;
 use App\Models\PayrollDisbursement;
@@ -105,7 +106,18 @@ class EmployeeLedgerService
         // calendar would make an out-of-turn approval rewrite a month that is already frozen.
         $approvalOrder = $approvedRuns->mapWithKeys(fn ($r) => [$r->year.'-'.$r->month => (int) $r->id])->all();
 
-        [$rows, $settledBalance, $settledThrough] = self::withCarryForward($rows, $approvalOrder);
+        // What he was entered with before any month here: the account starts from it, not from zero.
+        $declared = DriverOpeningBalance::withoutGlobalScopes()
+            ->where('company_id', $employee->company_id)
+            ->where('employee_id', $employee->id)
+            ->with(['createdBy:id,name', 'updatedBy:id,name'])
+            ->first();
+
+        [$rows, $settledBalance, $settledThrough] = self::withCarryForward(
+            $rows,
+            $approvalOrder,
+            $declared ? round((float) $declared->amount, 3) : 0.0
+        );
 
         return [
             'employee' => [
@@ -121,9 +133,10 @@ class EmployeeLedgerService
             // open month is a review copy and has taken nothing off him.
             'settled_balance' => $settledBalance,
             'settled_through' => $settledThrough,
+            'opening_balance' => $declared?->toRow(),
             'unapproved_months' => collect($rows)->where('carries_forward', false)
                 ->where('has_activity', true)->pluck('label')->values()->all(),
-            'movements' => self::movements($employee, $approvedRuns, $paid, $fromYm, $toYm),
+            'movements' => self::movements($employee, $approvedRuns, $paid, $fromYm, $toYm, $declared),
         ];
     }
 
@@ -136,11 +149,14 @@ class EmployeeLedgerService
      * The running figure here and the month chain land on the same balance; they only differ in
      * the order the same entries are read.
      *
+     * The figure he was entered with is the account's first line whatever day it carries: it is
+     * what stood before anything recorded here, so it opens the list the way it opens the chain.
+     *
      * @param  Collection<string, ConsolidatedPayrollRun>  $approvedRuns
      * @param  Collection<int, PayrollDisbursement>  $paid
      * @return array<int, array<string, mixed>>
      */
-    private static function movements(Employee $employee, $approvedRuns, $paid, ?string $fromYm, ?string $toYm): array
+    private static function movements(Employee $employee, $approvedRuns, $paid, ?string $fromYm, ?string $toYm, ?DriverOpeningBalance $declared = null): array
     {
         $entries = [];
 
@@ -185,6 +201,19 @@ class EmployeeLedgerService
 
         usort($entries, fn ($a, $b) => [$a['date'], $a['order'], $a['at']] <=> [$b['date'], $b['order'], $b['at']]);
 
+        if ($declared && abs((float) $declared->amount) >= 0.0005) {
+            array_unshift($entries, [
+                'date' => $declared->balance_date?->toDateString(),
+                'at' => $declared->created_at?->toDateTimeString(),
+                'order' => -1,
+                'kind' => 'opening',
+                'label' => DriverOpeningBalance::LABEL.((float) $declared->amount < 0 ? ' — على السائق' : ' — للسائق عند الشركة'),
+                'month_label' => null,
+                'amount' => round((float) $declared->amount, 3),
+                'notes' => $declared->notes,
+            ]);
+        }
+
         $balance = 0.0;
         foreach ($entries as $i => $entry) {
             $balance = round($balance + $entry['amount'], 3);
@@ -223,11 +252,15 @@ class EmployeeLedgerService
      * has paid stays owed to the driver in full; one that ended as a debt stays against him. The
      * rule itself lives in PayrollBalanceService so the consolidated sheet reads the same figure.
      *
+     * The chain starts from the figure the driver was entered with (DriverOpeningBalance), zero for
+     * most: the first approved month opens with it, and with no approved month at all it is the
+     * whole of his settled balance.
+     *
      * @param  array<int, array<string, mixed>>  $rows  newest month first
      * @param  array<string, int>  $approvalOrder  "year-month" => the run's approval sequence
      * @return array{0: array<int, array<string, mixed>>, 1: float, 2: ?string}
      */
-    private static function withCarryForward(array $rows, array $approvalOrder): array
+    private static function withCarryForward(array $rows, array $approvalOrder, float $opening = 0.0): array
     {
         $approvedKeys = [];
         foreach ($rows as $i => $row) {
@@ -238,7 +271,7 @@ class EmployeeLedgerService
         }
         asort($approvedKeys);
 
-        $balance = 0.0;
+        $balance = round($opening, 3);
         $from = null;
 
         foreach (array_keys($approvedKeys) as $i) {

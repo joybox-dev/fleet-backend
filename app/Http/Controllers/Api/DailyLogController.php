@@ -3,21 +3,25 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ConsolidatedPayrollRun;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
-use App\Models\ContractPayrollRun;
 use App\Models\DailyLog;
 use App\Models\Vehicle;
 use App\Services\ContractScopeService;
-use Illuminate\Database\QueryException;
+use App\Services\DailyLogWriter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class DailyLogController extends Controller
 {
-    private const STATUSES = ['working', 'absent', 'unexcused_absent', 'paid_leave', 'unpaid_leave', 'sick_leave', 'holiday'];
+    private const STATUSES = DailyLogWriter::STATUSES;
+
+    /** What pay or billing is worked out from: closed to edits once the day's month is approved. */
+    private const FROZEN_AFTER_APPROVAL = [
+        'orders_count', 'orders_online', 'orders_cash', 'rejected_orders_count', 'driver_status',
+        'online_hours', 'ontime_rate', 'late_login', 'early_logout', 'is_valid', 'shift_valid', 'zone', 'notes',
+    ];
 
     /**
      * GET /api/daily-logs
@@ -102,7 +106,7 @@ class DailyLogController extends Controller
 
         $validated = $validator->validate();
 
-        if ($locked = $this->lockedMonth($companyId, (int) $validated['contract_id'], $validated['log_date'])) {
+        if ($locked = DailyLogWriter::lockedMonth($companyId, (int) $validated['contract_id'], $validated['log_date'])) {
             return response()->json(['message' => $locked], 422);
         }
 
@@ -124,16 +128,20 @@ class DailyLogController extends Controller
             ], 422);
         }
 
+        if ($unzoned = DailyLogWriter::unzonedOrdersBlock($contract, $vehicle->vehicle_type_id, $validated)) {
+            return response()->json(['message' => $unzoned, 'errors' => ['zone' => [$unzoned]]], 422);
+        }
+
         $attributes = array_merge($validated, [
             'orders_online' => (int) ($validated['orders_online'] ?? 0),
             'orders_cash' => (int) ($validated['orders_cash'] ?? 0),
             'cash_collected' => (float) ($validated['cash_collected'] ?? 0),
-            'driver_status' => self::deriveStatus($validated),
+            'driver_status' => DailyLogWriter::deriveStatus($validated),
             'is_valid' => self::deriveValidity($contract, $validated),
         ]);
 
         $existed = $this->dayExists($attributes);
-        $log = $this->writeDay($companyId, $request->user()->id, $attributes);
+        $log = DailyLogWriter::write($companyId, $request->user()->id, $attributes);
 
         if (is_string($log)) {
             return response()->json(['message' => $log, 'errors' => ['cash_collected' => [$log]]], 422);
@@ -172,7 +180,7 @@ class DailyLogController extends Controller
                 continue;
             }
             $key = substr((string) $logDate, 0, 7).'|'.$contractId;
-            $lockedMonths[$key] ??= $this->lockedMonth($companyId, (int) $contractId, $logDate);
+            $lockedMonths[$key] ??= DailyLogWriter::lockedMonth($companyId, (int) $contractId, $logDate);
             if ($lockedMonths[$key]) {
                 return response()->json(['message' => $lockedMonths[$key]], 422);
             }
@@ -180,6 +188,8 @@ class DailyLogController extends Controller
 
         $contractIds = array_unique(array_filter(array_column($logs, 'contract_id')));
         $contractsMap = Contract::whereIn('id', $contractIds)->get()->keyBy('id');
+        $vehicleTypes = Vehicle::whereIn('id', array_unique(array_filter(array_column($logs, 'vehicle_id'))))
+            ->pluck('vehicle_type_id', 'id');
 
         $savedLogs = [];
         $skipped = [];
@@ -215,6 +225,19 @@ class DailyLogController extends Controller
             }
 
             $contract = $contractsMap->get($contractId);
+
+            if ($contract && ($unzoned = DailyLogWriter::unzonedOrdersBlock($contract, $vehicleTypes[(int) $vehicleId] ?? null, $logData))) {
+                $skipped[] = [
+                    'log_date' => $logDate,
+                    'employee_id' => $employeeId,
+                    'contract_id' => $contractId,
+                    'reason' => 'orders_without_zone',
+                    'message' => $unzoned,
+                ];
+
+                continue;
+            }
+
             $ordersCount = (int) ($logData['orders_count'] ?? 0);
             $ordersCash = (int) ($logData['orders_cash'] ?? 0);
 
@@ -234,13 +257,13 @@ class DailyLogController extends Controller
                 'late_login' => (bool) ($logData['late_login'] ?? false),
                 'early_logout' => (bool) ($logData['early_logout'] ?? false),
                 'notes' => $logData['notes'] ?? null,
-                'driver_status' => self::deriveStatus($logData),
+                'driver_status' => DailyLogWriter::deriveStatus($logData),
             ];
             // The grid decides validity itself and says so; a row that does not is valid.
             $attributes['is_valid'] = isset($logData['is_valid']) ? (bool) $logData['is_valid'] : true;
             $attributes['shift_valid'] = $attributes['is_valid'];
 
-            $log = $this->writeDay($companyId, $userId, $attributes);
+            $log = DailyLogWriter::write($companyId, $userId, $attributes);
 
             if (is_string($log)) {
                 $skipped[] = [
@@ -336,12 +359,36 @@ class DailyLogController extends Controller
             }
 
             if ($request->has('cash_collected')
-                && ($blocked = self::settledCashBlocks($dailyLog, (float) $request->input('cash_collected')))) {
+                && ($blocked = DailyLogWriter::settledCashBlocks($dailyLog, (float) $request->input('cash_collected')))) {
                 $validator->errors()->add('cash_collected', $blocked);
+            }
+
+            // Judged only when the edit moves what the client is billed on: a day that already
+            // carries unzoned orders stays editable for everything else, it is a NEW one that is
+            // refused.
+            if ($dailyLog->contract && self::changedFields($request, $dailyLog, ['orders_count', 'zone', 'notes']) !== []) {
+                $unzoned = DailyLogWriter::unzonedOrdersBlock($dailyLog->contract, $dailyLog->vehicle?->vehicle_type_id, [
+                    'orders_count' => $request->has('orders_count') ? $request->input('orders_count') : $dailyLog->orders_count,
+                    'zone' => $request->has('zone') ? $request->input('zone') : $dailyLog->zone,
+                    'notes' => $request->has('notes') ? $request->input('notes') : $dailyLog->notes,
+                ]);
+                if ($unzoned) {
+                    $validator->errors()->add('zone', $unzoned);
+                }
             }
         });
 
         $validated = $validator->validate();
+
+        // An approved month is frozen for whatever pay or billing is worked out from. The check
+        // sat on creating and on the month grid only, so the same day could still be rewritten —
+        // or deleted — from the list and from the driver's file. What feeds neither (cash handed
+        // over, the odometer) stays correctable after the month is closed.
+        $frozen = self::changedFields($request, $dailyLog, self::FROZEN_AFTER_APPROVAL);
+        if ($frozen !== []
+            && ($locked = DailyLogWriter::lockedMonth($this->currentCompanyId(), (int) $dailyLog->contract_id, (string) $dailyLog->log_date))) {
+            return response()->json(['message' => $locked, 'errors' => [$frozen[0] => [$locked]]], 422);
+        }
 
         if (isset($validated['cash_collected'])) {
             $validated['cash_pending'] = max(0, (float) $validated['cash_collected'] - (float) $dailyLog->cash_settled);
@@ -351,7 +398,7 @@ class DailyLogController extends Controller
 
         if (array_key_exists('orders_count', $validated) || array_key_exists('driver_status', $validated)
             || array_key_exists('rejected_orders_count', $validated) || array_key_exists('cash_collected', $validated)) {
-            $validated['driver_status'] = self::deriveStatus($merged);
+            $validated['driver_status'] = DailyLogWriter::deriveStatus($merged);
         }
 
         // Respect a manual override; otherwise judge the day again from what it now holds.
@@ -373,45 +420,13 @@ class DailyLogController extends Controller
             return response()->json(['message' => 'غير مصرح لك بحذف سجلات التشغيل.'], 403);
         }
 
+        if ($locked = DailyLogWriter::lockedMonth($this->currentCompanyId(), (int) $dailyLog->contract_id, (string) $dailyLog->log_date)) {
+            return response()->json(['message' => $locked], 422);
+        }
+
         $dailyLog->delete();
 
         return response()->json(['message' => 'Log deleted.']);
-    }
-
-    /**
-     * Why a day in this month may not be written, or null when it may.
-     *
-     * The consolidated month is the only lock that covers every contract at once, and it is the
-     * one that matters: once approved it is frozen and serves a snapshot forever, so a log added
-     * afterwards is earnings the driver is never paid for. The contract-level check only sees the
-     * one contract named.
-     */
-    private function lockedMonth(int $companyId, int $contractId, string $logDate): ?string
-    {
-        $time = strtotime($logDate);
-        $year = (int) date('Y', $time);
-        $month = (int) date('n', $time);
-
-        $consolidated = ConsolidatedPayrollRun::where('company_id', $companyId)
-            ->where('year', $year)
-            ->where('month', $month)
-            ->where('status', 'approved')
-            ->exists();
-
-        if ($consolidated) {
-            return 'تم اعتماد كشف الرواتب المجمّع لهذا الشهر ولا يمكن تعديل السجلات اليومية.';
-        }
-
-        $contractLocked = ContractPayrollRun::where('company_id', $companyId)
-            ->where('contract_id', $contractId)
-            ->where('year', $year)
-            ->where('month', $month)
-            ->where('status', 'approved')
-            ->exists();
-
-        return $contractLocked
-            ? 'تم اعتماد كشف رواتب هذا العقد لهذا الشهر ولا يمكن تعديل السجلات اليومية.'
-            : null;
     }
 
     private function isAssigned(int $employeeId, int $contractId, string $logDate): bool
@@ -424,27 +439,6 @@ class DailyLogController extends Controller
                 $q->whereNull('end_date')->orWhereDate('end_date', '>=', $logDate);
             })
             ->exists();
-    }
-
-    /**
-     * A day with activity on it is a working day whatever the form said; an empty day keeps the
-     * status it was given, and is unpaid leave when it was given none.
-     *
-     * @param  array<string, mixed>  $data
-     */
-    private static function deriveStatus(array $data): string
-    {
-        $orders = (int) ($data['orders_count'] ?? 0);
-        $rejected = (int) ($data['rejected_orders_count'] ?? 0);
-        $cash = (float) ($data['cash_collected'] ?? 0);
-
-        if ($orders > 0 || $rejected > 0 || $cash > 0) {
-            return 'working';
-        }
-
-        $status = $data['driver_status'] ?? null;
-
-        return $status && in_array($status, self::STATUSES, true) ? $status : 'unpaid_leave';
     }
 
     /**
@@ -480,93 +474,27 @@ class DailyLogController extends Controller
     }
 
     /**
-     * Write one driver's day on one contract, replacing whatever row that day already has.
+     * Which of the named fields a request would actually change on a saved day. The forms send
+     * every field back whether it was touched or not, so presence says nothing; the value does.
      *
-     * The day is matched on employee AND contract: matching on employee and date alone reached
-     * across to whatever other contract the driver had worked that day and overwrote it. A
-     * duplicate row left behind by an older bug is removed on the way. Cash already handed over
-     * cannot be un-collected, so a day that has been settled refuses a lower collection.
-     *
-     * @param  array<string, mixed>  $attributes
-     * @return DailyLog|string the row, or the message refusing it
+     * @param  array<int, string>  $fields
+     * @return array<int, string>
      */
-    private function writeDay(int $companyId, int $userId, array $attributes): DailyLog|string
+    private static function changedFields(Request $request, DailyLog $log, array $fields): array
     {
-        $matching = DailyLog::withTrashed()->withoutGlobalScopes()
-            ->where('employee_id', $attributes['employee_id'])
-            ->where('contract_id', $attributes['contract_id'])
-            ->where('log_date', $attributes['log_date'])
-            ->orderBy('id')
-            ->get();
+        $normalise = function (string $field, mixed $value): mixed {
+            return match (true) {
+                in_array($field, ['orders_count', 'orders_online', 'orders_cash', 'rejected_orders_count'], true) => (int) $value,
+                in_array($field, ['online_hours', 'ontime_rate'], true) => $value === null || $value === '' ? null : round((float) $value, 2),
+                in_array($field, ['late_login', 'early_logout', 'is_valid', 'shift_valid'], true) => filter_var($value, FILTER_VALIDATE_BOOLEAN),
+                default => $value === null || trim((string) $value) === '' ? null : trim((string) $value),
+            };
+        };
 
-        foreach ($matching->slice(1) as $duplicate) {
-            $duplicate->forceDelete();
-        }
-
-        $cashCollected = (float) ($attributes['cash_collected'] ?? 0);
-        $existing = $matching->first();
-
-        if (! $existing) {
-            try {
-                return DailyLog::create(array_merge($attributes, [
-                    'company_id' => $companyId,
-                    'created_by' => $userId,
-                    'cash_settled' => 0,
-                    'cash_pending' => $cashCollected,
-                ]));
-            } catch (QueryException $e) {
-                // Written by a concurrent request in the meantime: only this contract's row can be
-                // the one that clashed, so take it and update it.
-                $existing = DailyLog::withTrashed()->withoutGlobalScopes()
-                    ->where('employee_id', $attributes['employee_id'])
-                    ->where('contract_id', $attributes['contract_id'])
-                    ->where('log_date', $attributes['log_date'])
-                    ->first();
-                if (! $existing) {
-                    throw $e;
-                }
-            }
-        }
-
-        if ($existing->trashed()) {
-            $existing->restore();
-        }
-
-        if ($blocked = self::settledCashBlocks($existing, $cashCollected)) {
-            return $blocked;
-        }
-
-        $existing->update(array_merge($attributes, [
-            'company_id' => $companyId,
-            'cash_pending' => max(0, $cashCollected - (float) ($existing->cash_settled ?? 0)),
-        ]));
-
-        return $existing;
-    }
-
-    /**
-     * Cash already handed to the accountant cannot be un-collected. Dropping a day's collection
-     * below what was settled on it leaves the books holding money the driver never took in.
-     * A day already in that state may still be raised toward its settled figure, so a broken row
-     * can be repaired; only making it worse is refused.
-     */
-    private static function settledCashBlocks(?DailyLog $log, float $cashCollected): ?string
-    {
-        if (! $log) {
-            return null;
-        }
-
-        $settled = round((float) $log->cash_settled, 3);
-        $current = round((float) $log->cash_collected, 3);
-        $next = round($cashCollected, 3);
-
-        if ($settled <= 0 || $next >= $settled || $next >= $current) {
-            return null;
-        }
-
-        return sprintf(
-            'هذا اليوم مُسوّى بمبلغ %s د.ك — لا يمكن تخفيض الكاش المجمّع تحت هذا المبلغ. عدّل التسوية أولاً.',
-            number_format($settled, 3)
-        );
+        return array_values(array_filter(
+            $fields,
+            fn (string $field) => $request->has($field)
+                && $normalise($field, $request->input($field)) !== $normalise($field, $log->getAttribute($field))
+        ));
     }
 }

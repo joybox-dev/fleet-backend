@@ -355,7 +355,7 @@ class ConsolidatedSheetService
 
         foreach ($data['drivers'] ?? [] as $i => $d) {
             $employeeId = (int) ($d['employee_id'] ?? 0);
-            $prior = $opening[$employeeId] ?? ['balance' => 0.0, 'from' => null, 'months' => []];
+            $prior = $opening[$employeeId] ?? ['balance' => 0.0, 'from' => null, 'declared' => 0.0, 'months' => []];
             $rows = $paidRows->get($employeeId, collect());
 
             $net = round((float) ($d['final_net_payout'] ?? 0), 3);
@@ -382,6 +382,8 @@ class ConsolidatedSheetService
             $data['drivers'][$i] = array_merge($d, [
                 'opening_balance' => $prior['balance'],
                 'opening_balance_from' => $prior['from'],
+                // The part of it he was entered with, before any month approved here.
+                'opening_balance_declared' => $prior['declared'],
                 // Only the months still holding something: a month paid to the fils explains nothing.
                 'opening_balance_breakdown' => array_values(array_filter(
                     $prior['months'],
@@ -431,6 +433,8 @@ class ConsolidatedSheetService
                 'employee_name' => $names[$employeeId] ?? "#{$employeeId}",
                 'balance' => $entry['balance'],
                 'from' => $entry['from'],
+                // Named only where there is one, so a balance made of months alone reads as before.
+                ...(abs($entry['declared']) >= 0.0005 ? ['declared' => $entry['declared']] : []),
             ])
             ->sortBy('balance')
             ->values()

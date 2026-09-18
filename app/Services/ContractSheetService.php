@@ -570,7 +570,7 @@ class ContractSheetService
         return Violation::withoutGlobalScopes()
             ->whereNull('deleted_at')
             ->whereIn('employee_id', $employeeIds)
-            ->whereBetween('violation_date', [$startDate, $endDate])
+            ->datedWithin($startDate, $endDate)
             ->get()
             ->filter(function ($v) use ($contract, $contractsPerEmployee) {
                 if ($v->charge_contract_id !== null) {

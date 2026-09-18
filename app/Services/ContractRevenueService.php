@@ -300,6 +300,11 @@ class ContractRevenueService
      * The per-zone split a log was saved with. `notes.zone_orders` is where the daily-log editor
      * writes it; the older `zone` column holds a single name and covers only a handful of rows.
      *
+     * A day with no split at all and a zone named in the column is that zone's, whole — the same
+     * reading the driver side gives it (ContractPayrollService::splitOrdersByZone). The column was
+     * checked only after the unattributed remainder had been filled in, so it was never reached
+     * and those days were billed at nothing while the driver was paid for them.
+     *
      * @return array<string, int>
      */
     private static function zoneCounts(object $log, int $count): array
@@ -317,17 +322,72 @@ class ContractRevenueService
             }
         }
 
+        if ($out === [] && $log->zone) {
+            return [(string) $log->zone => $count];
+        }
+
         $attributed = array_sum($out);
         if ($attributed < $count) {
             // Partly attributed days are real: the remainder carries no zone and no price.
             $out[self::NO_ZONE] = ($out[self::NO_ZONE] ?? 0) + ($count - $attributed);
         }
 
-        if (empty($out) && $log->zone) {
-            return [(string) $log->zone => $count];
+        return $out;
+    }
+
+    /**
+     * How many of a day's orders the client would be billed nothing for because they carry no zone
+     * that day's vehicle type can price: no split at all, the ids of another vehicle type's zones,
+     * a name the rule does not know. Zero when that vehicle type is not billed by zone — the
+     * question only exists where a zone decides the price. A zone the rule knows but has not priced
+     * yet is the contract's gap, not the day's, and is not counted.
+     *
+     * This is what the daily-log writers ask before saving, so an order cannot be entered in a way
+     * this reader would then bill at zero without anyone having chosen that.
+     */
+    public static function ordersWithoutBillableZone(Contract $contract, ?int $vehicleTypeId, int $orders, ?string $zone, ?string $notes): int
+    {
+        if ($orders <= 0) {
+            return 0;
         }
 
-        return $out ?: [self::NO_ZONE => $count];
+        $rule = self::rules($contract)[(string) ($vehicleTypeId ?? $contract->vehicle_type_id ?? '')] ?? null;
+        if (! is_array($rule) || ($rule['payment_method'] ?? null) !== 'zones') {
+            return 0;
+        }
+
+        $unbillable = 0;
+        foreach (self::zoneCounts((object) ['notes' => $notes, 'zone' => $zone], $orders) as $key => $count) {
+            if ((string) $key === self::NO_ZONE || self::zoneOf($rule, (string) $key) === null) {
+                $unbillable += $count;
+            }
+        }
+
+        return $unbillable;
+    }
+
+    /**
+     * The zone of a rule a day's key names — by id, by name, or by the older `zone` field.
+     *
+     * @param  array<string, mixed>  $rule
+     * @return array<string, mixed>|null
+     */
+    private static function zoneOf(array $rule, string $key): ?array
+    {
+        $key = trim($key);
+
+        foreach (($rule['zones'] ?? []) as $z) {
+            if (! is_array($z)) {
+                continue;
+            }
+            foreach (['id', 'name', 'zone'] as $field) {
+                if (isset($z[$field]) && trim((string) $z[$field]) === $key) {
+                    return $z;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -340,23 +400,11 @@ class ContractRevenueService
             return ['—', 0.0];
         }
 
-        foreach (($rule['zones'] ?? []) as $z) {
-            if (! is_array($z)) {
-                continue;
-            }
-            $matches = (isset($z['id']) && (string) $z['id'] === $zone)
-                || (isset($z['name']) && (string) $z['name'] === $zone)
-                || (isset($z['zone']) && (string) $z['zone'] === $zone);
+        $z = self::zoneOf($rule, $zone);
 
-            if ($matches) {
-                return [
-                    (string) ($z['name'] ?? $z['zone'] ?? $zone),
-                    (float) ($z['price'] ?? $z['rate'] ?? 0),
-                ];
-            }
-        }
-
-        return [$zone, 0.0];
+        return $z === null
+            ? [$zone, 0.0]
+            : [(string) ($z['name'] ?? $z['zone'] ?? $zone), (float) ($z['price'] ?? $z['rate'] ?? 0)];
     }
 
     /**

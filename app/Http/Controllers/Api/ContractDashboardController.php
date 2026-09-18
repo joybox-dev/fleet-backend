@@ -52,15 +52,32 @@ class ContractDashboardController extends Controller
         // The vehicle type each driver held DURING THIS MONTH, from the vehicle assignment that
         // covered it — not from whatever is assigned today. The month's own dates are the right
         // question: one of the drivers this was reported for had his assignment closed since.
-        $vehicleTypeByEmployee = VehicleAssignment::withoutGlobalScopes()
+        $vehicleSpans = VehicleAssignment::withoutGlobalScopes()
             ->whereIn('employee_id', $activeAssignments->pluck('employee_id')->unique())
             ->whereDate('assigned_date', '<=', $endDateStr)
             ->where(fn ($q) => $q->whereNull('unassigned_date')->orWhereDate('unassigned_date', '>=', $startDateStr))
-            ->with('vehicle:id,vehicle_type_id')
+            ->with('vehicle:id,vehicle_type_id,plate_number')
             ->orderBy('assigned_date')
             ->get()
-            ->groupBy('employee_id')
+            ->groupBy('employee_id');
+
+        $vehicleTypeByEmployee = $vehicleSpans
             ->map(fn ($rows) => $rows->pluck('vehicle.vehicle_type_id')->filter()->unique()->values()->all());
+
+        // Which vehicle he held on which days of the month. A driver who changes vehicle type
+        // mid-month enters each day against that day's vehicle: zone ids differ from one vehicle
+        // type to the next, and a day saved under the other type's ids is billed at nothing.
+        $vehicleSpansByEmployee = $vehicleSpans->map(fn ($rows) => $rows
+            ->filter(fn (VehicleAssignment $span) => $span->vehicle !== null)
+            ->map(fn (VehicleAssignment $span) => [
+                'vehicle_id' => (int) $span->vehicle_id,
+                'vehicle_type_id' => $span->vehicle->vehicle_type_id,
+                'plate_number' => $span->vehicle->plate_number,
+                'from' => Carbon::parse($span->assigned_date)->toDateString(),
+                'to' => $span->unassigned_date ? Carbon::parse($span->unassigned_date)->toDateString() : null,
+            ])
+            ->values()
+            ->all());
 
         $dailyLogs = DailyLog::where('contract_id', $contract->id)
             ->whereBetween('log_date', [$startDateStr, $endDateStr])
@@ -161,6 +178,7 @@ class ContractDashboardController extends Controller
             'assignments' => $activeAssignments,
             // employee_id => [vehicle type ids held during this month]
             'vehicle_types_by_employee' => $vehicleTypeByEmployee,
+            'vehicle_assignments_by_employee' => $vehicleSpansByEmployee,
             'daily_logs' => $dailyLogs,
             'timeframe' => [
                 'year' => $year,

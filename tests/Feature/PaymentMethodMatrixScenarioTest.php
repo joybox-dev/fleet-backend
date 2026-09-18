@@ -1868,6 +1868,9 @@ class PaymentMethodMatrixScenarioTest extends TestCase
                 'orders_online' => $orders,
                 'orders_cash' => 0,
                 'driver_status' => 'working',
+                // Three of the six bill their client by zone, and a day with orders and no zone is
+                // refused there (DailyLogZoneGuardTest); the others simply ignore the column.
+                'zone' => 'شمال',
             ])->assertSuccessful();
 
             $i++;

@@ -121,6 +121,36 @@ class ViolationLiabilityIsHonouredTest extends TestCase
         $this->assertSame(40.0, $this->owed());
     }
 
+    /**
+     * A fine is stamped with a time, and the month's window is two dates. «<= 2026-07-31» stops at
+     * the first second of the 31st, so a fine written that afternoon lay after July and before
+     * August — in no month, offered to no payroll. One on the client's books: #19, 31/07 15:12.
+     */
+    public function test_a_fine_on_the_last_afternoon_of_the_month_belongs_to_that_month(): void
+    {
+        $this->fine([
+            'violation_date' => '2026-07-31 15:12:00',
+            'is_driver_liable' => 1, 'driver_share' => 15.000, 'contract_share' => 0.000, 'driver_deduction' => 15.000,
+        ]);
+
+        $this->assertSame(15.0, $this->owed(), 'July collects it');
+
+        $august = CompanyDeductionService::pendingFor([$this->driver->id], '2026-08-01', '2026-08-31', 2026, 8);
+        $this->assertSame(0.0, round((float) ($august[$this->driver->id]['total'] ?? 0), 3), 'and only July');
+    }
+
+    public function test_the_first_and_last_instants_of_a_month_are_inside_it_and_its_neighbours_are_not(): void
+    {
+        $share = ['is_driver_liable' => 1, 'contract_share' => 0.000];
+        $this->fine($share + ['violation_date' => '2026-06-30 23:59:59', 'driver_share' => 1.000, 'driver_deduction' => 1.000]);
+        $this->fine($share + ['violation_date' => '2026-07-01 00:00:00', 'driver_share' => 2.000, 'driver_deduction' => 2.000]);
+        $this->fine($share + ['violation_date' => '2026-07-01', 'driver_share' => 4.000, 'driver_deduction' => 4.000]);
+        $this->fine($share + ['violation_date' => '2026-07-31 23:59:59', 'driver_share' => 8.000, 'driver_deduction' => 8.000]);
+        $this->fine($share + ['violation_date' => '2026-08-01 00:00:00', 'driver_share' => 16.000, 'driver_deduction' => 16.000]);
+
+        $this->assertSame(14.0, $this->owed(), '2 + 4 + 8: the three of July, neither neighbour');
+    }
+
     public function test_a_split_fine_charges_only_the_drivers_half(): void
     {
         $this->fine([

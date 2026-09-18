@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Helpers\Iban;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\Role;
 use App\Models\User;
+use App\Rules\Iban as IbanRule;
 use App\Services\ContractScopeService;
 use App\Services\EmployeeLedgerService;
+use App\Services\PayrollBalanceService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -72,6 +75,8 @@ class EmployeeController extends Controller
             }
         }
 
+        $this->normalizeBankDetails($request);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'name_ar' => 'nullable|string|max:255',
@@ -96,6 +101,15 @@ class EmployeeController extends Controller
             'employee_type' => 'in:overseas,local_transfer',
             'pay_type' => 'required|in:fixed,per_order,hybrid',
             'official_salary' => 'required|numeric|min:0',
+            // Where the bank side of his salary goes. One account, one employee: a second employee on
+            // the same IBAN is nearly always a typing mistake, and the bank sheet would pay one man twice.
+            'iban' => [
+                'nullable',
+                'string',
+                new IbanRule,
+                Rule::unique('employees', 'iban')->where('company_id', $companyId)->whereNull('deleted_at'),
+            ],
+            'bank_name' => 'nullable|string|max:100',
             'actual_salary' => 'required|numeric|min:0',
             'rate_per_order' => 'required_if:pay_type,per_order,hybrid|nullable|numeric|min:0',
             'has_end_of_service' => 'boolean',
@@ -124,6 +138,7 @@ class EmployeeController extends Controller
         $validated['employee_number'] = 'EMP-'.str_pad(($lastNum ?? 0) + 1, 4, '0', STR_PAD_LEFT);
 
         // Auto-set probation period: 3 months from joining
+        $validated = $this->withBankName($validated);
         $validated['status'] = 'probation';
         $validated['probation_end_date'] = Carbon::parse($validated['date_of_joining'])->addMonths(3)->toDateString();
 
@@ -209,6 +224,8 @@ class EmployeeController extends Controller
             }
         }
 
+        $this->normalizeBankDetails($request);
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'name_ar' => 'nullable|string|max:255',
@@ -235,6 +252,15 @@ class EmployeeController extends Controller
             'status' => 'sometimes|in:active,inactive,on_leave,probation',
             'status_reason' => 'nullable|string|max:255',
             'official_salary' => 'sometimes|numeric|min:0',
+            // Where the bank side of his salary goes. One account, one employee: a second employee on
+            // the same IBAN is nearly always a typing mistake, and the bank sheet would pay one man twice.
+            'iban' => [
+                'nullable',
+                'string',
+                new IbanRule,
+                Rule::unique('employees', 'iban')->ignore($employee->id)->where('company_id', $companyId)->whereNull('deleted_at'),
+            ],
+            'bank_name' => 'nullable|string|max:100',
             'actual_salary' => 'sometimes|numeric|min:0',
             'rate_per_order' => 'sometimes|nullable|numeric|min:0',
             'has_end_of_service' => 'sometimes|boolean',
@@ -270,6 +296,7 @@ class EmployeeController extends Controller
         if (isset($validated['status'])) {
             $validated['status_changed_at'] = now()->toDateString();
         }
+        $validated = $this->withBankName($validated);
 
         $employee->update($validated);
 
@@ -412,6 +439,13 @@ class EmployeeController extends Controller
             'total_credits' => $credits,
             'total_deductions' => $debits,
             'net_balance' => round($credits - $debits, 3),
+            // Where his account actually stands today — the figure he was entered with, every
+            // approved month, less every payment: the one balance the sheet and the statement
+            // quote. `net_balance` is earnings less deductions over the period and knows nothing
+            // of what was paid, so it cannot say whether he owes the company anything.
+            'running_balance' => round((float) (
+                PayrollBalanceService::openingBalances((int) $employee->company_id)[$employee->id]['balance'] ?? 0
+            ), 3),
             // Named so the screen can say which period it is showing. The old figure silently
             // covered the current calendar month, so a driver carrying months of debt could read
             // as settled on the first of a new one.
@@ -491,5 +525,36 @@ class EmployeeController extends Controller
             'message' => "تم حذف $count من الموظفين بنجاح.",
             'deleted_count' => $count,
         ]);
+    }
+
+    /**
+     * An IBAN is compared in the form it is stored in — no spaces, upper case — so «KW81 cbku …»
+     * pasted from a bank letter is found to be the account another employee already holds.
+     */
+    private function normalizeBankDetails(Request $request): void
+    {
+        if ($request->has('iban')) {
+            $request->merge(['iban' => Iban::normalize($request->input('iban')) ?: null]);
+        }
+    }
+
+    /**
+     * A Kuwaiti IBAN names its own bank. When the bank is left blank it is read off the IBAN, so
+     * the transfer sheet is complete without anyone typing the same eleven bank names 128 times;
+     * a name that was typed is never overwritten.
+     *
+     * @param  array<string, mixed>  $validated
+     * @return array<string, mixed>
+     */
+    private function withBankName(array $validated): array
+    {
+        if (! empty($validated['iban']) && empty($validated['bank_name'])) {
+            $bank = Iban::bankName($validated['iban']);
+            if ($bank !== null) {
+                $validated['bank_name'] = $bank;
+            }
+        }
+
+        return $validated;
     }
 }

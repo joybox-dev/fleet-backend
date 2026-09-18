@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\DailyLogController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DriverExpenseController;
 use App\Http\Controllers\Api\DriverGuaranteeController;
+use App\Http\Controllers\Api\DriverOpeningBalanceController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
@@ -326,6 +327,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::delete('disbursements/{disbursement}', [PayrollController::class, 'destroyDisbursement'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
+            // The transfer list for the bank: IBANs and amounts. It is a tool for paying, so it takes
+            // the authority paying takes.
+            Route::get('consolidated/{year}/{month}/bank-sheet', [PayrollController::class, 'bankSheet'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
             // Fines of earlier months that no sheet collected — what a manual carry can bring in.
             Route::get('consolidated/{year}/{month}/past-fines', [PayrollController::class, 'pastFines'])
                 ->middleware('permission:payroll.view,contract_payroll.view');
@@ -335,6 +340,16 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::post('consolidated/{year}/{month}/deduction-overrides', [PayrollController::class, 'storeDeductionOverride'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::delete('deduction-overrides/{override}', [PayrollController::class, 'destroyDeductionOverride'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            // What each driver and the company owed each other before his first month here. Seen by
+            // whoever reads the sheets; written by whoever pays, since it changes what is paid.
+            Route::get('opening-balances', [DriverOpeningBalanceController::class, 'index'])
+                ->middleware('permission:payroll.view,contract_payroll.view');
+            Route::post('opening-balances', [DriverOpeningBalanceController::class, 'store'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            Route::put('opening-balances/{openingBalance}', [DriverOpeningBalanceController::class, 'update'])
+                ->middleware('permission:payroll.edit,contract_payroll.approve');
+            Route::delete('opening-balances/{openingBalance}', [DriverOpeningBalanceController::class, 'destroy'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::get('contract-sheet/{contract}', [PayrollController::class, 'contractSheet']);
             Route::post('contract-sheet/{contract}/approve', [PayrollController::class, 'approveContractSheet']);

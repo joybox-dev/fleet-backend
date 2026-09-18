@@ -17,6 +17,7 @@ use App\Models\PayrollDeductionOverride;
 use App\Models\PayrollDisbursement;
 use App\Models\SalaryAdvance;
 use App\Models\Violation;
+use App\Services\BankSheetService;
 use App\Services\CompanyDeductionService;
 use App\Services\ConsolidatedSheetService;
 use App\Services\ContractSheetService;
@@ -807,6 +808,25 @@ class PayrollController extends Controller
             'message' => 'سُجِّل الخصم اليدوي — تُخصم المخالفة عند اعتماد شهر '.$override->deferToLabel().'.',
             'override' => $override->load('createdBy:id,name')->toRow(),
         ], 201);
+    }
+
+    /**
+     * GET /api/payroll/consolidated/{year}/{month}/bank-sheet
+     *
+     * The list handed to the bank for an approved month: each driver's IBAN and the amount the
+     * payment form would propose for his bank side. Nothing is recorded by asking for it.
+     */
+    public function bankSheet($year, $month): JsonResponse
+    {
+        $sheet = BankSheetService::forMonth($this->currentCompanyId(), (int) $year, (int) $month);
+
+        if (! $sheet['approved']) {
+            return response()->json([
+                'message' => "كشف شهر {$month}/{$year} غير معتمد — كشف البنك يُستخرج من شهر معتمد فقط، لأن الخصومات لا تُطبَّق قبل الاعتماد.",
+            ], 422);
+        }
+
+        return response()->json($sheet);
     }
 
     /**

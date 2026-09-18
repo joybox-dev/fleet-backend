@@ -381,7 +381,7 @@ class ContractProfitabilityService
         $violationsByVehicle = [];
         $fines = Violation::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
-            ->whereBetween('violation_date', [$startDate, $endDate])
+            ->datedWithin($startDate, $endDate)
             ->get(['vehicle_id', 'employee_id', 'violation_date', 'amount', 'driver_share', 'contract_share', 'driver_deduction', 'charge_contract_id']);
         foreach ($fines as $fine) {
             $amount = (float) $fine->amount;
