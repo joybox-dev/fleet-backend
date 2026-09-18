@@ -49,8 +49,9 @@ class ImportController extends Controller
     public function upload(Request $request)
     {
         $request->validate([
-            'file'        => 'required|file|mimes:xlsx,xls,csv|max:10240',
+            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240',
             'entity_type' => 'required|in:employees,vehicles',
+            'mode' => 'nullable|in:create,upsert',
         ]);
 
         $file = $request->file('file');
@@ -59,15 +60,12 @@ class ImportController extends Controller
         $fileHash = hash_file('sha256', $file->getRealPath());
 
         // Check if this exact file was already imported for this entity+company
-        $duplicate = ImportLog::where('file_hash', $fileHash)
-            ->where('entity_type', $request->entity_type)
-            ->whereIn('status', ['completed', 'processing'])
-            ->first();
+        $duplicate = $this->earlierRunOf($fileHash, $request->entity_type, $request->input('mode'));
 
         if ($duplicate) {
             return response()->json([
-                'message' => 'هذا الملف تم استيراده مسبقاً بتاريخ ' .
-                    $duplicate->created_at->format('Y-m-d H:i') .
+                'message' => 'هذا الملف تم استيراده مسبقاً بتاريخ '.
+                    $duplicate->created_at->format('Y-m-d H:i').
                     '. لا يمكن استيراد نفس الملف مرتين.',
                 'duplicate_log' => $duplicate,
             ], 409);
@@ -92,21 +90,23 @@ class ImportController extends Controller
         try {
             $parsed = $this->importService->parseFile($fullPath);
         } catch (\Throwable $e) {
+            report($e);
             Storage::disk('local')->delete($path);
+
             return response()->json([
-                'message' => 'فشل في قراءة الملف: ' . $e->getMessage(),
+                'message' => 'تعذّرت قراءة الملف — تأكد أنه ملف Excel سليم (.xlsx) وغير محمي بكلمة مرور، وأن صف العناوين هو الصف الأول.',
             ], 422);
         }
 
         $fields = $this->importService->getFields($request->entity_type);
 
         return response()->json([
-            'file_path'     => $path,
-            'file_hash'     => $fileHash,
-            'filename'      => $file->getClientOriginalName(),
-            'headers'       => $parsed['headers'],
-            'preview'       => $parsed['preview'],
-            'total_rows'    => $parsed['total_rows'],
+            'file_path' => $path,
+            'file_hash' => $fileHash,
+            'filename' => $file->getClientOriginalName(),
+            'headers' => $parsed['headers'],
+            'preview' => $parsed['preview'],
+            'total_rows' => $parsed['total_rows'],
             'system_fields' => $fields,
         ]);
     }
@@ -118,20 +118,22 @@ class ImportController extends Controller
     public function preview(Request $request)
     {
         $request->validate([
-            'file_path'   => 'required|string',
+            'file_path' => 'required|string',
             'entity_type' => 'required|in:employees,vehicles',
-            'mapping'     => 'required|array',
+            'mapping' => 'required|array',
+            'mode' => 'nullable|in:create,upsert',
         ]);
 
         $fullPath = Storage::disk('local')->path($request->file_path);
-        if (!file_exists($fullPath)) {
+        if (! file_exists($fullPath)) {
             return response()->json(['message' => 'الملف غير موجود. أعد الرفع.'], 404);
         }
 
         $result = $this->importService->previewMapped(
             $fullPath,
             $request->entity_type,
-            $request->mapping
+            $request->mapping,
+            $request->input('mode') ?: ImportLog::MODE_CREATE
         );
 
         return response()->json($result);
@@ -145,24 +147,25 @@ class ImportController extends Controller
     public function confirm(Request $request)
     {
         $request->validate([
-            'file_path'    => 'required|string',
-            'file_hash'    => 'required|string',
-            'entity_type'  => 'required|in:employees,vehicles',
-            'mapping'      => 'required|array',
-            'skip_rows'    => 'nullable|array',
-            'skip_rows.*'  => 'integer',
+            'file_path' => 'required|string',
+            'file_hash' => 'required|string',
+            'entity_type' => 'required|in:employees,vehicles',
+            'mapping' => 'required|array',
+            'skip_rows' => 'nullable|array',
+            'skip_rows.*' => 'integer',
+            'mode' => 'nullable|in:create,upsert',
+            'filename' => 'nullable|string|max:255',
         ]);
 
+        $mode = $request->input('mode') ?: ImportLog::MODE_CREATE;
+
         $fullPath = Storage::disk('local')->path($request->file_path);
-        if (!file_exists($fullPath)) {
+        if (! file_exists($fullPath)) {
             return response()->json(['message' => 'الملف غير موجود. أعد الرفع.'], 404);
         }
 
         // Double-check duplicate file
-        $duplicate = ImportLog::where('file_hash', $request->file_hash)
-            ->where('entity_type', $request->entity_type)
-            ->whereIn('status', ['completed', 'processing'])
-            ->first();
+        $duplicate = $this->earlierRunOf($request->file_hash, $request->entity_type, $mode);
 
         if ($duplicate) {
             return response()->json([
@@ -172,13 +175,15 @@ class ImportController extends Controller
 
         // Create import log as "pending"
         $importLog = ImportLog::create([
-            'user_id'           => $request->user()->id,
-            'entity_type'       => $request->entity_type,
-            'original_filename' => basename($request->file_path),
-            'file_hash'         => $request->file_hash,
-            'file_path'         => $request->file_path,
-            'column_mapping'    => $request->mapping,
-            'status'            => 'pending',
+            'user_id' => $request->user()->id,
+            'entity_type' => $request->entity_type,
+            'mode' => $mode,
+            // The name the person gave the file, not the random one it is stored under.
+            'original_filename' => $request->input('filename') ?: basename($request->file_path),
+            'file_hash' => $request->file_hash,
+            'file_path' => $request->file_path,
+            'column_mapping' => $request->mapping,
+            'status' => 'pending',
         ]);
 
         $companyId = app()->bound('current_company_id')
@@ -193,12 +198,28 @@ class ImportController extends Controller
             $request->mapping,
             $request->skip_rows ?? [],
             $companyId,
+            $mode,
         );
 
         return response()->json([
-            'message'    => 'تم بدء الاستيراد في الخلفية',
+            'message' => 'تم بدء الاستيراد في الخلفية',
             'import_log' => $importLog->fresh(),
         ], 202);
+    }
+
+    /**
+     * The run that already handled this exact file, if it should stop another one.
+     *
+     * Adding the same file twice is refused: it could only produce duplicates to skip. Updating
+     * from the same file twice is harmless — the second run finds nothing left to change — so an
+     * update is held back only while another run of that file is still working.
+     */
+    private function earlierRunOf(string $fileHash, string $entityType, ?string $mode): ?ImportLog
+    {
+        return ImportLog::where('file_hash', $fileHash)
+            ->where('entity_type', $entityType)
+            ->whereIn('status', $mode === ImportLog::MODE_UPSERT ? ['processing'] : ['completed', 'processing'])
+            ->first();
     }
 
     /**
@@ -208,18 +229,20 @@ class ImportController extends Controller
     public function status(int $id)
     {
         $log = ImportLog::find($id);
-        if (!$log) {
+        if (! $log) {
             return response()->json(['message' => 'السجل غير موجود'], 404);
         }
 
         return response()->json([
-            'import_log'            => $log,
-            'is_complete'           => in_array($log->status, ['completed', 'failed']),
-            'rows_imported'         => $log->rows_imported,
-            'rows_failed'           => $log->rows_failed,
-            'rows_skipped_duplicate'=> $log->rows_skipped_duplicate,
-            'rows_total'            => $log->rows_total,
-            'errors'                => $log->errors ?? [],
+            'import_log' => $log,
+            'is_complete' => in_array($log->status, ['completed', 'failed']),
+            'rows_imported' => $log->rows_imported,
+            'rows_updated' => $log->rows_updated,
+            'mode' => $log->mode,
+            'rows_failed' => $log->rows_failed,
+            'rows_skipped_duplicate' => $log->rows_skipped_duplicate,
+            'rows_total' => $log->rows_total,
+            'errors' => $log->errors ?? [],
         ]);
     }
 
@@ -241,7 +264,7 @@ class ImportController extends Controller
     public function template(string $entity)
     {
         $path = $this->importService->generateTemplate($entity);
-        if (!$path) {
+        if (! $path) {
             return response()->json(['message' => 'نوع غير مدعوم'], 422);
         }
 

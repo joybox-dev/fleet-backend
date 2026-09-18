@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Models\Employee;
-use App\Models\Violation;
 use Carbon\Carbon;
 
 /**
@@ -255,22 +254,20 @@ class MoneyAtRiskService
 
     /**
      * A fine is resolved only within its own calendar month, so one that was not collected then is
-     * not collectable now — unlike every other charge, which carries forward until it is taken.
+     * not collected by any later sheet on its own — unlike every other charge, which carries
+     * forward until it is taken. The owner can carry one into an open month by hand; a fine he has
+     * already carried or deferred is on its way to a sheet and is no longer counted here.
      *
      * @return array<string, mixed>
      */
     private static function unreachableFines(int $companyId, string $startStr): array
     {
-        $rows = Violation::withoutGlobalScopes()->whereNull('deleted_at')
-            ->where('company_id', $companyId)
-            ->where('is_deducted', false)->where('is_driver_liable', true)
-            ->where('driver_deduction', '>', 0)
-            ->whereDate('violation_date', '<', $startStr)
-            ->get(['driver_deduction']);
+        $start = Carbon::parse($startStr);
+        $rows = CompanyDeductionService::pastUncollectedFines($companyId, (int) $start->year, (int) $start->month);
 
         return [
-            'count' => $rows->count(),
-            'amount' => round((float) $rows->sum('driver_deduction'), 3),
+            'count' => count($rows),
+            'amount' => round((float) array_sum(array_column($rows, 'amount')), 3),
         ];
     }
 

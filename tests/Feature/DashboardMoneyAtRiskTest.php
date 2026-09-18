@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Models\Employee;
+use App\Models\PayrollDeductionOverride;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\Violation;
@@ -174,6 +175,48 @@ class DashboardMoneyAtRiskTest extends TestCase
 
         $this->assertSame(2, $risk['unreachable_fines']['count'], 'June and July are out of reach');
         $this->assertSame(50.0, $risk['unreachable_fines']['amount']);
+    }
+
+    /**
+     * The owner can carry a fine of a month gone by into an open month by hand. Once he has, a
+     * sheet is going to take it, and it stops counting as money nobody will collect.
+     */
+    public function test_a_fine_carried_into_an_open_month_is_no_longer_out_of_reach(): void
+    {
+        $fines = [];
+        foreach ([['2026-06-10', 30.0], ['2026-07-14', 20.0]] as [$date, $amount]) {
+            $fines[] = Violation::create([
+                'company_id' => $this->company->id,
+                'employee_id' => $this->driver->id,
+                'vehicle_id' => $this->vehicle->id,
+                'created_by' => $this->user->id,
+                'violation_date' => $date,
+                'violation_type' => 'وقوف ممنوع',
+                'amount' => $amount,
+                'driver_deduction' => $amount,
+                'driver_share' => $amount,
+                'is_driver_liable' => 1,
+                'is_deducted' => 0,
+            ]);
+        }
+
+        PayrollDeductionOverride::create([
+            'company_id' => $this->company->id,
+            'year' => 2026,
+            'month' => 6,
+            'source_type' => 'violation',
+            'source_id' => $fines[0]->id,
+            'action' => PayrollDeductionOverride::ACTION_CARRY,
+            'defer_to_year' => 2026,
+            'defer_to_month' => 8,
+            'reason' => 'وصلت بعد إقفال يونيو',
+            'created_by' => $this->user->id,
+        ]);
+
+        $unreachable = MoneyAtRiskService::forMonth($this->company->id, 2026, 8)['unreachable_fines'];
+
+        $this->assertSame(1, $unreachable['count'], 'July still waits; June is on its way to August');
+        $this->assertSame(20.0, $unreachable['amount']);
     }
 
     /**

@@ -88,6 +88,23 @@ class PermissionGatesTest extends TestCase
         $this->actingAs($user)->getJson('/api/clients')->assertStatus(403);
     }
 
+    /**
+     * The contracts screen asks for the clients list alongside the contracts — a contract names
+     * its client, and creating one means choosing a client. Gated on clients.view alone, the list
+     * refused every contracts role the company had defined without the clients module, the
+     * screen's load failed as a whole, and five logins saw no contracts at all for nine days.
+     */
+    public function test_a_contracts_role_without_the_clients_module_can_still_read_the_clients_list(): void
+    {
+        $user = $this->loginWithRole('موظف عقود', ['contracts.view', 'contracts.create', 'daily_logs.view']);
+
+        $this->actingAs($user)->getJson('/api/contracts')->assertOk();
+        $this->actingAs($user)->getJson('/api/clients')->assertOk();
+
+        // Reading is all it opens: adding or changing a client still takes the clients module.
+        $this->actingAs($user)->postJson('/api/clients', ['name' => 'عميل جديد'])->assertStatus(403);
+    }
+
     public function test_a_data_entry_login_cannot_rewrite_roles_or_read_settings(): void
     {
         $user = $this->loginWithRole('مدخل بيانات', ['daily_logs']);

@@ -339,6 +339,182 @@ class PayrollDeductionOverrideTest extends TestCase
         $this->assertSame([], $this->getJson('/api/payroll/consolidated/2026/5')->json('deferred_charges_off_sheet'));
     }
 
+    /** A fine recorded after its month was closed: dated 2026-03-20, 9.000, on the same driver. */
+    private function lateFine(string $date = '2026-03-20', float $amount = 9.000, string $reference = 'F-LATE'): Violation
+    {
+        return Violation::create([
+            'employee_id' => $this->driver->id,
+            'vehicle_id' => $this->vehicle->id,
+            'violation_date' => $date.' 15:30:00',
+            'violation_type' => 'Parking',
+            'reference_number' => $reference,
+            'amount' => $amount,
+            'driver_deduction' => $amount,
+            'driver_share' => $amount,
+            'contract_share' => 0.000,
+            'is_driver_liable' => $amount > 0,
+            'company_id' => $this->company->id,
+            'created_by' => $this->admin->id,
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function pastFines(int $month): array
+    {
+        return $this->getJson("/api/payroll/consolidated/2026/{$month}/past-fines")->assertOk()->json();
+    }
+
+    public function test_a_fine_its_own_month_never_collected_is_carried_by_hand_into_an_open_month(): void
+    {
+        // March is closed with what it knew about; the second fine reaches the office afterwards.
+        $this->approveMonth(3);
+        $late = $this->lateFine();
+        $this->approveContract(4);
+
+        // No sheet will ever reach it on its own — April says so, and leaves it out of the figures.
+        $waiting = $this->pastFines(4);
+        $this->assertSame(1, $waiting['count']);
+        $this->assertSame(9.0, (float) $waiting['total']);
+        $this->assertSame($late->id, $waiting['fines'][0]['id']);
+        $this->assertSame($this->driver->id, $waiting['fines'][0]['employee_id']);
+        $this->assertSame('03/2026', $waiting['fines'][0]['month_label']);
+        $this->assertTrue($waiting['fines'][0]['own_month_approved']);
+        $this->assertSame(0.0, (float) $this->driverRow(4)['pending_violations_deduction']);
+
+        $override = $this->decide(4, ['source_type' => 'violation', 'source_id' => $late->id, 'action' => 'carry'])
+            ->assertCreated()->json('override');
+        $this->assertSame('carry', $override['action']);
+        $this->assertSame('04/2026', $override['defer_to']);
+        $this->assertSame([2026, 3], [$override['year'], $override['month']], 'filed on the fine\'s own month, so March can never take it too');
+
+        // April now carries it, named for what it is and whose decision it was.
+        $april = $this->driverRow(4);
+        $this->assertSame(9.0, (float) $april['pending_violations_deduction']);
+        $this->assertSame(13.0, (float) $april['pending_deductions_total'], '9.000 fine + 4.000 instalment');
+        $item = collect($april['deduction_items'])->firstWhere('source_id', $late->id);
+        $this->assertStringContainsString('من شهر 03/2026، خصم يدوي', $item['label']);
+        $this->assertSame('قرار المالك', $item['carried']['reason']);
+        $this->assertSame('Admin', $item['carried']['created_by_name']);
+        $this->assertSame(0, $this->pastFines(4)['count'], 'on its way to a sheet — not offered twice');
+
+        // March stays exactly as approved; its contract sheet names the fine that went elsewhere.
+        $this->assertSame(10.0, (float) $this->driverRow(3)['deductions_total']);
+        $marchContract = collect($this->getJson("/api/payroll/contract-sheet/{$this->contract->id}?year=2026&month=3")->json('drivers'))
+            ->firstWhere('employee_id', $this->driver->id);
+        $this->assertSame(9.0, (float) $marchContract['violations_deferred']);
+
+        // Approval takes it once, and the ledger remembers it was taken by hand.
+        $this->postJson('/api/payroll/consolidated/2026/4/approve')->assertOk();
+        $approved = $this->driverRow(4);
+        $this->assertSame(13.0, (float) $approved['deductions_total']);
+        $this->assertSame(17.0, (float) $approved['final_net_payout']);
+        $this->assertSame(1, (int) $late->fresh()->is_deducted);
+        $ledger = ConsolidatedPayrollDeduction::withoutGlobalScopes()->where('source_type', 'violation')->where('source_id', $late->id)->get();
+        $this->assertCount(1, $ledger);
+        $this->assertStringContainsString('خصم يدوي', $ledger[0]->label);
+
+        // Collected is collected: the decision cannot be pulled from under an approved month.
+        $this->deleteJson("/api/payroll/deduction-overrides/{$override['id']}")->assertStatus(422);
+
+        // Reopening April releases the fine and keeps the decision, like every other one.
+        $this->postJson('/api/payroll/consolidated/2026/4/unapprove')->assertOk();
+        $this->assertSame(0, (int) $late->fresh()->is_deducted);
+        $this->assertSame(9.0, (float) $this->driverRow(4)['pending_violations_deduction']);
+    }
+
+    public function test_the_manual_carry_is_only_for_a_fine_of_an_earlier_month(): void
+    {
+        $this->approveContract(4);
+        $carry = fn (int $month, string $type, int $id) => $this->decide($month, ['source_type' => $type, 'source_id' => $id, 'action' => 'carry']);
+
+        // A fine of the month itself is taken by that month's approval — no second way to charge it.
+        $april = $this->lateFine('2026-04-02', 5.000, 'F-APR');
+        $carry(4, 'violation', $april->id)->assertStatus(422)->assertJsonValidationErrors(['action']);
+        // Nor one dated after it.
+        $may = $this->lateFine('2026-05-05', 5.000, 'F-MAY');
+        $carry(4, 'violation', $may->id)->assertStatus(422)->assertJsonValidationErrors(['action']);
+        // Every other charge rolls forward by itself.
+        $carry(4, 'advance', $this->advance->id)->assertStatus(422)->assertJsonValidationErrors(['action']);
+        // A fine the company bears takes nothing off the driver.
+        $companyBorne = $this->lateFine('2026-03-22', 0.000, 'F-CO');
+        $carry(4, 'violation', $companyBorne->id)->assertStatus(422)->assertJsonValidationErrors(['source_id']);
+        // A fine already deferred is on its way somewhere.
+        $this->decide(3, ['source_type' => 'violation', 'source_id' => $this->fine->id, 'action' => 'defer', 'defer_to_year' => 2026, 'defer_to_month' => 5])->assertCreated();
+        $carry(4, 'violation', $this->fine->id)->assertStatus(422)->assertJsonValidationErrors(['source_id']);
+        // And an approved month takes no decisions at all.
+        $late = $this->lateFine();
+        $this->postJson('/api/payroll/consolidated/2026/4/approve')->assertOk();
+        $carry(4, 'violation', $late->id)->assertStatus(422);
+
+        $this->assertSame(0, PayrollDeductionOverride::withoutGlobalScopes()->where('action', 'carry')->count());
+        // The last day of a month, with a time on it, still belongs to that month.
+        $endOfMonth = $this->lateFine('2026-03-31', 3.000, 'F-EOM');
+        $this->assertSame('03/2026', collect($this->pastFines(5)['fines'])->firstWhere('id', $endOfMonth->id)['month_label']);
+    }
+
+    public function test_a_carry_is_taken_back_for_as_long_as_the_fine_is_uncollected(): void
+    {
+        $this->approveMonth(3);
+        $late = $this->lateFine();
+        $this->approveContract(4);
+
+        $id = $this->decide(4, ['source_type' => 'violation', 'source_id' => $late->id, 'action' => 'carry'])->assertCreated()->json('override.id');
+        $this->assertSame(9.0, (float) $this->driverRow(4)['pending_violations_deduction']);
+
+        // Its own month is approved — that is why it was carried — and the decision still comes off.
+        $this->deleteJson("/api/payroll/deduction-overrides/{$id}")->assertOk();
+        $this->assertSame(0.0, (float) $this->driverRow(4)['pending_violations_deduction']);
+        $this->assertSame(1, $this->pastFines(4)['count'], 'waiting again');
+
+        // Carried a second time into a later month, the same row moves rather than doubling.
+        $this->decide(4, ['source_type' => 'violation', 'source_id' => $late->id, 'action' => 'carry'])->assertCreated();
+        $this->decide(5, ['source_type' => 'violation', 'source_id' => $late->id, 'action' => 'carry'])->assertCreated();
+        $this->assertSame(1, PayrollDeductionOverride::withoutGlobalScopes()->where('source_id', $late->id)->count());
+        $this->assertSame(0.0, (float) $this->driverRow(4)['pending_violations_deduction'], 'travelling past April now');
+    }
+
+    public function test_a_fine_carried_out_of_a_month_still_open_is_charged_once_in_the_month_it_was_carried_to(): void
+    {
+        // March was never closed; the owner, working on April, takes March's fine there.
+        $this->approveContract(3);
+        $this->approveContract(4);
+        $this->decide(4, ['source_type' => 'violation', 'source_id' => $this->fine->id, 'action' => 'carry'])->assertCreated();
+
+        $march = $this->driverRow(3);
+        $this->assertSame(0.0, (float) $march['pending_violations_deduction']);
+        $this->assertSame('carry', $march['deferred_items'][0]['override']['action']);
+        $this->assertSame('04/2026', $march['deferred_items'][0]['override']['defer_to']);
+        $this->assertSame(6.0, (float) $this->driverRow(4)['pending_violations_deduction']);
+
+        // Whichever order the months close in, the fine is taken once.
+        $this->postJson('/api/payroll/consolidated/2026/3/approve')->assertOk();
+        $this->assertSame(0, (int) $this->fine->fresh()->is_deducted);
+        $this->postJson('/api/payroll/consolidated/2026/4/approve')->assertOk();
+        $this->assertSame(1, (int) $this->fine->fresh()->is_deducted);
+        $this->assertSame(1, ConsolidatedPayrollDeduction::withoutGlobalScopes()->where('source_type', 'violation')->where('source_id', $this->fine->id)->count());
+    }
+
+    public function test_the_statement_and_the_fines_list_follow_a_carried_fine(): void
+    {
+        $this->approveMonth(3);
+        $late = $this->lateFine();
+        $this->decide(4, ['source_type' => 'violation', 'source_id' => $late->id, 'action' => 'carry'])->assertCreated();
+
+        // The statement counts it in the month that takes it, and in that month only.
+        $months = collect(EmployeeLedgerService::history($this->driver, '2026-03', '2026-05')['months'])->keyBy('label');
+        $this->assertSame(6.0, (float) $months['03/2026']['deductions']['violations'], 'March as approved');
+        $this->assertSame(9.0, (float) $months['04/2026']['deductions']['violations']);
+        $this->assertSame(0.0, (float) $months['05/2026']['deductions']['violations']);
+
+        // The fines screen says where each pending fine is headed, and which months are closed.
+        $list = $this->getJson('/api/violations')->assertOk()->json();
+        $this->assertSame(['2026-03'], $list['approved_months']);
+        $row = collect($list['data'])->firstWhere('id', $late->id);
+        $this->assertSame('carry', $row['scheduled']['action']);
+        $this->assertSame('04/2026', $row['scheduled']['to']);
+        $this->assertNull(collect($list['data'])->firstWhere('id', $this->fine->id)['scheduled']);
+    }
+
     public function test_deciding_needs_the_payroll_edit_permission(): void
     {
         $role = Role::create(['name' => 'مراقب', 'company_id' => $this->company->id, 'allowed_modules' => ['employees']]);

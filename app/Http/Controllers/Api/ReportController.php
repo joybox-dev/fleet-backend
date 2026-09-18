@@ -10,8 +10,10 @@ use App\Models\Vehicle;
 use App\Models\Violation;
 use App\Services\ContractProfitabilityService;
 use App\Services\ContractRevenueService;
+use App\Services\ContractScopeService;
 use App\Services\ContributionReportService;
 use App\Services\DeductionsReportService;
+use App\Services\InventoryReportService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -390,6 +392,31 @@ class ReportController extends Controller
             (int) ($validated['year'] ?? now()->year),
             (int) ($validated['month'] ?? now()->month),
             isset($validated['contract_id']) ? (int) $validated['contract_id'] : null,
+        ));
+    }
+
+    /**
+     * GET /api/reports/inventory
+     *
+     * The stock-take: administrative employees, drivers, vehicles and contracts as they stand
+     * today. It gathers four screens into one report, so each list is shown only to a reader who
+     * may open the screen it comes from, and a supervisor sees his own drivers and contracts.
+     */
+    public function inventory(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        return response()->json(InventoryReportService::build(
+            $this->currentCompanyId(),
+            Carbon::today(),
+            [
+                'staff' => $user->can('employees.view'),
+                'drivers' => $user->can('employees.view'),
+                'vehicles' => $user->can('vehicles.view'),
+                'contracts' => $user->can('contracts.view'),
+            ],
+            ContractScopeService::getAllocatedDriverIds($user),
+            ContractScopeService::getAllocatedContractIds($user),
         ));
     }
 

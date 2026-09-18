@@ -70,9 +70,14 @@ class OperationsDashboardService
             ->orderBy('name')
             ->get(['id', 'name', 'employee_number', 'target_orders_monthly', 'residence_expiry', 'driving_license_expiry', 'work_permit_expiry', 'health_card_expiry']);
 
-        // employee => contract ids of his active contract assignments, within the user's scope.
+        // employee => contract ids of the assignments covering the day described, within the user's
+        // scope. The active flag alone is not enough: a driver moved off a contract keeps a
+        // flagged-active assignment with an end date behind it, payroll stops paying him by that
+        // date, and counting him as assigned turned a man nobody expected into an absentee.
         $assignments = ContractAssignment::withoutGlobalScopes()
             ->where('status', 'active')
+            ->whereDate('start_date', '<=', $day)
+            ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $day))
             ->whereIn('employee_id', $drivers->pluck('id')->all())
             ->whereIn('contract_id', $contractIds)
             ->get(['employee_id', 'contract_id'])

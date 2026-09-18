@@ -171,8 +171,11 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::get('contracts/{contract}/deletion-check', [ContractController::class, 'deletionCheck'])->middleware('permission:contracts.delete');
         Route::get('custody-types/{custody_type}/deletion-check', [CustodyTypeController::class, 'deletionCheck'])->middleware('permission:settings.edit');
 
-        // Clients — full CRUD
-        Route::middleware('permission:clients.view')->group(function () {
+        // Clients — full CRUD. Reading the list also belongs to anyone who works with contracts:
+        // a contract names its client and creating one means choosing a client, so the contracts
+        // screen asks for this list. Gated on clients.view alone, it refused every contracts role
+        // that had no clients module, and the screen showed them no contracts at all.
+        Route::middleware('permission:clients.view,contracts.view')->group(function () {
             Route::apiResource('clients', ClientController::class)->only(['index', 'show']);
         });
         Route::apiResource('clients', ClientController::class)->except(['index', 'show']);
@@ -323,8 +326,12 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::delete('disbursements/{disbursement}', [PayrollController::class, 'destroyDisbursement'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
-            // Deciding, before approval, that a charge waits for a later month or that an
-            // instalment is different this month — the same authority as approving.
+            // Fines of earlier months that no sheet collected — what a manual carry can bring in.
+            Route::get('consolidated/{year}/{month}/past-fines', [PayrollController::class, 'pastFines'])
+                ->middleware('permission:payroll.view,contract_payroll.view');
+            // Deciding, before approval, that a charge waits for a later month, that an instalment
+            // is different this month, or that a fine of a month gone by is taken in this one —
+            // the same authority as approving.
             Route::post('consolidated/{year}/{month}/deduction-overrides', [PayrollController::class, 'storeDeductionOverride'])
                 ->middleware('permission:payroll.edit,contract_payroll.approve');
             Route::delete('deduction-overrides/{override}', [PayrollController::class, 'destroyDeductionOverride'])
@@ -352,6 +359,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('contribution', [ReportController::class, 'contribution']);
             Route::get('contract-revenue', [ReportController::class, 'contractRevenue']);
             Route::get('missing-docs', [ReportController::class, 'missingDocs']);
+            Route::get('inventory', [ReportController::class, 'inventory']);
         });
 
         // Settings

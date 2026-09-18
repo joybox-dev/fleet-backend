@@ -322,6 +322,30 @@ class OperationsDashboardTest extends TestCase
         $this->getJson('/api/operations/dashboard?day=2026-09-16')->assertStatus(422);
     }
 
+    /**
+     * A driver moved off a contract keeps an assignment flagged active with an end date behind it.
+     * Payroll stops paying him by that date, so he is not somebody the day was waiting for.
+     */
+    public function test_an_assignment_that_ended_before_the_day_does_not_make_the_driver_an_absentee(): void
+    {
+        $zone = $this->contract('زون', 0.5);
+        $a = $this->driver('Ahmad', $zone);
+        $va = $this->vehicle($a, $zone, 'working', 'V-A');
+        $this->log($a, $zone, $va, '2026-09-15', 'working', 20);
+
+        $moved = $this->driver('Moved', $zone);
+        ContractAssignment::where('employee_id', $moved->id)->update(['end_date' => '2026-08-31']);
+        $stillOn = $this->driver('Still', $zone);
+        ContractAssignment::where('employee_id', $stillOn->id)->update(['end_date' => '2026-09-15']);
+
+        $dashboard = $this->dashboard();
+
+        $this->assertSame(1, $dashboard['kpis']['absent_without_leave']['count'], 'Still alone — his assignment covers the day');
+        $this->assertFalse($this->rosterRow($dashboard, 'Moved')['assigned']);
+        $this->assertSame('', $this->rosterRow($dashboard, 'Moved')['contracts']);
+        $this->assertTrue($this->rosterRow($dashboard, 'Still')['is_absent']);
+    }
+
     public function test_a_personal_target_grades_the_driver_against_his_own_daily_share(): void
     {
         $zone = $this->contract('زون', 0.5);

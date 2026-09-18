@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ConsolidatedPayrollDeduction;
+use App\Models\ConsolidatedPayrollRun;
 use App\Models\ContractAssignment;
+use App\Models\PayrollDeductionOverride;
 use App\Models\VehicleAssignment;
 use App\Models\Violation;
 use App\Services\ContractScopeService;
@@ -29,7 +32,35 @@ class ViolationController extends Controller
             ->orderByDesc('violation_date')
             ->paginate(50);
 
-        return response()->json($violations);
+        // A fine is collected by its own month only, so «معلق» alone does not say whether anything
+        // will ever take it. A deferral or a manual carry names the month that will; with neither,
+        // a fine whose month has gone by waits for the owner to carry it into an open one.
+        $moves = PayrollDeductionOverride::where('source_type', ConsolidatedPayrollDeduction::SOURCE_VIOLATION)
+            ->whereIn('action', PayrollDeductionOverride::MOVING_ACTIONS)
+            ->whereIn('source_id', $violations->getCollection()->pluck('id'))
+            ->orderBy('defer_to_year')->orderBy('defer_to_month')
+            ->get()
+            ->groupBy('source_id');
+
+        $violations->getCollection()->each(function (Violation $violation) use ($moves) {
+            $move = $moves->get($violation->id)?->last();
+            $violation->setAttribute('scheduled', $move ? [
+                'override_id' => $move->id,
+                'action' => $move->action,
+                'to' => $move->deferToLabel(),
+                'reason' => $move->reason,
+            ] : null);
+        });
+
+        // The months a carry cannot land in, so the form offers open months only.
+        $approvedMonths = ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->where('company_id', app('current_company_id'))
+            ->where('status', 'approved')
+            ->get(['year', 'month'])
+            ->map(fn ($run) => sprintf('%04d-%02d', $run->year, $run->month))
+            ->values();
+
+        return response()->json($violations->toArray() + ['approved_months' => $approvedMonths]);
     }
 
     public function resolveDriver(Request $request): JsonResponse

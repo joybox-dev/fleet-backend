@@ -280,7 +280,7 @@ class ConsolidatedSheetService
         $here = PayrollDeductionOverride::index($year, $month);
         $landed = PayrollDeductionOverride::withoutGlobalScopes()
             ->where('company_id', $companyId)
-            ->where('action', PayrollDeductionOverride::ACTION_DEFER)
+            ->whereIn('action', PayrollDeductionOverride::MOVING_ACTIONS)
             ->get()
             ->filter(fn ($o) => $o->deferIndex() !== null && $o->deferIndex() <= $here);
         if ($landed->isEmpty()) {

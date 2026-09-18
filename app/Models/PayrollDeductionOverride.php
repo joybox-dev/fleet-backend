@@ -11,6 +11,11 @@ use Illuminate\Support\Collection;
  * One decision about one charge in one payroll month: defer it to a named later month, or (for
  * an advance) collect a different instalment this month. The month it belongs to is the month
  * whose approval would otherwise have taken the charge.
+ *
+ * A carry is the same move made from the other end, for a fine only: its own month has passed
+ * without collecting it — approved before the fine was recorded, or never approved at all — and
+ * the owner takes it by hand in a named open month. The row still sits on the fine's own month,
+ * so that month can never take it as well.
  */
 class PayrollDeductionOverride extends Model
 {
@@ -19,6 +24,11 @@ class PayrollDeductionOverride extends Model
     public const ACTION_DEFER = 'defer';
 
     public const ACTION_AMOUNT = 'amount';
+
+    public const ACTION_CARRY = 'carry';
+
+    /** The actions that send a charge to another month. */
+    public const MOVING_ACTIONS = [self::ACTION_DEFER, self::ACTION_CARRY];
 
     protected $fillable = [
         'company_id',
@@ -66,6 +76,12 @@ class PayrollDeductionOverride extends Model
             : null;
     }
 
+    /** Whether this decision sends its charge to another month rather than resizing it. */
+    public function movesCharge(): bool
+    {
+        return in_array($this->action, self::MOVING_ACTIONS, true);
+    }
+
     public function monthLabel(): string
     {
         return sprintf('%02d/%d', $this->month, $this->year);
@@ -109,38 +125,41 @@ class PayrollDeductionOverride extends Model
      * The driver's statement asks a narrower question — which single month a charge belongs to —
      * and passes $exactTarget so a landed charge appears in its target month only.
      *
+     * A carry travels and lands by the same rules; `landed` hands back the row that brought the
+     * charge here, so the month it lands in can say whose decision it was and let him take it back.
+     *
      * @param  Collection<int, self>  $rows  every override of this charge, any month
-     * @return array{include: bool, own: ?self, deferred_from: ?string, amount: ?float}
+     * @return array{include: bool, own: ?self, deferred_from: ?string, amount: ?float, landed: ?self}
      */
     public static function decide($rows, int $year, int $month, bool $exactTarget = false): array
     {
         $here = self::index($year, $month);
-        $none = ['include' => true, 'own' => null, 'deferred_from' => null, 'amount' => null];
+        $none = ['include' => true, 'own' => null, 'deferred_from' => null, 'amount' => null, 'landed' => null];
         if ($rows === null || $rows->isEmpty()) {
             return $none;
         }
 
         $own = $rows->first(fn (self $o) => (int) $o->year === $year && (int) $o->month === $month);
-        if ($own && $own->action === self::ACTION_DEFER) {
-            return ['include' => false, 'own' => $own, 'deferred_from' => null, 'amount' => null];
+        if ($own && $own->movesCharge()) {
+            return ['include' => false, 'own' => $own, 'deferred_from' => null, 'amount' => null, 'landed' => null];
         }
         if ($own && $own->action === self::ACTION_AMOUNT) {
-            return ['include' => true, 'own' => $own, 'deferred_from' => null, 'amount' => round((float) $own->amount, 3)];
+            return ['include' => true, 'own' => $own, 'deferred_from' => null, 'amount' => round((float) $own->amount, 3), 'landed' => null];
         }
 
-        $travelling = $rows->first(fn (self $o) => $o->action === self::ACTION_DEFER
+        $travelling = $rows->first(fn (self $o) => $o->movesCharge()
             && $o->monthIndex() <= $here && ($o->deferIndex() ?? 0) > $here);
         if ($travelling) {
-            return ['include' => false, 'own' => $travelling, 'deferred_from' => null, 'amount' => null];
+            return ['include' => false, 'own' => $travelling, 'deferred_from' => null, 'amount' => null, 'landed' => null];
         }
 
         $landed = $rows
-            ->filter(fn (self $o) => $o->action === self::ACTION_DEFER && $o->deferIndex() !== null
+            ->filter(fn (self $o) => $o->movesCharge() && $o->deferIndex() !== null
                 && ($exactTarget ? $o->deferIndex() === $here : $o->deferIndex() <= $here))
             ->sortByDesc(fn (self $o) => $o->deferIndex())
             ->first();
         if ($landed) {
-            return ['include' => true, 'own' => null, 'deferred_from' => $landed->monthLabel(), 'amount' => null];
+            return ['include' => true, 'own' => null, 'deferred_from' => $landed->monthLabel(), 'amount' => null, 'landed' => $landed];
         }
 
         return $none;

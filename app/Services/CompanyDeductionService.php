@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ConsolidatedPayrollDeduction;
+use App\Models\ConsolidatedPayrollRun;
 use App\Models\CustodyItem;
 use App\Models\DriverExpense;
 use App\Models\Employee;
@@ -63,7 +64,7 @@ class CompanyDeductionService
         // Payroll keeps offering a landed deferral until a sheet collects it; the statement shows
         // it in its target month only, so the months do not each count it again.
         $decide = fn (string $type, ?int $sourceId): array => $sourceId === null
-            ? ['include' => true, 'own' => null, 'deferred_from' => null, 'amount' => null]
+            ? ['include' => true, 'own' => null, 'deferred_from' => null, 'amount' => null, 'landed' => null]
             : PayrollDeductionOverride::decide($overrides->get("{$type}:{$sourceId}"), $year, $month, $originatedInMonthOnly);
 
         $add = function (int $employeeId, string $type, ?int $sourceId, float $amount, string $label, ?array $decision = null) use (&$result, $settled, $decide) {
@@ -92,8 +93,14 @@ class CompanyDeductionService
             if ($amount <= 0) {
                 return;
             }
+            // A fine of an earlier month taken by hand says so, and carries the decision with it
+            // so the month it landed in can show whose it was and take it back.
+            $landed = $decision['landed'] ?? null;
+            $carried = $landed && $landed->action === PayrollDeductionOverride::ACTION_CARRY;
             if ($decision['deferred_from']) {
-                $label .= " — مؤجَّلة من {$decision['deferred_from']}";
+                $label .= $carried
+                    ? " — من شهر {$decision['deferred_from']}، خصم يدوي"
+                    : " — مؤجَّلة من {$decision['deferred_from']}";
             }
             $result[$employeeId] ??= ['items' => [], 'total' => 0.0, 'deferred' => []];
             $result[$employeeId]['items'][] = [
@@ -103,7 +110,7 @@ class CompanyDeductionService
                 'label' => $label,
                 'deferred_from' => $decision['deferred_from'],
                 'override' => $decision['own']?->toRow(),
-            ];
+            ] + ($carried ? ['carried' => $landed->toRow()] : []);
             $result[$employeeId]['total'] = round($result[$employeeId]['total'] + $amount, 3);
         };
 
@@ -127,13 +134,13 @@ class CompanyDeductionService
                 'مخالفة مرورية'.($v->reference_number ? " ({$v->reference_number})" : '')
             ));
 
-        // Fines whose deferral has landed by this month. A fine belongs to the month of its date,
-        // so these lie outside the window above and are fetched by id; $decide then says whether
-        // this particular month takes them.
+        // Fines whose deferral — or manual carry from a month that has passed — has landed by this
+        // month. A fine belongs to the month of its date, so these lie outside the window above
+        // and are fetched by id; $decide then says whether this particular month takes them.
         $here = PayrollDeductionOverride::index($year, $month);
         $deferredInFineIds = $overrides->flatten(1)
             ->filter(fn ($o) => $o->source_type === ConsolidatedPayrollDeduction::SOURCE_VIOLATION
-                && $o->action === PayrollDeductionOverride::ACTION_DEFER
+                && $o->movesCharge()
                 && $o->deferIndex() !== null
                 && ($originatedInMonthOnly ? $o->deferIndex() === $here : $o->deferIndex() <= $here))
             ->pluck('source_id')->unique()->values();
@@ -271,6 +278,81 @@ class CompanyDeductionService
             });
 
         return $result;
+    }
+
+    /**
+     * Driver-liable fines dated before a payroll month that nothing has collected and no decision
+     * has routed anywhere.
+     *
+     * A fine is taken by its own month and by no other, so these are the ones no sheet will reach
+     * by itself: the month was approved before the fine was recorded, or the driver had no row in
+     * it, or it was never approved at all. Every other charge rolls forward until it is collected;
+     * a fine does not, and only a manual carry ({@see PayrollDeductionOverride::ACTION_CARRY})
+     * brings one into a later month. A fine already deferred or carried is on its way somewhere
+     * and is not offered twice.
+     *
+     * @return array<int, array{id: int, employee_id: int, employee_name: string, violation_date: string, month_label: string, own_month_approved: bool, reference_number: ?string, violation_type: ?string, amount: float}>
+     */
+    public static function pastUncollectedFines(int $companyId, int $year, int $month): array
+    {
+        $fines = Violation::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->where('company_id', $companyId)
+            ->whereDate('violation_date', '<', sprintf('%04d-%02d-01', $year, $month))
+            ->where('is_deducted', false)
+            ->where('is_driver_liable', true)
+            ->where('driver_deduction', '>', 0)
+            ->orderBy('violation_date')
+            ->orderBy('id')
+            ->get();
+
+        if ($fines->isEmpty()) {
+            return [];
+        }
+
+        $settled = ConsolidatedPayrollDeduction::withoutGlobalScopes()
+            ->where('source_type', ConsolidatedPayrollDeduction::SOURCE_VIOLATION)
+            ->whereIn('source_id', $fines->pluck('id'))
+            ->pluck('source_id')
+            ->flip();
+
+        $routed = PayrollDeductionOverride::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('source_type', ConsolidatedPayrollDeduction::SOURCE_VIOLATION)
+            ->whereIn('action', PayrollDeductionOverride::MOVING_ACTIONS)
+            ->whereIn('source_id', $fines->pluck('id'))
+            ->pluck('source_id')
+            ->flip();
+
+        $approvedMonths = ConsolidatedPayrollRun::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('status', 'approved')
+            ->get(['year', 'month'])
+            ->mapWithKeys(fn ($run) => [PayrollDeductionOverride::index((int) $run->year, (int) $run->month) => true]);
+
+        $names = Employee::withoutGlobalScopes()->withTrashed()
+            ->whereIn('id', $fines->pluck('employee_id')->filter()->unique())
+            ->pluck('name', 'id');
+
+        return $fines
+            ->reject(fn ($fine) => isset($settled[$fine->id]) || isset($routed[$fine->id]) || ! $fine->employee_id)
+            ->map(function ($fine) use ($approvedMonths, $names) {
+                $date = Carbon::parse((string) $fine->violation_date);
+
+                return [
+                    'id' => (int) $fine->id,
+                    'employee_id' => (int) $fine->employee_id,
+                    'employee_name' => $names[$fine->employee_id] ?? "#{$fine->employee_id}",
+                    'violation_date' => $date->toDateString(),
+                    'month_label' => $date->format('m/Y'),
+                    'own_month_approved' => isset($approvedMonths[PayrollDeductionOverride::index($date->year, $date->month)]),
+                    'reference_number' => $fine->reference_number,
+                    'violation_type' => $fine->violation_type,
+                    'amount' => round((float) $fine->driver_deduction, 3),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**

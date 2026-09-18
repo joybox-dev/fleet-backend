@@ -676,10 +676,11 @@ class PayrollController extends Controller
     /**
      * POST /api/payroll/consolidated/{year}/{month}/deduction-overrides
      *
-     * The owner's word on one charge before the month is approved: take it in a later month, or
-     * take a different instalment of an advance this month. Recorded with a reason and a name,
-     * read by the approval, kept through an unapproval. It never waives a charge: a fine the
-     * driver should not pay is corrected on the fine itself, where the record lives.
+     * The owner's word on one charge before the month is approved: take it in a later month, take
+     * a different instalment of an advance this month, or — for a fine whose own month has gone by
+     * uncollected — take it by hand in this one. Recorded with a reason and a name, read by the
+     * approval, kept through an unapproval. It never waives a charge: a fine the driver should not
+     * pay is corrected on the fine itself, where the record lives.
      */
     public function storeDeductionOverride(Request $request, $year, $month): JsonResponse
     {
@@ -694,7 +695,7 @@ class PayrollController extends Controller
         $data = $request->validate([
             'source_type' => 'required|in:violation,maintenance,custody,driver_expense,advance',
             'source_id' => 'required|integer',
-            'action' => 'required|in:defer,amount',
+            'action' => 'required|in:defer,amount,carry',
             'amount' => 'nullable|numeric|min:0',
             'defer_to_year' => 'nullable|integer|min:2020|max:2100',
             'defer_to_month' => 'nullable|integer|min:1|max:12',
@@ -711,6 +712,10 @@ class PayrollController extends Controller
             || (in_array($data['source_type'], ['violation', 'driver_expense'], true) && $source->is_deducted);
         if ($chargedAlready) {
             return response()->json(['message' => 'هذا البند خُصم فعلاً في شهر معتمد — لا قرار عليه.'], 422);
+        }
+
+        if ($data['action'] === PayrollDeductionOverride::ACTION_CARRY) {
+            return $this->carryPastFine($request, $data['source_type'], $source, $data['reason'], $companyId, $year, $month);
         }
 
         $values = ['action' => $data['action'], 'amount' => null, 'defer_to_year' => null, 'defer_to_month' => null];
@@ -752,10 +757,96 @@ class PayrollController extends Controller
     }
 
     /**
+     * A fine of a month gone by, taken by hand in the open month the owner is working on.
+     *
+     * Exclusive to fines, and to fines dated before this month. Every other charge already rolls
+     * forward until a sheet collects it, and a fine of this month is taken by this month's approval
+     * without anyone deciding it — a manual route there would only be a second way to charge it.
+     * The decision is filed on the fine's own month, as a deferral is, so that month can never take
+     * the fine as well; whether that month is approved does not matter, because a fine it did not
+     * collect is exactly what this is for.
+     */
+    private function carryPastFine(Request $request, string $sourceType, object $fine, string $reason, int $companyId, int $year, int $month): JsonResponse
+    {
+        if ($sourceType !== ConsolidatedPayrollDeduction::SOURCE_VIOLATION) {
+            throw ValidationException::withMessages(['action' => 'الخصم اليدوي من شهر سابق خاص بالمخالفات؛ بقية الخصوم تُرحَّل تلقائياً حتى تُخصم.']);
+        }
+        if (! $fine->is_driver_liable || (float) $fine->driver_deduction <= 0) {
+            throw ValidationException::withMessages(['source_id' => 'هذه المخالفة على الشركة — لا شيء يُخصم من السائق.']);
+        }
+
+        $finedOn = Carbon::parse((string) $fine->violation_date);
+        if (PayrollDeductionOverride::index($finedOn->year, $finedOn->month) >= PayrollDeductionOverride::index($year, $month)) {
+            throw ValidationException::withMessages(['action' => 'الخصم اليدوي حصراً لمخالفة من شهر سابق؛ مخالفة هذا الشهر تُخصم تلقائياً عند اعتماده.']);
+        }
+
+        $deferral = PayrollDeductionOverride::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('source_type', $sourceType)
+            ->where('source_id', $fine->id)
+            ->where('action', PayrollDeductionOverride::ACTION_DEFER)
+            ->orderByDesc('defer_to_year')->orderByDesc('defer_to_month')
+            ->first();
+        if ($deferral) {
+            throw ValidationException::withMessages(['source_id' => "على هذه المخالفة قرار تأجيل إلى {$deferral->deferToLabel()} — تُخصم هناك."]);
+        }
+
+        $override = PayrollDeductionOverride::updateOrCreate(
+            ['company_id' => $companyId, 'year' => $finedOn->year, 'month' => $finedOn->month, 'source_type' => $sourceType, 'source_id' => $fine->id],
+            [
+                'action' => PayrollDeductionOverride::ACTION_CARRY,
+                'amount' => null,
+                'defer_to_year' => $year,
+                'defer_to_month' => $month,
+                'reason' => $reason,
+                'created_by' => $request->user()?->id,
+            ]
+        );
+
+        return response()->json([
+            'message' => 'سُجِّل الخصم اليدوي — تُخصم المخالفة عند اعتماد شهر '.$override->deferToLabel().'.',
+            'override' => $override->load('createdBy:id,name')->toRow(),
+        ], 201);
+    }
+
+    /**
+     * GET /api/payroll/consolidated/{year}/{month}/past-fines
+     *
+     * Driver-liable fines of earlier months that no sheet collected and no decision has routed —
+     * what the owner may carry into this month by hand.
+     */
+    public function pastFines($year, $month): JsonResponse
+    {
+        $fines = CompanyDeductionService::pastUncollectedFines($this->currentCompanyId(), (int) $year, (int) $month);
+
+        return response()->json([
+            'fines' => $fines,
+            'count' => count($fines),
+            'total' => round(array_sum(array_column($fines, 'amount')), 3),
+        ]);
+    }
+
+    /**
      * DELETE /api/payroll/deduction-overrides/{override}
      */
     public function destroyDeductionOverride(PayrollDeductionOverride $override): JsonResponse
     {
+        // A carry is filed on the fine's own month, which is often approved — that is why the fine
+        // was carried. What decides whether it can be taken back is the fine: once a sheet has
+        // collected it the decision is history, until then it costs nothing to undo.
+        if ($override->action === PayrollDeductionOverride::ACTION_CARRY) {
+            $collected = ConsolidatedPayrollDeduction::withoutGlobalScopes()
+                ->where('source_type', $override->source_type)->where('source_id', $override->source_id)->exists()
+                || Violation::withoutGlobalScopes()->where('id', $override->source_id)->where('is_deducted', true)->exists();
+            if ($collected) {
+                return response()->json(['message' => 'خُصمت هذه المخالفة فعلاً في شهر معتمد — فكّ اعتماده أولاً.'], 422);
+            }
+
+            $override->delete();
+
+            return response()->json(['message' => 'أُلغي الخصم اليدوي؛ تعود المخالفة معلّقة في شهرها.']);
+        }
+
         if ($this->monthIsApproved((int) $override->company_id, (int) $override->year, (int) $override->month)) {
             return response()->json(['message' => 'الشهر معتمد — فكّ اعتماده أولاً.'], 422);
         }
