@@ -21,6 +21,7 @@ use App\Services\BankSheetService;
 use App\Services\CompanyDeductionService;
 use App\Services\ConsolidatedSheetService;
 use App\Services\ContractSheetService;
+use App\Services\PayrollDeductionReportService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -844,6 +845,17 @@ class PayrollController extends Controller
             'count' => count($fines),
             'total' => round(array_sum(array_column($fines, 'amount')), 3),
         ]);
+    }
+
+    /**
+     * GET /api/payroll/consolidated/{year}/{month}/deductions-report
+     *
+     * The month taken apart for checking by hand: every deduction line behind each column, every
+     * record of the month with where its driver share went, and each column's bridge to its page.
+     */
+    public function deductionsReport($year, $month): JsonResponse
+    {
+        return response()->json(PayrollDeductionReportService::forMonth($this->currentCompanyId(), (int) $year, (int) $month));
     }
 
     /**

@@ -78,6 +78,12 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::post('upload/multiple', [UploadController::class, 'storeMultiple']);
 
     // ── Operational Advances (Phase 16 - accessible to all company roles to request/view)
+    // A login sees its own custodies (received or given from its float); «إعطاء رصيد» sees them all.
+    Route::get('operational-advances/my-balance', [OperationalAdvanceController::class, 'myBalance']);
+    Route::middleware('permission:op_advances.fund')->group(function () {
+        Route::get('operational-advances/balances', [OperationalAdvanceController::class, 'balances']);
+        Route::post('operational-advances/balances', [OperationalAdvanceController::class, 'fund']);
+    });
     Route::apiResource('operational-advances', OperationalAdvanceController::class)->only(['index', 'store']);
 
     // ── Dashboard (all roles) ────────────────────────────────────────
@@ -100,6 +106,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::apiResource('daily-logs', DailyLogController::class)->except(['index', 'show']);
 
         // Vehicles — view + assign/unassign
+        // The assignment board pairs drivers with vehicles, so either side's viewer may open it.
+        // Registered before `vehicles/{vehicle}` so the word is not read as an id.
+        Route::get('vehicles/assignment-board', [VehicleController::class, 'assignmentBoard'])
+            ->middleware('permission:vehicles.view,employees.view');
         Route::middleware('permission:vehicles.view')->group(function () {
             Route::get('vehicles', [VehicleController::class, 'index']);
             Route::get('vehicles/{vehicle}', [VehicleController::class, 'show']);
@@ -334,6 +344,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             // Fines of earlier months that no sheet collected — what a manual carry can bring in.
             Route::get('consolidated/{year}/{month}/past-fines', [PayrollController::class, 'pastFines'])
                 ->middleware('permission:payroll.view,contract_payroll.view');
+            // Every deduction line and every record of the month, for checking the sheet by hand —
+            // whoever may read the sheet may read what it is made of.
+            Route::get('consolidated/{year}/{month}/deductions-report', [PayrollController::class, 'deductionsReport'])
+                ->middleware('permission:payroll.view,contract_payroll.view');
             // Deciding, before approval, that a charge waits for a later month, that an instalment
             // is different this month, or that a fine of a month gone by is taken in this one —
             // the same authority as approving.
@@ -413,7 +427,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
 
         // Operational Advances (Phase 16)
-        Route::middleware('permission:op_advances.edit')->group(function () {
+        Route::middleware('permission:op_advances.edit,op_advances.fund')->group(function () {
             Route::post('operational-advances/{id}/approve', [OperationalAdvanceController::class, 'approve']);
             Route::post('operational-advances/{id}/reject', [OperationalAdvanceController::class, 'reject']);
         });

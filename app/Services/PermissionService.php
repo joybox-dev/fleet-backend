@@ -54,7 +54,7 @@ class PermissionService
         'payroll.view',       'payroll.create',    'payroll.edit',
         'contract_payroll.view', 'contract_payroll.create', 'contract_payroll.edit', 'contract_payroll.approve', 'contract_payroll.delete',
         'salary_advances.view', 'salary_advances.create', 'salary_advances.edit',
-        'op_advances.view',   'op_advances.create', 'op_advances.edit', 'op_advances.delete',
+        'op_advances.view',   'op_advances.create', 'op_advances.edit', 'op_advances.delete', 'op_advances.fund',
         'reports.view',
 
         // Admin
@@ -98,6 +98,7 @@ class PermissionService
         'delete' => 'حذف',
         'approve' => 'اعتماد',
         'scope_contracts' => 'تقييد بالعقود',
+        'fund' => 'إعطاء رصيد',
     ];
 
     /**
@@ -125,7 +126,7 @@ class PermissionService
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
             'contract_payroll.view' => true, 'contract_payroll.create' => true, 'contract_payroll.edit' => true, 'contract_payroll.approve' => true, 'contract_payroll.delete' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
-            'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true,
+            'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true, 'op_advances.fund' => true,
             'reports.view' => true,
             'settings.view' => true,   'settings.edit' => true,
         ],

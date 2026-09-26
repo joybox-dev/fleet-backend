@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ContractAssignment;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
+use App\Services\VehicleAssignmentBoardService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -215,6 +216,17 @@ class VehicleController extends Controller
             ->where('is_active', true)
             ->update(['is_active' => false, 'unassigned_date' => $validated['assigned_date']]);
 
+        // One driver drives one vehicle: whatever else he held is released the same day and goes
+        // back to the free pool, instead of staying "working" with nobody in it.
+        $stillHeld = VehicleAssignment::where('employee_id', $validated['employee_id'])
+            ->where('is_active', true)
+            ->where('vehicle_id', '!=', $vehicle->id)
+            ->get();
+        foreach ($stillHeld as $previous) {
+            $previous->update(['is_active' => false, 'unassigned_date' => $validated['assigned_date']]);
+            Vehicle::where('id', $previous->vehicle_id)->where('status', 'working')->update(['status' => 'available']);
+        }
+
         $assignment = VehicleAssignment::create([
             'vehicle_id' => $vehicle->id,
             'employee_id' => $validated['employee_id'],
@@ -258,6 +270,14 @@ class VehicleController extends Controller
         $vehicle->update(['status' => 'available']);
 
         return response()->json(['message' => 'Vehicle unassigned.']);
+    }
+
+    /**
+     * GET /api/vehicles/assignment-board — every driver and every vehicle with what each holds.
+     */
+    public function assignmentBoard(): JsonResponse
+    {
+        return response()->json(VehicleAssignmentBoardService::build((int) app('current_company_id')));
     }
 
     /**

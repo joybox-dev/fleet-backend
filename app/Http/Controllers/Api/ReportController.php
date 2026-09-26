@@ -231,6 +231,7 @@ class ReportController extends Controller
         return response()->json([
             'year' => $year,
             'month' => $month,
+            'expense_types' => $result['expense_types'],
             'vehicles' => $result['vehicles'],
             'totals' => $result['totals'],
         ]);

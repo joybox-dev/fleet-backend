@@ -28,6 +28,10 @@ class EmployeeController extends Controller
             ->when($request->status, fn ($q) => $q->where('status', $request->status))
             ->when($request->pay_type, fn ($q) => $q->where('pay_type', $request->pay_type))
             ->when($request->role_category, fn ($q) => $q->where('role_category', $request->role_category))
+            // «بلا مركبة» / «مع مركبة» on the list — who needs a vehicle is a question the list
+            // could not answer across its pages.
+            ->when($request->boolean('without_vehicle'), fn ($q) => $q->whereDoesntHave('activeAssignment'))
+            ->when($request->boolean('with_vehicle'), fn ($q) => $q->whereHas('activeAssignment'))
             ->orderBy('name')
             ->paginate($perPage);
 

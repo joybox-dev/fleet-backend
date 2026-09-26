@@ -11,6 +11,7 @@ use App\Models\Employee;
 use App\Models\MaintenanceRecord;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Models\VehicleExpense;
 use App\Models\VehicleType;
 use App\Models\Violation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -189,6 +190,39 @@ class ProfitabilityScreensAgreeTest extends TestCase
         $this->assertEquals(5.0, $row['total_violations']);
         $this->assertEquals(455.0, $row['net_profit']);
         $this->assertEquals(455.0, $vehicleReport['totals']['net_profit']);
+    }
+
+    /**
+     * The vehicle report used to leave out the vehicle's own expenses and its fuel allowance, which
+     * the contract has always paid: the same vehicle came out 50.000 richer than its contract.
+     */
+    public function test_a_vehicle_expense_and_its_fuel_count_on_the_vehicle_as_on_the_contract(): void
+    {
+        $this->vehicle->update(['monthly_fuel_allowance' => 20]);
+        VehicleExpense::create([
+            'company_id' => $this->company->id,
+            'vehicle_id' => $this->vehicle->id,
+            'expense_type' => 'repair',
+            'amount' => 30,
+            'expense_date' => '2026-05-03',
+        ]);
+
+        $report = collect($this->getJson('/api/reports/contract-profitability?year=2026&month=5')->assertOk()->json('contracts'))
+            ->firstWhere('contract_id', $this->contract->id);
+        $vehicleReport = $this->getJson('/api/reports/vehicle-profitability?year=2026&month=5')->assertOk()->json();
+        $row = collect($vehicleReport['vehicles'])->firstWhere('vehicle_id', $this->vehicle->id);
+
+        // 600 − 100 of pay − 20 of fuel − 30 of repair − 40 of maintenance − 5 of the fine.
+        $this->assertEquals(405.0, $report['net_profit']);
+        $this->assertEquals(405.0, $row['net_profit']);
+
+        $this->assertEquals(20.0, $row['fuel_allowance']);
+        $this->assertEquals(['repair' => 30.0], $row['expenses_by_type']);
+        $this->assertEquals(30.0, $row['vehicle_expenses']);
+        $this->assertEquals(95.0, $row['company_costs']);
+        $this->assertEquals(15.0, $row['violations_driver_share'], 'the driver\'s share is shown, not charged to the vehicle');
+        $this->assertEquals([['key' => 'repair', 'label' => 'إصلاح', 'total' => 30.0]], $vehicleReport['expense_types']);
+        $this->assertEquals(30.0, $vehicleReport['totals']['expenses_by_type']['repair']);
     }
 
     public function test_the_contract_dashboard_lists_the_sheets_drivers_and_what_they_bill(): void

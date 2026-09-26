@@ -127,39 +127,85 @@ class ContractProfitabilityService
             }
         }
 
+        // A vehicle that carried any cost in the month is listed whatever its status today: an
+        // expense on a vehicle that has since gone idle was still spent this month.
+        $withActivity = collect([
+            array_keys($context['orders_by_vehicle']), array_keys($revenueByVehicle), array_keys($driverCostByVehicle),
+            array_keys($context['fuel_by_vehicle']), array_keys($context['expenses_by_vehicle']),
+            array_keys($context['maintenance_by_vehicle']), array_keys($context['maintenance_driver_by_vehicle']),
+            array_keys($context['maintenance_pending_by_vehicle']),
+            array_keys($context['violations_by_vehicle']), array_keys($context['violations_driver_by_vehicle']),
+        ])->flatten()->filter()->unique()->values()->all();
+
         $vehicles = Vehicle::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
-            ->whereIn('status', ['working', 'available', 'maintenance'])
-            ->get(['id', 'plate_number', 'make', 'model', 'status']);
+            ->where(fn ($q) => $q->whereIn('status', ['working', 'available', 'maintenance'])->orWhereIn('id', $withActivity))
+            ->with('vehicleType:id,name,name_ar')
+            ->get(['id', 'plate_number', 'make', 'model', 'status', 'vehicle_type_id']);
 
         $rows = $vehicles->map(function ($v) use ($context, $revenueByVehicle, $driverCostByVehicle) {
             $revenue = round($revenueByVehicle[$v->id] ?? 0.0, 3);
             $driverCost = round($driverCostByVehicle[$v->id] ?? 0.0, 3);
+            $fuel = round($context['fuel_by_vehicle'][$v->id] ?? 0.0, 3);
+            $byType = array_map(fn ($a) => round($a, 3), $context['expenses_by_vehicle'][$v->id] ?? []);
+            $expenses = round(array_sum($byType), 3);
             $maintenance = round($context['maintenance_by_vehicle'][$v->id] ?? 0.0, 3);
             $violations = round($context['violations_by_vehicle'][$v->id] ?? 0.0, 3);
+            $companyCosts = round($fuel + $expenses + $maintenance + $violations, 3);
 
             return [
                 'vehicle_id' => $v->id,
                 'plate_number' => $v->plate_number,
                 'label' => trim("{$v->make} {$v->model}"),
+                'vehicle_type' => $v->vehicleType?->name_ar ?: $v->vehicleType?->name,
                 'status' => $v->status,
                 'total_orders' => (int) ($context['orders_by_vehicle'][$v->id] ?? 0),
                 'revenue' => $revenue,
                 'driver_cost' => $driverCost,
+                'fuel_allowance' => $fuel,
+                'expenses_by_type' => $byType,
+                'vehicle_expenses' => $expenses,
                 'total_maintenance' => $maintenance,
+                'maintenance_driver_share' => round($context['maintenance_driver_by_vehicle'][$v->id] ?? 0.0, 3),
+                'maintenance_pending' => round($context['maintenance_pending_by_vehicle'][$v->id] ?? 0.0, 3),
                 'total_violations' => $violations,
-                'net_profit' => round($revenue - $driverCost - $maintenance - $violations, 3),
+                'violations_driver_share' => round($context['violations_driver_by_vehicle'][$v->id] ?? 0.0, 3),
+                'company_costs' => $companyCosts,
+                'net_profit' => round($revenue - $driverCost - $companyCosts, 3),
             ];
         })->sortByDesc('net_profit')->values();
 
+        // Only the types this month actually has, largest first — a column per type.
+        $typeTotals = [];
+        foreach ($rows as $row) {
+            foreach ($row['expenses_by_type'] as $type => $amount) {
+                $typeTotals[$type] = round(($typeTotals[$type] ?? 0.0) + $amount, 3);
+            }
+        }
+        arsort($typeTotals);
+
+        $sum = fn (string $key) => round($rows->sum($key), 3);
+
         return [
+            'expense_types' => collect($typeTotals)->map(fn ($total, $type) => [
+                'key' => (string) $type,
+                'label' => VehicleExpense::typeLabel((string) $type),
+                'total' => $total,
+            ])->values()->all(),
             'vehicles' => $rows->all(),
             'totals' => [
-                'revenue' => round($rows->sum('revenue'), 3),
-                'driver_cost' => round($rows->sum('driver_cost'), 3),
-                'total_maintenance' => round($rows->sum('total_maintenance'), 3),
-                'total_violations' => round($rows->sum('total_violations'), 3),
-                'net_profit' => round($rows->sum('net_profit'), 3),
+                'revenue' => $sum('revenue'),
+                'driver_cost' => $sum('driver_cost'),
+                'fuel_allowance' => $sum('fuel_allowance'),
+                'expenses_by_type' => $typeTotals,
+                'vehicle_expenses' => $sum('vehicle_expenses'),
+                'total_maintenance' => $sum('total_maintenance'),
+                'maintenance_driver_share' => $sum('maintenance_driver_share'),
+                'maintenance_pending' => $sum('maintenance_pending'),
+                'total_violations' => $sum('total_violations'),
+                'violations_driver_share' => $sum('violations_driver_share'),
+                'company_costs' => $sum('company_costs'),
+                'net_profit' => $sum('net_profit'),
             ],
         ];
     }
@@ -329,6 +375,7 @@ class ContractProfitabilityService
 
         // Fuel: the vehicle's monthly allowance, shared by its orders (or its days, when it ran
         // with no orders) across the contracts it worked.
+        $fuelByVehicle = [];
         $vehicles = Vehicle::withoutGlobalScopes()->whereIn('id', $vehicleIds)->get(['id', 'monthly_fuel_allowance']);
         foreach ($vehicles as $vehicle) {
             $allowance = (float) ($vehicle->monthly_fuel_allowance ?? 0);
@@ -344,19 +391,28 @@ class ContractProfitabilityService
                 continue;
             }
             $add(array_map(fn ($w) => $w / $total, $weights), 'fuel', $allowance);
+            $fuelByVehicle[$vehicle->id] = $allowance;
         }
 
         // Vehicle expenses recorded in the month.
         $expenses = VehicleExpense::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
             ->whereBetween('expense_date', [$startDate, $endDate])
-            ->get(['vehicle_id', 'amount', 'expense_date']);
+            ->get(['vehicle_id', 'amount', 'expense_date', 'expense_type']);
+        // Per vehicle and type as well: the vehicle carries its expense even on a day no contract
+        // did, so its report shows what the contracts' could not place.
+        $expensesByVehicle = [];
         foreach ($expenses as $expense) {
             $add($allocate((int) $expense->vehicle_id, substr((string) $expense->expense_date, 0, 10)), 'expenses', (float) $expense->amount);
+            if ($expense->vehicle_id) {
+                $type = (string) ($expense->expense_type ?: 'other');
+                $expensesByVehicle[$expense->vehicle_id][$type] = ($expensesByVehicle[$expense->vehicle_id][$type] ?? 0.0) + (float) $expense->amount;
+            }
         }
 
         // Repairs and accidents the company paid for: the approved cost less what the driver bears.
         $maintenanceByVehicle = [];
+        $maintenanceDriverByVehicle = [];
         $records = MaintenanceRecord::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
             ->whereBetween('maintenance_date', [$startDate, $endDate])
@@ -375,10 +431,25 @@ class ContractProfitabilityService
                 }
             }
             $maintenanceByVehicle[$record->vehicle_id] = ($maintenanceByVehicle[$record->vehicle_id] ?? 0.0) + $companyShare;
+            $maintenanceDriverByVehicle[$record->vehicle_id] = ($maintenanceDriverByVehicle[$record->vehicle_id] ?? 0.0) + $driverShare;
         }
+
+        // Repairs still waiting for approval are not a cost yet; the vehicle report shows them coming.
+        $maintenancePendingByVehicle = [];
+        MaintenanceRecord::withoutGlobalScopes()->whereNull('deleted_at')
+            ->where('company_id', $companyId)
+            ->whereBetween('maintenance_date', [$startDate, $endDate])
+            ->whereNotIn('status', ['approved', 'completed', 'rejected'])
+            ->get(['vehicle_id', 'actual_cost', 'estimated_cost'])
+            ->each(function ($record) use (&$maintenancePendingByVehicle) {
+                $maintenancePendingByVehicle[$record->vehicle_id] = ($maintenancePendingByVehicle[$record->vehicle_id] ?? 0.0)
+                    // An unapproved repair stores its actual cost as 0.000, not null: the estimate is the figure.
+                    + ((float) $record->actual_cost > 0 ? (float) $record->actual_cost : (float) ($record->estimated_cost ?? 0));
+            });
 
         // Fines: the company's share, on the contract the fine names — or the vehicle's day.
         $violationsByVehicle = [];
+        $violationsDriverByVehicle = [];
         $fines = Violation::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
             ->datedWithin($startDate, $endDate)
@@ -395,6 +466,7 @@ class ContractProfitabilityService
             $add($shares, 'violations', $companyShare);
             if ($fine->vehicle_id) {
                 $violationsByVehicle[$fine->vehicle_id] = ($violationsByVehicle[$fine->vehicle_id] ?? 0.0) + $companyShare;
+                $violationsDriverByVehicle[$fine->vehicle_id] = ($violationsDriverByVehicle[$fine->vehicle_id] ?? 0.0) + max(0.0, $amount - $companyShare);
             }
         }
 
@@ -436,6 +508,11 @@ class ContractProfitabilityService
             'costs_by_contract' => $costs,
             'maintenance_by_vehicle' => $maintenanceByVehicle,
             'violations_by_vehicle' => $violationsByVehicle,
+            'fuel_by_vehicle' => $fuelByVehicle,
+            'expenses_by_vehicle' => $expensesByVehicle,
+            'maintenance_driver_by_vehicle' => $maintenanceDriverByVehicle,
+            'maintenance_pending_by_vehicle' => $maintenancePendingByVehicle,
+            'violations_driver_by_vehicle' => $violationsDriverByVehicle,
             'supervisors_by_contract' => $supervisorsByContract,
         ];
     }
