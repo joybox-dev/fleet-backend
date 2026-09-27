@@ -3,8 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Services\PermissionService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
@@ -17,17 +18,17 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $request->validate([
-            'email'    => 'required|email',
+            'email' => 'required|email',
             'password' => 'required|string',
         ]);
 
-        if (!Auth::attempt($request->only('email', 'password'))) {
+        if (! Auth::attempt($request->only('email', 'password'))) {
             throw ValidationException::withMessages([
                 'email' => ['بيانات الدخول غير صحيحة.'],
             ]);
         }
 
-        $user  = Auth::user();
+        $user = Auth::user();
         $token = $user->createToken('fleetops-api')->plainTextToken;
 
         // Load user's company
@@ -35,24 +36,25 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $token,
-            'user'  => [
-                'id'             => $user->id,
-                'name'           => $user->name,
-                'email'          => $user->email,
-                'role'           => $user->role,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
                 'is_super_admin' => $user->isSuperAdmin(),
-                'company_id'     => $user->company_id,
-                'permissions'    => $user->resolvePermissions(),
+                'company_id' => $user->company_id,
+                'view_only' => false,
+                'permissions' => $user->resolvePermissions(),
             ],
             'current_company' => $company ? [
-                'id'              => $company->id,
-                'name'            => $company->name,
-                'name_ar'         => $company->name_ar,
-                'code'            => $company->code,
-                'logo_path'       => $company->logo_path,
-                'branding'        => $company->branding,
+                'id' => $company->id,
+                'name' => $company->name,
+                'name_ar' => $company->name_ar,
+                'code' => $company->code,
+                'logo_path' => $company->logo_path,
+                'branding' => $company->branding,
                 'enabled_modules' => $company->enabled_modules,
-                'currency'        => $company->currency,
+                'currency' => $company->currency,
             ] : null,
         ]);
     }
@@ -79,20 +81,23 @@ class AuthController extends Controller
 
         return response()->json([
             'user' => [
-                'id'             => $user->id,
-                'name'           => $user->name,
-                'email'          => $user->email,
-                'role'           => app()->bound('current_company_role') ? app('current_company_role') : $user->role,
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => app()->bound('current_company_role') ? app('current_company_role') : $user->role,
                 'is_super_admin' => $user->isSuperAdmin(),
-                'permissions'    => $user->resolvePermissions(),
+                'company_id' => $user->company_id,
+                // The system owner looking at another company: every screen shows, nothing saves.
+                'view_only' => PermissionService::viewingAnotherCompany(),
+                'permissions' => $user->resolvePermissions(),
             ],
             'current_company' => $company ? [
-                'id'              => $company->id,
-                'name'            => $company->name,
-                'name_ar'         => $company->name_ar,
-                'branding'        => $company->branding,
+                'id' => $company->id,
+                'name' => $company->name,
+                'name_ar' => $company->name_ar,
+                'branding' => $company->branding,
                 'enabled_modules' => $company->enabled_modules,
-                'logo_path'       => $company->logo_path,
+                'logo_path' => $company->logo_path,
             ] : null,
         ]);
     }

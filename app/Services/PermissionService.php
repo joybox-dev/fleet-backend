@@ -175,8 +175,13 @@ class PermissionService
      */
     public static function resolve(string $role, ?array $overrides = null, bool $isSuperAdmin = false, ?User $user = null): array
     {
-        // Super admin gets everything
+        // Super admin gets everything in their own company, and only the «view» of each module in
+        // a company they are looking at (see SetCurrentCompany).
         if ($isSuperAdmin || ($user && $user->isSuperAdmin())) {
+            if (self::viewingAnotherCompany()) {
+                return array_fill_keys(array_values(array_filter(self::ALL_PERMISSIONS, fn (string $p) => str_ends_with($p, '.view'))), true);
+            }
+
             return array_fill_keys(self::ALL_PERMISSIONS, true);
         }
 
@@ -256,13 +261,19 @@ class PermissionService
      */
     public static function can(string $role, string $permission, ?array $overrides = null, bool $isSuperAdmin = false, ?User $user = null): bool
     {
-        if ($isSuperAdmin) {
+        if ($isSuperAdmin && ! self::viewingAnotherCompany()) {
             return true;
         }
 
         $resolved = self::resolve($role, $overrides, $isSuperAdmin, $user);
 
         return ! empty($resolved[$permission]);
+    }
+
+    /** Whether this request is the system owner looking at a company that is not their own. */
+    public static function viewingAnotherCompany(): bool
+    {
+        return app()->bound('company_view_only') && (bool) app('company_view_only');
     }
 
     /**
@@ -305,12 +316,19 @@ class PermissionService
         }
 
         foreach (self::ALL_PERMISSIONS as $perm) {
-            $mod = explode('.', $perm)[0];
-            if (in_array($perm, $modules) || in_array($mod, $modules)) {
+            [$mod, $action] = explode('.', $perm, 2);
+            if (in_array($perm, $modules) || (in_array($mod, $modules) && ! in_array($action, self::SPECIAL_ACTIONS, true))) {
                 $effective[$perm] = true;
             }
         }
 
         return $effective;
     }
+
+    /**
+     * Actions a whole module never carries: one is a restriction («تقييد بالعقود المخصصة» narrows
+     * what the user sees), the other a power over everyone's custody («إعطاء رصيد»). Each is
+     * granted only when ticked on its own.
+     */
+    private const SPECIAL_ACTIONS = ['scope_contracts', 'fund'];
 }

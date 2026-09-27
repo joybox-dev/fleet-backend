@@ -87,12 +87,16 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     });
     Route::apiResource('operational-advances', OperationalAdvanceController::class)->only(['index', 'store']);
 
-    // ── Dashboard (all roles) ────────────────────────────────────────
+    // ── Dashboard: the fleet for every role, the money for those who read the reports ──
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
     Route::get('dashboard/expiry-alerts', [DashboardController::class, 'expiryAlerts']);
-    Route::get('dashboard/contracts-profitability', [DashboardController::class, 'contractsProfitability']);
-    Route::get('dashboard/money-at-risk', [DashboardController::class, 'moneyAtRisk']);
-    Route::get('dashboard/pulse', [DashboardController::class, 'pulse']);
+    // Revenue, contribution, profit per contract and the money at risk are the reports' figures.
+    // They were open to every login — a role with no module at all read the company's profit.
+    Route::middleware('permission:reports.view')->group(function () {
+        Route::get('dashboard/contracts-profitability', [DashboardController::class, 'contractsProfitability']);
+        Route::get('dashboard/money-at-risk', [DashboardController::class, 'moneyAtRisk']);
+        Route::get('dashboard/pulse', [DashboardController::class, 'pulse']);
+    });
 
     // ═══════════════════════════════════════════════════════════════════
     // OPERATOR + ADMIN: Daily operations
