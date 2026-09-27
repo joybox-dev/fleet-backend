@@ -188,6 +188,20 @@ class ContractPayrollService
             ? ($override->fixed_surplus_rate ?? $deficitRateConfig)
             : ($vtPricing['fixed_surplus_rate'] ?? $deficitRateConfig));
 
+        // «بونص مقطوع» is paid once, when the target is reached; «عمولة على الطلب» on every order
+        // above it — as the zones strategy already did. The form has always offered both, but
+        // this strategy paid per order whatever was chosen, at the surplus rate or else the
+        // deficit rate: a lump sum typed into the form was never paid, and the driver got a
+        // per-order bonus nobody had set. A rule that names neither keeps the per-order reading it
+        // always had. The override's accessor defaults to «lump_sum», so its stored choice is read.
+        $bonusType = $override
+            ? ($override->custom_pricing_rules['fixed_bonus_type'] ?? null)
+            : ($vtPricing['fixed_bonus_type'] ?? null);
+        $isLumpSum = $bonusType === 'lump_sum';
+        $lumpSumConfig = (float) ($override
+            ? ($override->fixed_surplus_bonus ?? 0)
+            : ($vtPricing['fixed_surplus_bonus'] ?? 0));
+
         // Guaranteed to be set: calculateDriverContractPayroll refuses the month without it,
         // rather than deciding for itself what a day of this contract is worth.
         $contractWorkingDays = (int) $contract->default_required_work_days;
@@ -218,7 +232,9 @@ class ContractPayrollService
             if ($totalOrders < $requiredTarget) {
                 $deficitDeduction = round(($requiredTarget - $totalOrders) * $deficitRateConfig, 3);
             } else {
-                $surplusBonus = round(($totalOrders - $requiredTarget) * $surplusRateConfig, 3);
+                $surplusBonus = $isLumpSum
+                    ? round($lumpSumConfig, 3)
+                    : round(($totalOrders - $requiredTarget) * $surplusRateConfig, 3);
             }
         }
 
@@ -254,15 +270,18 @@ class ContractPayrollService
                     'formula' => 'نقص '.($requiredTarget - $totalOrders)." طلب × {$deficitRateConfig} د.ك = -{$deficitDeduction} د.ك",
                 ];
             } elseif ($surplusBonus > 0) {
+                $surplusCount = $totalOrders - $requiredTarget;
                 $details[] = [
                     'label' => "بونص تجاوز التارغت (مستهدف: {$requiredTarget} | منفذ: {$totalOrders})",
-                    'count' => ($totalOrders - $requiredTarget),
-                    'orders' => ($totalOrders - $requiredTarget),
+                    'count' => $surplusCount,
+                    'orders' => $surplusCount,
                     'unit' => 'order',
                     'type' => 'surplus',
-                    'rate' => $surplusRateConfig,
+                    'rate' => $isLumpSum ? 0.0 : $surplusRateConfig,
                     'amount' => $surplusBonus,
-                    'formula' => 'زيادة '.($totalOrders - $requiredTarget)." طلب × {$surplusRateConfig} د.ك = {$surplusBonus} د.ك",
+                    'formula' => $isLumpSum
+                        ? "بونص مقطوع لتحقيق التارغت = {$surplusBonus} د.ك"
+                        : "زيادة {$surplusCount} طلب × {$surplusRateConfig} د.ك = {$surplusBonus} د.ك",
                 ];
             }
         }
