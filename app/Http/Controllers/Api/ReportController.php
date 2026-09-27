@@ -178,12 +178,15 @@ class ReportController extends Controller
         $totalIncome = 0.0;
         $logs = DailyLog::with('vehicle:id,vehicle_type_id')
             ->whereBetween('log_date', [$from, $to])
-            ->get(['id', 'contract_id', 'vehicle_id', 'orders_count', 'zone', 'notes']);
+            ->get(['id', 'employee_id', 'contract_id', 'vehicle_id', 'log_date', 'orders_count', 'zone', 'notes']);
         $contracts = Contract::whereIn('id', $logs->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
         foreach ($logs->groupBy('contract_id') as $contractId => $contractLogs) {
             $contract = $contracts->get($contractId);
             if ($contract) {
-                $totalIncome += ContractRevenueService::forContractMonth($contract, $contractLogs)['revenue'];
+                // A week of a Keeta-settled contract is its orders at the month's price; Keeta's
+                // incentives and its statement belong to the month, not to one of its weeks.
+                $share = $contract->keeta_settlement_from ? 0.0 : 1.0;
+                $totalIncome += ContractRevenueService::forContractMonth($contract, $contractLogs, 1, $share)['revenue'];
             }
         }
 
@@ -335,7 +338,7 @@ class ReportController extends Controller
 
         $logsByContract = DailyLog::with('vehicle:id,vehicle_type_id')
             ->whereBetween('log_date', [$start->toDateString(), $end])
-            ->get(['id', 'contract_id', 'vehicle_id', 'orders_count', 'zone', 'notes'])
+            ->get(['id', 'employee_id', 'contract_id', 'vehicle_id', 'log_date', 'orders_count', 'zone', 'notes'])
             ->groupBy('contract_id');
 
         $contracts = Contract::with('client:id,name')

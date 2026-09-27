@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\EvaluationController;
 use App\Http\Controllers\Api\ExpenseLedgerController;
 use App\Http\Controllers\Api\GlobalSearchController;
 use App\Http\Controllers\Api\ImportController;
+use App\Http\Controllers\Api\KeetaSettlementController;
 use App\Http\Controllers\Api\KetaImportController;
 use App\Http\Controllers\Api\LeaveController;
 use App\Http\Controllers\Api\MaintenanceController;
@@ -195,8 +196,19 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         Route::middleware('permission:contracts.view')->group(function () {
             Route::apiResource('contracts', ContractController::class)->only(['index', 'show']);
             Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
+            // Keeta's month as Keeta settles it: its statement when imported, an estimate until then.
+            Route::get('contracts/{contract}/keeta', [KeetaSettlementController::class, 'show']);
         });
         Route::apiResource('contracts', ContractController::class)->except(['index', 'show']);
+        // Importing Keeta's statement or level export changes the contract's revenue — an edit of the contract.
+        Route::middleware('permission:contracts.edit')->group(function () {
+            Route::post('contracts/{contract}/keeta/statement/preview', [KeetaSettlementController::class, 'previewStatement']);
+            Route::post('contracts/{contract}/keeta/statement', [KeetaSettlementController::class, 'storeStatement']);
+            Route::delete('contracts/{contract}/keeta/statement/{invoice}', [KeetaSettlementController::class, 'destroyStatement']);
+            Route::post('contracts/{contract}/keeta/levels/preview', [KeetaSettlementController::class, 'previewLevels']);
+            Route::post('contracts/{contract}/keeta/levels', [KeetaSettlementController::class, 'storeLevels']);
+            Route::delete('contracts/{contract}/keeta/levels/{snapshot}', [KeetaSettlementController::class, 'destroyLevels']);
+        });
 
         // Roles — who may do what. Only the settings screen edits them.
         Route::middleware('permission:settings.view')->group(function () {

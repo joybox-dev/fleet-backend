@@ -69,6 +69,9 @@ class Contract extends Model
         'client_pricing_rules' => 'array',
         'driver_pricing_rules' => 'array',
         'capacity_pricing_rules' => 'array',
+
+        // Set by the Keeta statement import only, never by the contract form.
+        'keeta_settlement_from' => 'date',
     ];
 
     protected static function booted(): void

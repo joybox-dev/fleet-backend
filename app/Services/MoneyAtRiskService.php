@@ -149,7 +149,7 @@ class MoneyAtRiskService
                 ->with('vehicle:id,vehicle_type_id')
                 ->where('contract_id', $contract->id)
                 ->whereBetween('log_date', [$startStr, $endStr])
-                ->get(['id', 'orders_count', 'zone', 'notes', 'vehicle_id']);
+                ->get(['id', 'employee_id', 'log_date', 'orders_count', 'zone', 'notes', 'vehicle_id']);
 
             if ($logs->isEmpty()) {
                 continue;

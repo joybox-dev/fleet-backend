@@ -7,6 +7,8 @@ use App\Models\Client;
 use App\Models\Contract;
 use App\Models\DailyLog;
 use App\Services\ContractScopeService;
+use App\Services\KeetaRevenueService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -141,6 +143,10 @@ class ContractController extends Controller
             'client_pricing_rules' => [
                 'required', 'array',
                 function ($attribute, $value, $fail) use ($request) {
+                    // Keeta prices its own orders; its contract's vehicle types only set driver pay.
+                    if ($request->filled('keeta_settlement_from')) {
+                        return;
+                    }
                     foreach ($this->pricingRuleProblems($value, $request->input('client_payment_method'), 'client') as $problem) {
                         $fail($problem);
                     }
@@ -171,7 +177,11 @@ class ContractController extends Controller
             ],
             'capacity_target' => 'nullable|integer|min:0',
             'capacity_pricing_rules' => 'nullable|array',
+            // «كشف كيتا الشهري»: from this month the client is billed by Keeta's own statement.
+            'keeta_settlement_from' => 'nullable|date',
         ]);
+        $keetaFrom = $this->keetaMonth($validated);
+        unset($validated['keeta_settlement_from']);
 
         if (empty($validated['client_name'])) {
             $client = Client::find($validated['client_id']);
@@ -189,6 +199,9 @@ class ContractController extends Controller
         }
 
         $contract = Contract::create($validated);
+        if ($keetaFrom !== false) {
+            $contract->forceFill(['keeta_settlement_from' => $keetaFrom])->saveQuietly();
+        }
 
         return response()->json($contract->load('client:id,name'), 201);
     }
@@ -270,6 +283,11 @@ class ContractController extends Controller
                 Rule::requiredIf(fn () => ! is_array($contract->client_pricing_rules) || $contract->client_pricing_rules === []),
                 'array',
                 function ($attribute, $value, $fail) use ($request, $contract) {
+                    // Keeta prices its own orders; its contract's vehicle types only set driver pay.
+                    $keeta = $request->exists('keeta_settlement_from') ? $request->filled('keeta_settlement_from') : $contract->keeta_settlement_from !== null;
+                    if ($keeta) {
+                        return;
+                    }
                     $method = $request->input('client_payment_method') ?? $contract->client_payment_method;
                     foreach ($this->pricingRuleProblems($value, $method, 'client') as $problem) {
                         $fail($problem);
@@ -301,7 +319,11 @@ class ContractController extends Controller
             ],
             'capacity_target' => 'nullable|integer|min:0',
             'capacity_pricing_rules' => 'nullable|array',
+            // «كشف كيتا الشهري» from this month; null returns every month to the price list below.
+            'keeta_settlement_from' => 'nullable|date',
         ]);
+        $keetaFrom = $this->keetaMonth($validated);
+        unset($validated['keeta_settlement_from']);
 
         if (isset($validated['rate_per_order']) && ! isset($validated['default_order_commission'])) {
             $validated['default_order_commission'] = $validated['rate_per_order'];
@@ -321,10 +343,31 @@ class ContractController extends Controller
         }
 
         $contract->update($validated);
+        if ($keetaFrom !== false) {
+            $contract->forceFill(['keeta_settlement_from' => $keetaFrom])->saveQuietly();
+            KeetaRevenueService::forget();
+        }
 
         return response()->json(
             $contract->fresh()->toArray() + ['pricing_change_impact' => $pricingImpact]
         );
+    }
+
+    /**
+     * The first day of the month Keeta's statement starts billing from, null to stop it, or false
+     * when the request did not mention it at all and the contract keeps what it has.
+     *
+     * @param  array<string, mixed>  $validated
+     */
+    private function keetaMonth(array $validated): string|false|null
+    {
+        if (! array_key_exists('keeta_settlement_from', $validated)) {
+            return false;
+        }
+
+        return $validated['keeta_settlement_from'] === null
+            ? null
+            : Carbon::parse($validated['keeta_settlement_from'])->startOfMonth()->toDateString();
     }
 
     /**

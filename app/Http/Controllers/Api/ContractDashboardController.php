@@ -10,6 +10,7 @@ use App\Models\VehicleAssignment;
 use App\Services\ContractProfitabilityService;
 use App\Services\ContractRevenueService;
 use App\Services\ContractScopeService;
+use App\Services\KeetaRevenueService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -85,8 +86,18 @@ class ContractDashboardController extends Controller
             ->get();
 
         // What each driver's own orders bill the client, so the row can show earned against billed.
+        // A month Keeta settles is split by Keeta's own rows: a driver's share of the whole month,
+        // never the whole statement once per driver.
+        $keetaMonth = KeetaRevenueService::appliesTo($contract, $year, $month)
+            ? KeetaRevenueService::forMonth($contract, $year, $month)
+            : null;
         $logsByDriver = $dailyLogs->groupBy('employee_id');
-        $drivers = array_map(function (array $row) use ($contract, $logsByDriver) {
+        $drivers = array_map(function (array $row) use ($contract, $logsByDriver, $keetaMonth) {
+            if ($keetaMonth !== null) {
+                $row['client_revenue'] = round((float) ($keetaMonth['drivers'][(int) $row['employee_id']]['revenue'] ?? 0.0), 3);
+
+                return $row;
+            }
             $own = $logsByDriver->get($row['employee_id'], collect());
             $row['client_revenue'] = $own->isEmpty()
                 ? 0.0
@@ -174,6 +185,14 @@ class ContractDashboardController extends Controller
                 'client_payment_method' => $contract->client_payment_method,
                 'default_required_work_days' => (int) ($contract->default_required_work_days ?? 0),
                 'required_vehicles_count' => $required,
+            ],
+            // A Keeta contract gets the Keeta tab: named Keeta, or already settled by statement.
+            'keeta' => [
+                'eligible' => $contract->keeta_settlement_from !== null
+                    || preg_match('/keeta|كيتا/iu', (string) $contract->name.' '.(string) $contract->client_name) === 1,
+                'settlement_from' => $contract->keeta_settlement_from ? Carbon::parse($contract->keeta_settlement_from)->format('Y-m') : null,
+                'applies' => $keetaMonth !== null,
+                'estimated' => $keetaMonth['estimated'] ?? null,
             ],
             'assignments' => $activeAssignments,
             // employee_id => [vehicle type ids held during this month]

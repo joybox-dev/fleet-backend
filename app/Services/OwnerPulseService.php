@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\ContractPayrollRun;
 use App\Models\DailyLog;
+use App\Models\KeetaInvoice;
+use App\Models\KeetaLevelSnapshot;
 use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -88,7 +90,12 @@ class OwnerPulseService
             ->where('company_id', $companyId)
             ->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS a', ['approved'])
             ->first();
-        $stamp = md5(implode('|', [$logs->n, $logs->u, $runs->n, $runs->u, $runs->a]));
+        // A Keeta statement or level export changes a Keeta contract's revenue without touching a log.
+        $keeta = [
+            KeetaInvoice::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
+            KeetaLevelSnapshot::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
+        ];
+        $stamp = md5(implode('|', [$logs->n, $logs->u, $runs->n, $runs->u, $runs->a, $keeta[0]->n, $keeta[0]->u, $keeta[1]->n, $keeta[1]->u]));
         $key = sprintf('owner-pulse:%d:%04d-%02d:%s', $companyId, $year, $month, $stamp);
 
         return Cache::remember(
@@ -118,7 +125,7 @@ class OwnerPulseService
             ->where('company_id', $companyId)
             ->whereBetween('log_date', [$start->toDateString(), $todayStr])
             ->with('vehicle:id,vehicle_type_id')
-            ->get(['id', 'contract_id', 'log_date', 'orders_count', 'zone', 'notes', 'vehicle_id'])
+            ->get(['id', 'employee_id', 'contract_id', 'log_date', 'orders_count', 'zone', 'notes', 'vehicle_id'])
             ->groupBy('contract_id');
 
         $contracts = Contract::withoutGlobalScopes()->whereNull('deleted_at')
@@ -132,10 +139,15 @@ class OwnerPulseService
         $fixedMonthToDate = 0.0;
         $orders = 0;
         $unpriced = 0;
+        $estimated = [];
 
         foreach ($contracts as $contract) {
             $logs = $logsByContract->get($contract->id);
             $month = ContractRevenueService::forContractMonth($contract, $logs);
+            // Keeta's month is an estimate until its statement is imported; the figure says so.
+            if ($month['keeta']['estimated'] ?? false) {
+                $estimated[] = ['contract_id' => (int) $contract->id, 'contract_name' => $contract->name, 'amount' => round((float) $month['revenue'], 3)];
+            }
             $monthToDate += $month['revenue'];
             $fixedMonthToDate += $month['fixed_revenue'];
             $orders += $month['orders'];
@@ -168,6 +180,7 @@ class OwnerPulseService
             'orders_month_to_date' => $orders,
             'unpriced_orders' => $unpriced,
             'days_in_month' => $daysInMonth,
+            'estimated_parts' => $estimated,
         ];
     }
 

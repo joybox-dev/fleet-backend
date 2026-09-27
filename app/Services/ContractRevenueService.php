@@ -27,6 +27,25 @@ class ContractRevenueService
      */
     public static function forContractMonth(Contract $contract, iterable $logs, int $monthsCount = 1, float $fixedShare = 1.0): array
     {
+        // A month Keeta settles by statement is Keeta's figure, not this contract's price list. A
+        // share below a whole month is one of its days: that day's orders at the month's price.
+        if ($contract->keeta_settlement_from && ($keetaMonth = KeetaRevenueService::monthOfLogs($contract, collect($logs)))) {
+            [$year, $month] = $keetaMonth;
+            if ($fixedShare < 1.0) {
+                $dayLogs = collect($logs);
+
+                return [
+                    'revenue' => KeetaRevenueService::dayRevenue($contract, $year, $month, $dayLogs),
+                    'fixed_revenue' => 0.0,
+                    'orders' => (int) $dayLogs->sum('orders_count'),
+                    'unpriced_orders' => 0,
+                    'details' => [],
+                ];
+            }
+
+            return KeetaRevenueService::asContractRevenue(KeetaRevenueService::forMonth($contract, $year, $month, collect($logs)));
+        }
+
         $rules = self::rules($contract);
         $fixedRevenue = 0.0;
 
@@ -160,6 +179,10 @@ class ContractRevenueService
      */
     public static function forContractDrivers(Contract $contract, iterable $logs): array
     {
+        if ($contract->keeta_settlement_from && ($keetaMonth = KeetaRevenueService::monthOfLogs($contract, collect($logs)))) {
+            return KeetaRevenueService::asDriverSplit(KeetaRevenueService::forMonth($contract, $keetaMonth[0], $keetaMonth[1], collect($logs)));
+        }
+
         $rules = self::rules($contract);
 
         // type => orders/days for the type and per driver, with each driver's zone split.
