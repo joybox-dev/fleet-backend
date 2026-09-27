@@ -20,7 +20,7 @@ class KeetaLevelSnapshot extends Model
     protected $casts = [
         'year' => 'integer',
         'month' => 'integer',
-        'taken_on' => 'date',
+        'taken_on' => 'date:Y-m-d',
     ];
 
     public function rows(): HasMany

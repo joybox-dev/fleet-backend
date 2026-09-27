@@ -273,6 +273,10 @@ class KeetaSettlementTest extends TestCase
         $this->actingAs($this->admin)->postJson("/api/contracts/{$this->contract->id}/keeta/levels", ['token' => $preview['token']])->assertStatus(201);
         KeetaRevenueService::forget();
 
+        $listed = $this->actingAs($this->admin)->getJson("/api/contracts/{$this->contract->id}/keeta?year=2026&month=9")
+            ->assertStatus(200)->json('level_snapshots.0');
+        $this->assertSame('2026-09-19', $listed['taken_on'], 'the screen shows a plain date, not a timestamp');
+
         $september = KeetaRevenueService::forMonth($this->contract->fresh(), 2026, 9);
         $this->assertSame('levels', $september['basis']['incentive_source']);
         $this->assertSame('2026-09-19', $september['basis']['levels_taken_on']);
@@ -388,6 +392,37 @@ class KeetaSettlementTest extends TestCase
         KeetaRevenueService::forget();
         $this->assertNull($this->contract->fresh()->keeta_settlement_from);
         $this->assertEqualsWithDelta(500.0, ContractRevenueService::forContractMonth($this->contract->fresh(), $this->monthLogs('2026-08'))['revenue'], 0.0005);
+    }
+
+    public function test_a_new_contract_can_be_created_billed_by_keetas_statement(): void
+    {
+        // What the form sends for a new Keeta contract: the vehicle type the drivers work on with no
+        // client price at all, the driver's pay, and the month Keeta's statement takes over.
+        $payload = [
+            'client_id' => Client::where('name', 'Keeta')->value('id'),
+            'contract_number' => 'CON-KEETA-2',
+            'name' => 'كيتا ٢',
+            'status' => 'active',
+            'currency' => 'KWD',
+            'start_date' => '2026-10-01',
+            'default_required_work_days' => 26,
+            'default_absence_divisor' => 26,
+            'client_pricing_rules' => ['2' => ['vehicle_type_id' => '2', 'payment_method' => 'fixed', 'fixed_amount' => '']],
+            'driver_pricing_rules' => ['2' => ['vehicle_type_id' => '2', 'payment_method' => 'fixed', 'fixed_amount' => 300, 'fixed_target' => 400]],
+            'is_validity_enabled' => false,
+            'keeta_settlement_from' => '2026-10-01',
+        ];
+
+        $this->actingAs($this->admin)->postJson('/api/contracts', $payload)->assertStatus(201);
+
+        $contract = Contract::where('contract_number', 'CON-KEETA-2')->firstOrFail();
+        $this->assertSame('2026-10-01', $contract->keeta_settlement_from->toDateString());
+        $this->assertSame('fixed', $contract->client_payment_method, 'inferred from the vehicle type; the form never sends it');
+
+        // Without the Keeta tick the same contract is refused: its client price is empty.
+        $payload['contract_number'] = 'CON-KEETA-3';
+        unset($payload['keeta_settlement_from']);
+        $this->actingAs($this->admin)->postJson('/api/contracts', $payload)->assertStatus(422);
     }
 
     public function test_money_and_months_are_read_in_every_shape_keeta_writes_them(): void
