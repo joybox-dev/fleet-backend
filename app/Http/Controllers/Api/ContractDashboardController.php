@@ -10,6 +10,7 @@ use App\Models\VehicleAssignment;
 use App\Services\ContractProfitabilityService;
 use App\Services\ContractRevenueService;
 use App\Services\ContractScopeService;
+use App\Services\KeetaDriverPayService;
 use App\Services\KeetaRevenueService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -193,6 +194,8 @@ class ContractDashboardController extends Controller
                 'settlement_from' => $contract->keeta_settlement_from ? Carbon::parse($contract->keeta_settlement_from)->format('Y-m') : null,
                 'applies' => $keetaMonth !== null,
                 'estimated' => $keetaMonth['estimated'] ?? null,
+                // Drivers paid by their Keeta level this month (KeetaDriverPayService).
+                'pays_by_level' => KeetaDriverPayService::rulesFor($contract, $year, $month) !== null,
             ],
             'assignments' => $activeAssignments,
             // employee_id => [vehicle type ids held during this month]

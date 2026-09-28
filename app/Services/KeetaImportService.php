@@ -147,6 +147,13 @@ class KeetaImportService
         $invoice = DB::transaction(function () use ($contract, $parsed, $partner, $payload, $user) {
             $replaced = KeetaInvoice::withoutGlobalScopes()->where('contract_id', $contract->id)
                 ->where('year', $parsed['year'])->where('month', $parsed['month'])->get();
+            // Invalid days the owner set by hand survive the statement being imported again.
+            $invalidDaysByCourier = [];
+            foreach ($replaced as $old) {
+                foreach ($old->riders()->whereNotNull('invalid_days_override')->get(['courier_id', 'invalid_days_override']) as $kept) {
+                    $invalidDaysByCourier[(string) $kept->courier_id] = $kept->invalid_days_override;
+                }
+            }
             foreach ($replaced as $old) {
                 $old->riders()->delete();
                 $old->lines()->delete();
@@ -189,6 +196,7 @@ class KeetaImportService
                     'is_valid' => $rider['is_valid'],
                     'reason' => $rider['reason'],
                     'valid_days' => $rider['valid_days'],
+                    'invalid_days_override' => $invalidDaysByCourier[(string) $rider['courier_id']] ?? null,
                     'daily_hours' => $rider['daily_hours'],
                     'peak_hours' => $rider['peak_hours'],
                     'orders' => $rider['orders'],

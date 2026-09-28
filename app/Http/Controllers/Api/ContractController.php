@@ -179,9 +179,10 @@ class ContractController extends Controller
             'capacity_pricing_rules' => 'nullable|array',
             // «كشف كيتا الشهري»: from this month the client is billed by Keeta's own statement.
             'keeta_settlement_from' => 'nullable|date',
-        ]);
+        ] + self::KEETA_PAY_RULES);
         $keetaFrom = $this->keetaMonth($validated);
-        unset($validated['keeta_settlement_from']);
+        $keetaPay = $this->keetaPay($validated);
+        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules']);
 
         if (empty($validated['client_name'])) {
             $client = Client::find($validated['client_id']);
@@ -201,6 +202,9 @@ class ContractController extends Controller
         $contract = Contract::create($validated);
         if ($keetaFrom !== false) {
             $contract->forceFill(['keeta_settlement_from' => $keetaFrom])->saveQuietly();
+        }
+        if ($keetaPay !== false) {
+            $contract->forceFill(['keeta_pay_rules' => $keetaPay])->saveQuietly();
         }
 
         return response()->json($contract->load('client:id,name'), 201);
@@ -321,9 +325,10 @@ class ContractController extends Controller
             'capacity_pricing_rules' => 'nullable|array',
             // «كشف كيتا الشهري» from this month; null returns every month to the price list below.
             'keeta_settlement_from' => 'nullable|date',
-        ]);
+        ] + self::KEETA_PAY_RULES);
         $keetaFrom = $this->keetaMonth($validated);
-        unset($validated['keeta_settlement_from']);
+        $keetaPay = $this->keetaPay($validated);
+        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules']);
 
         if (isset($validated['rate_per_order']) && ! isset($validated['default_order_commission'])) {
             $validated['default_order_commission'] = $validated['rate_per_order'];
@@ -345,6 +350,11 @@ class ContractController extends Controller
         $contract->update($validated);
         if ($keetaFrom !== false) {
             $contract->forceFill(['keeta_settlement_from' => $keetaFrom])->saveQuietly();
+        }
+        if ($keetaPay !== false) {
+            $contract->forceFill(['keeta_pay_rules' => $keetaPay])->saveQuietly();
+        }
+        if ($keetaFrom !== false || $keetaPay !== false) {
             KeetaRevenueService::forget();
         }
 
@@ -359,6 +369,73 @@ class ContractController extends Controller
      *
      * @param  array<string, mixed>  $validated
      */
+    /**
+     * Keeta drivers paid by their Keeta level (KeetaDriverPayService); null pays them the ordinary way.
+     *
+     * @var array<string, string>
+     */
+    private const KEETA_PAY_RULES = [
+        'keeta_pay_rules' => 'nullable|array',
+        'keeta_pay_rules.enabled' => 'boolean',
+        'keeta_pay_rules.tier_salaries' => 'array',
+        'keeta_pay_rules.tier_salaries.*' => 'numeric|min:0',
+        'keeta_pay_rules.target' => 'integer|min:0',
+        'keeta_pay_rules.surplus_rate' => 'numeric|min:0',
+        'keeta_pay_rules.deficit_rate' => 'numeric|min:0',
+        'keeta_pay_rules.min_orders' => 'integer|min:0',
+        'keeta_pay_rules.max_invalid_days' => 'numeric|min:0|max:31',
+        'keeta_pay_rules.per_order_rate' => 'numeric|min:0',
+        'keeta_pay_rules.achievements' => 'array',
+        'keeta_pay_rules.achievements.*.orders' => 'integer|min:1',
+        'keeta_pay_rules.achievements.*.amount' => 'numeric|min:0',
+        'keeta_pay_rules.tier_incentives' => 'array',
+        'keeta_pay_rules.tier_incentives.*' => 'numeric|min:0',
+    ];
+
+    /**
+     * The Keeta pay rules to store, null to pay the drivers the ordinary way again, or false when
+     * the request did not mention them.
+     *
+     * @param  array<string, mixed>  $validated
+     * @return array<string, mixed>|false|null
+     */
+    private function keetaPay(array $validated): array|false|null
+    {
+        if (! array_key_exists('keeta_pay_rules', $validated)) {
+            return false;
+        }
+        $rules = $validated['keeta_pay_rules'];
+        if (! is_array($rules) || empty($rules['enabled'])) {
+            return null;
+        }
+
+        $number = fn ($v) => round((float) $v, 3);
+        $stored = ['enabled' => true];
+        foreach (['target', 'min_orders'] as $key) {
+            if (isset($rules[$key])) {
+                $stored[$key] = (int) $rules[$key];
+            }
+        }
+        foreach (['surplus_rate', 'deficit_rate', 'per_order_rate', 'max_invalid_days'] as $key) {
+            if (isset($rules[$key])) {
+                $stored[$key] = $number($rules[$key]);
+            }
+        }
+        foreach (['tier_salaries', 'tier_incentives'] as $key) {
+            if (isset($rules[$key]) && is_array($rules[$key])) {
+                $stored[$key] = array_map($number, array_filter($rules[$key], fn ($v) => $v !== null && $v !== ''));
+            }
+        }
+        if (isset($rules['achievements']) && is_array($rules['achievements'])) {
+            $stored['achievements'] = collect($rules['achievements'])
+                ->filter(fn ($step) => ! empty($step['orders']))
+                ->map(fn ($step) => ['orders' => (int) $step['orders'], 'amount' => $number($step['amount'] ?? 0)])
+                ->sortBy('orders')->values()->all();
+        }
+
+        return $stored;
+    }
+
     private function keetaMonth(array $validated): string|false|null
     {
         if (! array_key_exists('keeta_settlement_from', $validated)) {

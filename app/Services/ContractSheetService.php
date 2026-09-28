@@ -210,7 +210,10 @@ class ContractSheetService
 
             // Determine driver payment method
             $driverPaymentMethod = null;
-            if ($activeOverride && $activeOverride->override_type) {
+            if (! empty($calcResult['payment_method'])) {
+                // The month was priced by a method the contract names for the month itself (Keeta's level).
+                $driverPaymentMethod = $calcResult['payment_method'];
+            } elseif ($activeOverride && $activeOverride->override_type) {
                 $driverPaymentMethod = $activeOverride->override_type;
             } elseif ($vtId && is_array($contract->driver_pricing_rules) && isset($contract->driver_pricing_rules[$vtId]['payment_method'])) {
                 $driverPaymentMethod = $contract->driver_pricing_rules[$vtId]['payment_method'];
@@ -425,6 +428,22 @@ class ContractSheetService
             ->map(fn ($vid) => $vehicleTypeById[$vid] ?? null)
             ->filter()->unique()->values();
         $vtId = $vtIds->count() === 1 ? (int) $vtIds->first() : null;
+
+        // A Keeta contract that pays its drivers by their Keeta level: from the month it is settled
+        // by Keeta's statement, the driver's month is one figure read from that statement — never a
+        // sum of vehicle-type stretches. A personal override on any day of the month still wins.
+        $monthStart = Carbon::parse($effStart);
+        $keetaRules = KeetaDriverPayService::rulesFor($contract, $monthStart->year, $monthStart->month);
+        if ($keetaRules
+            && $overrideForDate($effStart) === null
+            && ! $empLogs->contains(fn ($l) => $overrideForDate(substr((string) $l->log_date, 0, 10)) !== null)) {
+            return [
+                'calc' => KeetaDriverPayService::forDriverMonth($employee, $contract, $monthStart->year, $monthStart->month, $empLogs, $keetaRules),
+                'active_override' => null,
+                'vehicle_type_ids' => $vtIds->map(fn ($v) => (int) $v)->all(),
+                'contract_default_gross' => null,
+            ];
+        }
 
         $segments = [];
         foreach ($empLogs as $segLog) {

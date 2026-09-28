@@ -13,7 +13,7 @@ class KeetaInvoiceRider extends Model
 {
     protected $fillable = [
         'keeta_invoice_id', 'courier_id', 'employee_id', 'name', 'phone', 'is_valid', 'reason',
-        'valid_days', 'daily_hours', 'peak_hours', 'orders', 'order_pricing', 'experience_incentive',
+        'valid_days', 'invalid_days_override', 'daily_hours', 'peak_hours', 'orders', 'order_pricing', 'experience_incentive',
         'capacity_incentive', 'other_income', 'tips', 'deduction', 'food_compensation', 'other_adjustment',
         'withholding', 'total_payable',
     ];
@@ -21,6 +21,7 @@ class KeetaInvoiceRider extends Model
     protected $casts = [
         'is_valid' => 'boolean',
         'valid_days' => 'decimal:2',
+        'invalid_days_override' => 'decimal:2',
         'daily_hours' => 'decimal:2',
         'peak_hours' => 'decimal:2',
         'orders' => 'integer',

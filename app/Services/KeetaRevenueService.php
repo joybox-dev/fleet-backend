@@ -40,6 +40,8 @@ class KeetaRevenueService
     public static function forget(): void
     {
         self::$memo = [];
+        // Driver pay reads the same statements.
+        KeetaDriverPayService::forget();
     }
 
     public static function appliesTo(Contract $contract, int $year, int $month): bool

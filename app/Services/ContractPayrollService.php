@@ -63,6 +63,7 @@ class ContractPayrollService
             'zones_tiers' => 'شرائح الفئات (Zones + Tiers)',
             'tiered_zones' => 'فئات بشريحة الشهر (Monthly Tier × Zones)',
             'tiers' => 'شرائح (Tiers)',
+            'keeta_tiers' => 'حسب مستوى كيتا',
             default => (string) $method,
         };
     }

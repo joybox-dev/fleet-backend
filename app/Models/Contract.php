@@ -72,6 +72,7 @@ class Contract extends Model
 
         // Set by the Keeta statement import only, never by the contract form.
         'keeta_settlement_from' => 'date',
+        'keeta_pay_rules' => 'array',
     ];
 
     protected static function booted(): void
