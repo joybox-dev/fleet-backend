@@ -92,17 +92,17 @@ class ContractDashboardController extends Controller
         $keetaMonth = KeetaRevenueService::appliesTo($contract, $year, $month)
             ? KeetaRevenueService::forMonth($contract, $year, $month)
             : null;
-        $logsByDriver = $dailyLogs->groupBy('employee_id');
-        $drivers = array_map(function (array $row) use ($contract, $logsByDriver, $keetaMonth) {
-            if ($keetaMonth !== null) {
-                $row['client_revenue'] = round((float) ($keetaMonth['drivers'][(int) $row['employee_id']]['revenue'] ?? 0.0), 3);
-
-                return $row;
-            }
-            $own = $logsByDriver->get($row['employee_id'], collect());
-            $row['client_revenue'] = $own->isEmpty()
-                ? 0.0
-                : round((float) ContractRevenueService::forContractMonth($contract, $own)['revenue'], 3);
+        // Any other month is the contract's own bill divided among its drivers, so the rows add up
+        // to it. Pricing each driver's logs alone re-tiered him on his own volume — «مركز سلطان»'s
+        // rows came to 3,278.500 in 8/2026 against 2,040.400 billed — and gave every row a flat fee whole.
+        $split = $keetaMonth === null ? ContractRevenueService::forContractDrivers($contract, $dailyLogs) : null;
+        $drivers = array_map(function (array $row) use ($keetaMonth, $split) {
+            $share = ($keetaMonth ?? $split)['drivers'][(int) $row['employee_id']] ?? [];
+            $row['client_revenue'] = round((float) ($share['revenue'] ?? 0.0), 3);
+            // His orders the client is billed nothing for: no zone on a zone-priced contract, a type
+            // with no client price. `unpriced_orders` beside it is his PAY's, which a tier-paid driver
+            // prices without any zone — it read 0 for a driver with 150 orders billed at nothing.
+            $row['client_unpriced_orders'] = (int) ($share['unpriced_orders'] ?? 0);
 
             return $row;
         }, $sheet['drivers'] ?? []);
