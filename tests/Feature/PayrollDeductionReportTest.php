@@ -284,6 +284,56 @@ class PayrollDeductionReportTest extends TestCase
         $this->assertSame(8.0, (float) $bridge['driver_expense']['sheet_column_on_sheet']);
     }
 
+    /**
+     * The owner's ruling: the cash a driver collected and has not handed over is SHOWN beside the
+     * payroll, for now — never taken from it. It is the driver's debt whatever its month, so it is
+     * read as it stands the day the report is pulled.
+     */
+    public function test_the_cash_drivers_still_owe_is_shown_and_never_deducted(): void
+    {
+        $before = $this->getJson('/api/payroll/consolidated/2026/4')->assertOk()->json();
+
+        // «On»: 30 collected on April 3, 10 of it handed over; 5 more collected on May 2.
+        DailyLog::where('employee_id', $this->on->id)->where('log_date', '2026-04-03')
+            ->update(['cash_collected' => 30, 'cash_settled' => 10, 'cash_pending' => 20]);
+        // A day whose cash was handed over in full is no debt.
+        DailyLog::where('employee_id', $this->on->id)->where('log_date', '2026-04-04')
+            ->update(['cash_collected' => 12, 'cash_settled' => 12, 'cash_pending' => 0]);
+        foreach ([[$this->on, '2026-05-02', 5], [$this->off, '2026-03-15', 7]] as [$driver, $date, $cash]) {
+            DailyLog::create([
+                'employee_id' => $driver->id, 'contract_id' => $this->contract->id, 'vehicle_id' => $this->vehicle->id,
+                'log_date' => $date, 'driver_status' => 'working', 'orders_count' => 1,
+                'cash_collected' => $cash, 'cash_settled' => 0, 'cash_pending' => $cash,
+                'company_id' => $this->company->id, 'created_by' => $this->admin->id,
+            ]);
+        }
+
+        $cash = $this->getJson('/api/payroll/consolidated/2026/4/deductions-report')->assertOk()->json('pending_cash');
+
+        $this->assertSame('2026-05-03', $cash['as_of']);
+        $this->assertSame(32.0, (float) $cash['total']);
+        $this->assertSame(2, $cash['drivers_count']);
+        $this->assertCount(3, $cash['lines'], 'the day handed over in full is not a debt');
+
+        $on = $cash['by_driver'][$this->on->id];
+        $this->assertTrue($on['on_sheet']);
+        $this->assertSame([25.0, 20.0, 0.0, 5.0, 2], [(float) $on['total'], (float) $on['in_month'], (float) $on['before'], (float) $on['after'], $on['days']]);
+        $off = $cash['by_driver'][$this->off->id];
+        $this->assertFalse($off['on_sheet']);
+        $this->assertSame(7.0, (float) $off['before']);
+
+        $line = collect($cash['lines'])->firstWhere('date', '2026-04-03');
+        $this->assertSame(['Report Contract', 'R-1', 30.0, 10.0, 20.0, 'EMP-ON'], [
+            $line['contract_name'], $line['plate_number'], (float) $line['collected'], (float) $line['settled'], (float) $line['pending'], $line['employee_number'],
+        ]);
+
+        // Nothing of it reaches the sheet: its deductions and nets are what they were.
+        $after = $this->getJson('/api/payroll/consolidated/2026/4')->assertOk()->json();
+        $net = fn (array $sheet) => (float) collect($sheet['drivers'])->firstWhere('employee_id', $this->on->id)['final_net_payout'];
+        $this->assertSame((float) $before['summary']['total_pending_deductions'], (float) $after['summary']['total_pending_deductions']);
+        $this->assertSame($net($before), $net($after));
+    }
+
     public function test_whoever_may_read_the_sheet_may_read_the_report_and_nobody_else(): void
     {
         Role::create(['name' => 'قارئ رواتب', 'company_id' => $this->company->id, 'allowed_modules' => ['contract_payroll.view']]);

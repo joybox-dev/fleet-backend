@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\CustodyItem;
+use App\Models\DailyLog;
 use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\MaintenanceRecord;
@@ -59,7 +60,7 @@ class PayrollDeductionReportService
     public const STATUS_PENDING = 'pending';
 
     /**
-     * @return array{period: array<string, mixed>, is_approved: bool, run: ?array<string, mixed>, sheet_lines: array<int, array<string, mixed>>, items: array<int, array<string, mixed>>, advances: array<int, array<string, mixed>>, reconciliation: array<int, array<string, mixed>>, advances_summary: array<string, mixed>}
+     * @return array{period: array<string, mixed>, is_approved: bool, run: ?array<string, mixed>, sheet_lines: array<int, array<string, mixed>>, items: array<int, array<string, mixed>>, advances: array<int, array<string, mixed>>, reconciliation: array<int, array<string, mixed>>, advances_summary: array<string, mixed>, pending_cash: array<string, mixed>}
      */
     public static function forMonth(int $companyId, int $year, int $month): array
     {
@@ -99,10 +100,13 @@ class PayrollDeductionReportService
             ->orderBy('advance_date')->orderBy('id')
             ->get();
 
+        $cashLogs = self::pendingCashLogs($companyId);
+
         [$names, $plates] = self::lookups(
             $companyId,
-            $records->pluck('employee_id')->merge($advances->pluck('employee_id'))->merge(array_keys($sheetDriverIds))->filter()->unique()->all(),
-            $records->pluck('vehicle_id')->filter()->unique()->all()
+            $records->pluck('employee_id')->merge($advances->pluck('employee_id'))->merge(array_keys($sheetDriverIds))
+                ->merge($cashLogs->pluck('employee_id'))->filter()->unique()->all(),
+            $records->pluck('vehicle_id')->merge($cashLogs->pluck('vehicle_id'))->filter()->unique()->all()
         );
 
         $items = $records->map(fn (array $record) => self::item($record, $context, $names, $plates))
@@ -138,6 +142,79 @@ class PayrollDeductionReportService
                 'remaining_after' => round($advanceRows->where('on_sheet_amount', '>', 0)->sum('remaining_after'), 3),
                 'sheet_column' => round((float) ($sheetColumns[ConsolidatedPayrollDeduction::SOURCE_ADVANCE] ?? 0), 3),
             ],
+            'pending_cash' => self::pendingCash($cashLogs, $context, $names, $plates),
+        ];
+    }
+
+    /**
+     * Every day whose cash a driver collected from the client's customers and has not yet handed to
+     * the accountant, whatever its month — the debt he carries on the day the report is read.
+     *
+     * @return Collection<int, object>
+     */
+    private static function pendingCashLogs(int $companyId): Collection
+    {
+        return DailyLog::withoutGlobalScopes()->whereNull('deleted_at')
+            ->where('company_id', $companyId)
+            ->where('cash_pending', '>', 0)
+            ->with(['contract' => fn ($q) => $q->withoutGlobalScopes()->select('id', 'name')])
+            ->orderBy('log_date')->orderBy('id')
+            ->get(['id', 'employee_id', 'contract_id', 'vehicle_id', 'log_date', 'cash_collected', 'cash_settled', 'cash_pending']);
+    }
+
+    /**
+     * The cash drivers still owe, shown beside the payroll and never taken from it: the owner's
+     * ruling is that it is shown for now and settled at the cash counter as before. It belongs to the
+     * driver, not to a vehicle (the cash rulings), so the totals are per driver; each line keeps the
+     * contract and the day it came from.
+     *
+     * @param  Collection<int, object>  $logs
+     * @param  array<string, mixed>  $context
+     * @param  Collection<int, Employee>  $names
+     * @param  Collection<int, string>  $plates
+     * @return array{as_of: string, total: float, drivers_count: int, by_driver: array<int, array<string, mixed>>, lines: array<int, array<string, mixed>>}
+     */
+    private static function pendingCash(Collection $logs, array $context, Collection $names, Collection $plates): array
+    {
+        $lines = $logs->map(function ($log) use ($context, $names, $plates) {
+            $date = Carbon::parse($log->log_date)->toDateString();
+            $employee = $names->get($log->employee_id);
+
+            return [
+                'log_id' => (int) $log->id,
+                'employee_id' => (int) $log->employee_id,
+                'employee_name' => $employee?->name,
+                'employee_number' => $employee?->employee_number,
+                'on_sheet' => isset($context['sheet_driver_ids'][(int) $log->employee_id]),
+                'contract_id' => $log->contract_id ? (int) $log->contract_id : null,
+                'contract_name' => $log->contract?->name,
+                'date' => $date,
+                'plate_number' => $log->vehicle_id ? $plates->get($log->vehicle_id) : null,
+                'collected' => round((float) $log->cash_collected, 3),
+                'settled' => round((float) $log->cash_settled, 3),
+                'pending' => round((float) $log->cash_pending, 3),
+                'period' => $date < $context['start'] ? 'before' : ($date > $context['end'] ? 'after' : 'in_month'),
+            ];
+        })->values();
+
+        $byDriver = $lines->groupBy('employee_id')->map(fn (Collection $rows) => [
+            'employee_id' => (int) $rows->first()['employee_id'],
+            'employee_name' => $rows->first()['employee_name'],
+            'on_sheet' => $rows->first()['on_sheet'],
+            'total' => round($rows->sum('pending'), 3),
+            'in_month' => round($rows->where('period', 'in_month')->sum('pending'), 3),
+            'before' => round($rows->where('period', 'before')->sum('pending'), 3),
+            'after' => round($rows->where('period', 'after')->sum('pending'), 3),
+            'days' => $rows->count(),
+            'oldest' => $rows->min('date'),
+        ]);
+
+        return [
+            'as_of' => now()->toDateString(),
+            'total' => round($lines->sum('pending'), 3),
+            'drivers_count' => $byDriver->count(),
+            'by_driver' => $byDriver->all(),
+            'lines' => $lines->all(),
         ];
     }
 
