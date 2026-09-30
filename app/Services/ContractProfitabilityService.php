@@ -93,15 +93,20 @@ class ContractProfitabilityService
 
             // Revenue follows the orders: a contract billed by bands is banded on its whole
             // month, so a vehicle's share of it is its share of the orders, not a re-pricing
-            // of its own logs.
-            $ordersByVehicle = $contractLogs->groupBy('vehicle_id')->map(fn ($l) => (int) $l->sum('orders_count'));
-            $contractOrders = max(1, (int) $ordersByVehicle->sum());
-            foreach ($ordersByVehicle as $vehicleId => $orders) {
+            // of its own logs. A type the client bands car by car is the exception — there each
+            // car has a bill of its own, and only the rest of the revenue is shared by orders.
+            $bills = ContractRevenueService::forContractVehicles($contract, $contractLogs);
+            foreach ($bills['billed'] as $vehicleId => $amount) {
+                $revenueByVehicle[$vehicleId] = ($revenueByVehicle[$vehicleId] ?? 0.0) + $amount;
+            }
+            $sharedRevenue = $row['revenue'] - $bills['revenue'];
+            $sharedOrders = max(1, (int) array_sum($bills['shared_orders']));
+            foreach ($bills['shared_orders'] as $vehicleId => $orders) {
                 if (! $vehicleId) {
                     continue;
                 }
                 $revenueByVehicle[$vehicleId] = ($revenueByVehicle[$vehicleId] ?? 0.0)
-                    + $row['revenue'] * ($orders / $contractOrders);
+                    + $sharedRevenue * ($orders / $sharedOrders);
             }
 
             // A driver's pay follows the vehicle he earned it on; a fixed salary with no orders

@@ -62,8 +62,10 @@ class ContractRevenueService
             $orders += $count;
 
             $vtId = (string) ($log->vehicle?->vehicle_type_id ?? $contract->vehicle_type_id ?? '');
-            $byType[$vtId] ??= ['orders' => 0, 'zones' => []];
+            $byType[$vtId] ??= ['orders' => 0, 'zones' => [], 'vehicles' => []];
             $byType[$vtId]['orders'] += $count;
+            $vehicle = self::vehicleKey($log);
+            $byType[$vtId]['vehicles'][$vehicle] = ($byType[$vtId]['vehicles'][$vehicle] ?? 0) + $count;
 
             foreach (self::zoneCounts($log, $count) as $zone => $zoneCount) {
                 $byType[$vtId]['zones'][$zone] = ($byType[$vtId]['zones'][$zone] ?? 0) + $zoneCount;
@@ -99,6 +101,15 @@ class ContractRevenueService
                     'قاعدة تسعير العميل لا تذكر طريقة الاحتساب — لا يمكن تسعير طلبات هذا النوع',
                     $bucket['orders'], 0.0, 0.0, true
                 );
+
+                continue;
+            }
+
+            if ($method === 'tiers' && self::tiersPerVehicle($rule)) {
+                $banded = self::priceByTierPerVehicle($rule, $bucket['vehicles']);
+                $revenue += $banded['amount'];
+                $unpriced += $banded['unpriced'];
+                array_push($details, ...$banded['lines']);
 
                 continue;
             }
@@ -197,13 +208,16 @@ class ContractRevenueService
             $drivers[$empId]['orders'] += $count;
             $drivers[$empId]['days']++;
 
-            $byType[$vtId] ??= ['orders' => 0, 'days' => 0, 'drivers' => []];
+            $byType[$vtId] ??= ['orders' => 0, 'days' => 0, 'drivers' => [], 'vehicles' => []];
             $byType[$vtId]['orders'] += $count;
             $byType[$vtId]['days']++;
-            $byType[$vtId]['drivers'][$empId] ??= ['orders' => 0, 'days' => 0, 'zones' => []];
+            $byType[$vtId]['drivers'][$empId] ??= ['orders' => 0, 'days' => 0, 'zones' => [], 'vehicles' => []];
             $byType[$vtId]['drivers'][$empId]['orders'] += $count;
             $byType[$vtId]['drivers'][$empId]['days']++;
             if ($count > 0) {
+                $vehicle = self::vehicleKey($log);
+                $byType[$vtId]['vehicles'][$vehicle] = ($byType[$vtId]['vehicles'][$vehicle] ?? 0) + $count;
+                $byType[$vtId]['drivers'][$empId]['vehicles'][$vehicle] = ($byType[$vtId]['drivers'][$empId]['vehicles'][$vehicle] ?? 0) + $count;
                 foreach (self::zoneCounts($log, $count) as $zone => $zoneCount) {
                     $byType[$vtId]['drivers'][$empId]['zones'][$zone] = ($byType[$vtId]['drivers'][$empId]['zones'][$zone] ?? 0) + $zoneCount;
                 }
@@ -230,6 +244,23 @@ class ContractRevenueService
             if (! is_array($rule) || ! in_array($method, ['tiers', 'fixed', 'hybrid', 'zones'], true)) {
                 foreach ($type['drivers'] as $empId => $share) {
                     $unpricedBy[$empId] = $share['orders'];
+                }
+            } elseif ($method === 'tiers' && self::tiersPerVehicle($rule)) {
+                // Each car is banded on its own month, so a driver's share is his orders on each
+                // car at that car's rate — two drivers sharing a car share its band.
+                $banded = self::priceByTierPerVehicle($rule, $type['vehicles']);
+                $typeAmount = $banded['amount'];
+                foreach ($type['drivers'] as $empId => $share) {
+                    $amounts[$empId] = 0.0;
+                    foreach ($share['vehicles'] as $vehicle => $vehicleOrders) {
+                        $rate = $banded['rates'][$vehicle] ?? 0.0;
+                        if ($rate <= 0.0) {
+                            $unpricedBy[$empId] = ($unpricedBy[$empId] ?? 0) + $vehicleOrders;
+
+                            continue;
+                        }
+                        $amounts[$empId] += $vehicleOrders * $rate;
+                    }
                 }
             } elseif ($method === 'tiers') {
                 [$typeAmount] = self::priceByTier($rule, $type['orders']);
@@ -301,6 +332,54 @@ class ContractRevenueService
             ],
             'drivers' => $drivers,
         ];
+    }
+
+    /**
+     * The month per vehicle, for the types the client bands car by car: what each car billed on
+     * its own volume. Every other type bills the contract as a whole, so its orders are handed
+     * back for the caller to share that revenue by — a car has no bill of its own there.
+     *
+     * @param  iterable  $logs  daily logs for one contract-month, with `vehicle` loaded
+     * @return array{billed: array<int, float>, revenue: float, shared_orders: array<int, int>}
+     */
+    public static function forContractVehicles(Contract $contract, iterable $logs): array
+    {
+        $logs = collect($logs);
+        $settledByKeeta = $contract->keeta_settlement_from && KeetaRevenueService::monthOfLogs($contract, $logs);
+        $rules = self::rules($contract);
+
+        $perVehicle = [];
+        $sharedOrders = [];
+        foreach ($logs as $log) {
+            $count = max(0, (int) $log->orders_count);
+            $vtId = (string) ($log->vehicle?->vehicle_type_id ?? $contract->vehicle_type_id ?? '');
+            $rule = $rules[$vtId] ?? null;
+
+            if (! $settledByKeeta && is_array($rule) && ($rule['payment_method'] ?? null) === 'tiers' && self::tiersPerVehicle($rule)) {
+                $vehicle = self::vehicleKey($log);
+                $perVehicle[$vtId][$vehicle] = ($perVehicle[$vtId][$vehicle] ?? 0) + $count;
+
+                continue;
+            }
+
+            $vehicleId = (int) $log->vehicle_id;
+            $sharedOrders[$vehicleId] = ($sharedOrders[$vehicleId] ?? 0) + $count;
+        }
+
+        $billed = [];
+        $revenue = 0.0;
+        foreach ($perVehicle as $vtId => $vehicles) {
+            $banded = self::priceByTierPerVehicle($rules[$vtId], $vehicles);
+            $revenue += $banded['amount'];
+            foreach ($vehicles as $vehicle => $orders) {
+                if (str_starts_with((string) $vehicle, 'v')) {
+                    $vehicleId = (int) substr((string) $vehicle, 1);
+                    $billed[$vehicleId] = round(($billed[$vehicleId] ?? 0.0) + $orders * ($banded['rates'][$vehicle] ?? 0.0), 3);
+                }
+            }
+        }
+
+        return ['billed' => $billed, 'revenue' => round($revenue, 3), 'shared_orders' => $sharedOrders];
     }
 
     /** Marks orders carrying no zone at all, so they read differently from a zone with no price. */
@@ -438,7 +517,76 @@ class ContractRevenueService
      */
     private static function priceByTier(array $rule, int $orders): array
     {
-        foreach (($rule['tiers'] ?? []) as $tier) {
+        $band = self::bandOf($rule, $orders);
+        if ($band === null) {
+            return [0.0, self::line('لا تنطبق شريحة على حجم الشهر — لا ينطبق سعر للعميل', $orders, 0.0, 0.0, true)];
+        }
+
+        $amount = round($orders * $band['rate'], 3);
+
+        return [$amount, self::line("شريحة ({$band['label']})", $orders, $band['rate'], $amount, $band['rate'] <= 0.0)];
+    }
+
+    /**
+     * The same bands read car by car: each car's own month picks its band, and cars in one band
+     * are billed together as one line. A car no band covers is counted, not priced.
+     *
+     * @param  array<string, mixed>  $rule
+     * @param  array<string, int>  $vehicles  orders of the month by vehicleKey()
+     * @return array{amount: float, unpriced: int, lines: array<int, array<string, mixed>>, rates: array<string, float>}
+     */
+    private static function priceByTierPerVehicle(array $rule, array $vehicles): array
+    {
+        $bands = [];
+        $outside = ['orders' => 0, 'vehicles' => 0];
+        $rates = [];
+
+        foreach ($vehicles as $vehicle => $orders) {
+            if ($orders <= 0) {
+                continue;
+            }
+            $band = self::bandOf($rule, $orders);
+            if ($band === null) {
+                $outside['orders'] += $orders;
+                $outside['vehicles']++;
+                $rates[$vehicle] = 0.0;
+
+                continue;
+            }
+            $rates[$vehicle] = $band['rate'];
+            $bands[$band['position']] ??= $band + ['orders' => 0, 'vehicles' => 0];
+            $bands[$band['position']]['orders'] += $orders;
+            $bands[$band['position']]['vehicles']++;
+        }
+        ksort($bands);
+
+        $amount = 0.0;
+        $unpriced = $outside['orders'];
+        $lines = [];
+        foreach ($bands as $band) {
+            $bandAmount = round($band['orders'] * $band['rate'], 3);
+            $amount += $bandAmount;
+            if ($band['rate'] <= 0.0) {
+                $unpriced += $band['orders'];
+            }
+            $lines[] = self::line("شريحة ({$band['label']}) لكل سيارة — عدد السيارات {$band['vehicles']}", $band['orders'], $band['rate'], $bandAmount, $band['rate'] <= 0.0);
+        }
+        if ($outside['orders'] > 0) {
+            $lines[] = self::line("لا تنطبق شريحة على طلبات السيارة (عدد السيارات {$outside['vehicles']}) — لا ينطبق سعر للعميل", $outside['orders'], 0.0, 0.0, true);
+        }
+
+        return ['amount' => round($amount, 3), 'unpriced' => $unpriced, 'lines' => $lines, 'rates' => $rates];
+    }
+
+    /**
+     * First band that contains the volume wins; a missing max means no upper limit.
+     *
+     * @param  array<string, mixed>  $rule
+     * @return array{position: int, label: string, rate: float}|null
+     */
+    private static function bandOf(array $rule, int $orders): ?array
+    {
+        foreach (array_values($rule['tiers'] ?? []) as $position => $tier) {
             if (! is_array($tier)) {
                 continue;
             }
@@ -446,14 +594,32 @@ class ContractRevenueService
             $max = ($tier['max'] ?? null) !== null && $tier['max'] !== '' ? (int) $tier['max'] : PHP_INT_MAX;
 
             if ($orders >= $min && $orders <= $max) {
-                $rate = (float) ($tier['price'] ?? 0);
-                $amount = round($orders * $rate, 3);
-
-                return [$amount, self::line("شريحة ({$min}–".($max === PHP_INT_MAX ? '∞' : $max).')', $orders, $rate, $amount, $rate <= 0.0)];
+                return [
+                    'position' => $position,
+                    'label' => "{$min}–".($max === PHP_INT_MAX ? '∞' : $max),
+                    'rate' => (float) ($tier['price'] ?? 0),
+                ];
             }
         }
 
-        return [0.0, self::line('لا تنطبق شريحة على حجم الشهر — لا ينطبق سعر للعميل', $orders, 0.0, 0.0, true)];
+        return null;
+    }
+
+    /**
+     * Whether the client bands each car on its own month instead of the contract's whole volume.
+     * Off unless the rule says so: the whole volume is how every contract was priced before.
+     *
+     * @param  array<string, mixed>  $rule
+     */
+    private static function tiersPerVehicle(array $rule): bool
+    {
+        return filter_var($rule['tiers_per_vehicle'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /** The car a log's orders are banded under; a log with no vehicle is banded with its driver's other such days. */
+    private static function vehicleKey(object $log): string
+    {
+        return $log->vehicle_id ? 'v'.(int) $log->vehicle_id : 'e'.(int) $log->employee_id;
     }
 
     /**
