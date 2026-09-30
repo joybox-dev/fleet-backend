@@ -32,7 +32,7 @@ class DailyLogController extends Controller
         $allowedIds = ContractScopeService::getAllocatedContractIds();
         $perPage = min(max($request->integer('per_page', 50), 5), 100);
 
-        $logs = DailyLog::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'contract:id,name,payment_type'])
+        $filtered = DailyLog::query()
             ->when($allowedIds !== null, fn ($q) => $q->whereIn('contract_id', $allowedIds))
             ->when($request->employee_id, fn ($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn ($q) => $q->where('vehicle_id', $request->vehicle_id))
@@ -46,12 +46,28 @@ class DailyLogController extends Controller
                         ->orWhereHas('vehicle', fn ($vl) => $vl->where('plate_number', 'like', "%{$search}%"))
                         ->orWhereHas('contract', fn ($cl) => $cl->where('name', 'like', "%{$search}%"));
                 });
-            })
+            });
+
+        // The footer of the list: every log the filters match, not the page on screen.
+        $sums = (clone $filtered)
+            ->selectRaw('COUNT(*) as logs, COALESCE(SUM(orders_count), 0) as orders, COALESCE(SUM(online_hours), 0) as online_hours')
+            ->selectRaw('COALESCE(SUM(cash_collected), 0) as cash_collected, COALESCE(SUM(cash_pending), 0) as cash_pending')
+            ->toBase()
+            ->first();
+
+        $logs = $filtered
+            ->with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'contract:id,name,payment_type'])
             ->orderByDesc('log_date')
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        return response()->json($logs);
+        return response()->json($logs->toArray() + ['totals' => [
+            'logs' => (int) $sums->logs,
+            'orders' => (int) $sums->orders,
+            'online_hours' => round((float) $sums->online_hours, 2),
+            'cash_collected' => round((float) $sums->cash_collected, 3),
+            'cash_pending' => round((float) $sums->cash_pending, 3),
+        ]]);
     }
 
     /**
