@@ -35,6 +35,7 @@ use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalaryAdvanceController;
 use App\Http\Controllers\Api\SettingsController;
+use App\Http\Controllers\Api\StatementController;
 use App\Http\Controllers\Api\SuperAdminCompanyController;
 use App\Http\Controllers\Api\SupervisorAllocationController;
 use App\Http\Controllers\Api\UploadController;
@@ -412,6 +413,15 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('contract-revenue', [ReportController::class, 'contractRevenue']);
             Route::get('missing-docs', [ReportController::class, 'missingDocs']);
             Route::get('inventory', [ReportController::class, 'inventory']);
+        });
+
+        // Statements of account — each account behind the permission that guards its money.
+        Route::prefix('statements')->group(function () {
+            Route::get('parties', [StatementController::class, 'parties'])
+                ->middleware('permission:payroll.view,contract_payroll.view,op_advances.view,reports.view');
+            Route::get('pay/{employee}', [StatementController::class, 'pay'])->middleware('permission:payroll.view,contract_payroll.view');
+            Route::get('custody/{employee}', [StatementController::class, 'custody'])->middleware('permission:op_advances.view');
+            Route::get('client/{client}', [StatementController::class, 'client'])->middleware('permission:reports.view');
         });
 
         // Settings
