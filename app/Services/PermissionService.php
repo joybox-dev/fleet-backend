@@ -55,6 +55,7 @@ class PermissionService
         'contract_payroll.view', 'contract_payroll.create', 'contract_payroll.edit', 'contract_payroll.approve', 'contract_payroll.delete',
         'salary_advances.view', 'salary_advances.create', 'salary_advances.edit',
         'op_advances.view',   'op_advances.create', 'op_advances.edit', 'op_advances.delete', 'op_advances.fund',
+        'company_expenses.view', 'company_expenses.create', 'company_expenses.edit', 'company_expenses.delete',
         'reports.view',
 
         // Admin
@@ -87,6 +88,7 @@ class PermissionService
         ['key' => 'contract_payroll', 'label' => 'كشوف رواتب العقود', 'icon' => '📋'],
         ['key' => 'salary_advances', 'label' => 'السلف الشخصية', 'icon' => '🏦'],
         ['key' => 'op_advances', 'label' => 'السلف التشغيلية', 'icon' => '🛠️'],
+        ['key' => 'company_expenses', 'label' => 'مصاريف الشركة (إدارية وعامة)', 'icon' => '🏢'],
         ['key' => 'reports', 'label' => 'التقارير والإحصائيات', 'icon' => '📈'],
         ['key' => 'settings', 'label' => 'إعدادات النظام', 'icon' => '⚙️'],
     ];
@@ -127,6 +129,7 @@ class PermissionService
             'contract_payroll.view' => true, 'contract_payroll.create' => true, 'contract_payroll.edit' => true, 'contract_payroll.approve' => true, 'contract_payroll.delete' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
             'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true, 'op_advances.fund' => true,
+            'company_expenses.view' => true, 'company_expenses.create' => true, 'company_expenses.edit' => true, 'company_expenses.delete' => true,
             'reports.view' => true,
             'settings.view' => true,   'settings.edit' => true,
         ],
@@ -150,6 +153,7 @@ class PermissionService
             'payroll.view' => true,    'payroll.create' => true,    'payroll.edit' => true,
             'contract_payroll.view' => true, 'contract_payroll.create' => true, 'contract_payroll.edit' => true, 'contract_payroll.approve' => true,
             'salary_advances.view' => true, 'salary_advances.create' => true,
+            'company_expenses.view' => true, 'company_expenses.create' => true, 'company_expenses.edit' => true,
             'reports.view' => true,
         ],
     ];

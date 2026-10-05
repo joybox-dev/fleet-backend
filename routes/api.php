@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\CashSettlementController;
 use App\Http\Controllers\Api\ClientCollectionController;
 use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CompanyController;
+use App\Http\Controllers\Api\CompanyExpenseController;
 use App\Http\Controllers\Api\ContractAssignmentController;
 use App\Http\Controllers\Api\ContractController;
 use App\Http\Controllers\Api\ContractDashboardController;
@@ -19,6 +20,7 @@ use App\Http\Controllers\Api\DriverOpeningBalanceController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
+use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\ExpenseLedgerController;
 use App\Http\Controllers\Api\GlobalSearchController;
 use App\Http\Controllers\Api\ImportController;
@@ -313,6 +315,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             ->middleware('permission:driver_expenses.view,employees.view,payroll.view');
         Route::apiResource('driver-expenses', DriverExpenseController::class)->except(['show']);
 
+        // The company's own spending against its expense tree (rent, residencies, bank fees…).
+        Route::apiResource('expense-categories', ExpenseCategoryController::class)->except(['show']);
+        Route::apiResource('company-expenses', CompanyExpenseController::class);
+
         // Read-only view over all six spending screens at once. Adds nothing and changes nothing:
         // each row links back to the screen that owns it.
         Route::get('expenses', [ExpenseLedgerController::class, 'index']);
@@ -399,6 +405,7 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('weekly-orders', [ReportController::class, 'weeklyOrders']);
             Route::get('fleet-status', [ReportController::class, 'fleetStatus']);
             Route::get('vehicle-profitability', [ReportController::class, 'vehicleProfitability']);
+            Route::get('profit-loss', [ReportController::class, 'profitLoss']);
             Route::get('driver-status', [ReportController::class, 'driverStatus']);
             Route::get('contract-profitability', [ReportController::class, 'contractProfitability']);
             Route::get('contribution', [ReportController::class, 'contribution']);

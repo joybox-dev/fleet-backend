@@ -14,6 +14,7 @@ use App\Services\ContractScopeService;
 use App\Services\ContributionReportService;
 use App\Services\DeductionsReportService;
 use App\Services\InventoryReportService;
+use App\Services\ProfitLossService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -224,6 +225,17 @@ class ReportController extends Controller
      * company bore on it. The old report summed `daily_logs.income_amount` — 0.000 on every live
      * log — and showed every vehicle as a loss.
      */
+    /**
+     * GET /api/reports/profit-loss — the company's month as an income statement (ProfitLossService).
+     */
+    public function profitLoss(Request $request): JsonResponse
+    {
+        $year = (int) $request->get('year', now()->year);
+        $month = (int) $request->get('month', now()->month);
+
+        return response()->json(ProfitLossService::forMonth($this->currentCompanyId(), $year, $month));
+    }
+
     public function vehicleProfitability(Request $request): JsonResponse
     {
         $year = (int) $request->get('year', now()->year);

@@ -16,6 +16,9 @@ class Vehicle extends Model
     protected $fillable = [
         'plate_number', 'make', 'model', 'year', 'color', 'vin', 'status',
         'ownership_type', 'rental_price', 'installment_price',
+        // Fixed costs: purchase and depreciation, and the period a rent or an instalment runs.
+        'purchase_price', 'purchase_date', 'useful_life_months', 'salvage_value', 'monthly_depreciation',
+        'rental_start_date', 'rental_end_date', 'installment_start_date', 'installment_end_date',
         'odometer_km', 'last_oil_change_km', 'oil_change_interval_km',
         'monthly_fuel_allowance',
         'insurance_expiry', 'comprehensive_insurance_expiry',
@@ -30,6 +33,15 @@ class Vehicle extends Model
         'monthly_fuel_allowance' => 'decimal:3',
         'rental_price' => 'decimal:3',
         'installment_price' => 'decimal:3',
+        'purchase_price' => 'decimal:3',
+        'salvage_value' => 'decimal:3',
+        'monthly_depreciation' => 'decimal:3',
+        'useful_life_months' => 'integer',
+        'purchase_date' => 'date:Y-m-d',
+        'rental_start_date' => 'date:Y-m-d',
+        'rental_end_date' => 'date:Y-m-d',
+        'installment_start_date' => 'date:Y-m-d',
+        'installment_end_date' => 'date:Y-m-d',
         'vehicle_type_id' => 'integer',
         'reserved_until' => 'date',
     ];

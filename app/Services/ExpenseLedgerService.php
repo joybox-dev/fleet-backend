@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\CompanyExpense;
 use App\Models\DriverExpense;
 use App\Models\Employee;
 use App\Models\Vehicle;
@@ -30,6 +31,7 @@ class ExpenseLedgerService
         'driver_expense' => 'مصروف على السائق',
         'vehicle_expense' => 'مصروف مركبة',
         'violation' => 'مخالفة مرورية',
+        'company_expense' => 'مصروف شركة',
     ];
 
     /**
@@ -45,6 +47,7 @@ class ExpenseLedgerService
             self::driverExpenses($companyId, $from, $to),
             self::vehicleExpenses($companyId, $from, $to),
             self::violations($companyId, $from, $to),
+            self::companyExpenses($companyId, $from, $to),
         );
 
         $rows = self::name($rows, $companyId);
@@ -229,6 +232,29 @@ class ExpenseLedgerService
                 (float) $e->amount, 0.0,
                 null, $e->vehicle_id,
                 'company', '/vehicle-expenses', $e->vendor
+            ))->all();
+    }
+
+    /**
+     * The company's own spending (rent, residencies, bank fees…): borne by the company whole, and
+     * named by its place in the expense tree.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function companyExpenses(int $companyId, ?string $from, ?string $to): array
+    {
+        return CompanyExpense::withoutGlobalScopes()->whereNull('deleted_at')
+            ->where('company_id', $companyId)
+            ->when($from, fn ($q) => $q->whereDate('expense_date', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('expense_date', '<=', $to))
+            ->with(['category' => fn ($q) => $q->withoutGlobalScopes()->with(['parent' => fn ($p) => $p->withoutGlobalScopes()])])
+            ->get()
+            ->map(fn (CompanyExpense $e) => self::row(
+                'company_expense', (int) $e->id, (string) $e->expense_date,
+                trim(($e->category?->path() ?? 'مصروف شركة').($e->description ? ' — '.$e->description : '')),
+                (float) $e->amount, 0.0,
+                $e->employee_id, $e->vehicle_id,
+                'company', '/expenses', $e->reference ?: $e->vendor
             ))->all();
     }
 }

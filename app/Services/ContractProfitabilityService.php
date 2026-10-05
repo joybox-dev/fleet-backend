@@ -132,9 +132,13 @@ class ContractProfitabilityService
             }
         }
 
+        // Rent, instalments and depreciation run whether the vehicle drives or not.
+        $fixed = VehicleFixedCostService::forMonth($companyId, $year, $month)['vehicles'];
+
         // A vehicle that carried any cost in the month is listed whatever its status today: an
         // expense on a vehicle that has since gone idle was still spent this month.
         $withActivity = collect([
+            array_keys($fixed),
             array_keys($context['orders_by_vehicle']), array_keys($revenueByVehicle), array_keys($driverCostByVehicle),
             array_keys($context['fuel_by_vehicle']), array_keys($context['expenses_by_vehicle']),
             array_keys($context['maintenance_by_vehicle']), array_keys($context['maintenance_driver_by_vehicle']),
@@ -148,7 +152,7 @@ class ContractProfitabilityService
             ->with('vehicleType:id,name,name_ar')
             ->get(['id', 'plate_number', 'make', 'model', 'status', 'vehicle_type_id']);
 
-        $rows = $vehicles->map(function ($v) use ($context, $revenueByVehicle, $driverCostByVehicle) {
+        $rows = $vehicles->map(function ($v) use ($context, $revenueByVehicle, $driverCostByVehicle, $fixed) {
             $revenue = round($revenueByVehicle[$v->id] ?? 0.0, 3);
             $driverCost = round($driverCostByVehicle[$v->id] ?? 0.0, 3);
             $fuel = round($context['fuel_by_vehicle'][$v->id] ?? 0.0, 3);
@@ -177,6 +181,13 @@ class ContractProfitabilityService
                 'violations_driver_share' => round($context['violations_driver_by_vehicle'][$v->id] ?? 0.0, 3),
                 'company_costs' => $companyCosts,
                 'net_profit' => round($revenue - $driverCost - $companyCosts, 3),
+                // Fixed costs, after the recorded ones: what the vehicle earned once it has paid
+                // for itself (rent, instalment or depreciation — VehicleFixedCostService).
+                'rent' => $fixed[$v->id]['rent'] ?? 0.0,
+                'installment' => $fixed[$v->id]['installment'] ?? 0.0,
+                'depreciation' => $fixed[$v->id]['depreciation'] ?? 0.0,
+                'fixed_costs' => $fixed[$v->id]['total'] ?? 0.0,
+                'net_after_fixed' => round($revenue - $driverCost - $companyCosts - ($fixed[$v->id]['total'] ?? 0.0), 3),
             ];
         })->sortByDesc('net_profit')->values();
 
@@ -211,6 +222,11 @@ class ContractProfitabilityService
                 'violations_driver_share' => $sum('violations_driver_share'),
                 'company_costs' => $sum('company_costs'),
                 'net_profit' => $sum('net_profit'),
+                'rent' => $sum('rent'),
+                'installment' => $sum('installment'),
+                'depreciation' => $sum('depreciation'),
+                'fixed_costs' => $sum('fixed_costs'),
+                'net_after_fixed' => $sum('net_after_fixed'),
             ],
         ];
     }

@@ -18,7 +18,7 @@ class ExpenseLedgerController extends Controller
         // Anyone who may read one of the underlying screens may read the list of all of them.
         $user = $request->user();
         $allowed = collect(['violations.view', 'driver_expenses.view', 'vehicle_expenses.view',
-            'maintenance.view', 'custody.view', 'salary_advances.view', 'payroll.view'])
+            'maintenance.view', 'custody.view', 'salary_advances.view', 'payroll.view', 'company_expenses.view'])
             ->contains(fn ($p) => $user->can($p));
 
         if (! $allowed) {
