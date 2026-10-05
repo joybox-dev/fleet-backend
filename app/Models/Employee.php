@@ -25,7 +25,7 @@ class Employee extends Model
         'stage_driving_trial_done', 'stage_license_obtained', 'stage_license_date',
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
         'target_orders_monthly', 'base_commission_rate', 'premium_commission_rate',
-        'role_category', 'admin_role_id', 'user_id', 'salary_allocations',
+        'role_category', 'job_title', 'admin_role_id', 'user_id', 'salary_allocations',
     ];
 
     protected $casts = [

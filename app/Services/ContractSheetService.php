@@ -311,6 +311,7 @@ class ContractSheetService
                 'rejected_orders_count' => (int) $empLogs->sum('rejected_orders_count'),
                 'cash_collected' => round((float) $empLogs->sum('cash_collected'), 3),
                 'base_salary' => $calcResult['base_salary'] ?? 0.0,
+                'base_salary_monthly' => $calcResult['base_salary_monthly'] ?? null,
                 'orders_bonus' => $calcResult['orders_bonus'] ?? 0.0,
                 'deficit_deduction' => $calcResult['deficit_deduction'] ?? 0.0,
                 'surplus_bonus' => $calcResult['surplus_bonus'] ?? 0.0,
@@ -666,6 +667,8 @@ class ContractSheetService
         ];
 
         $totals = array_fill_keys($numeric, 0);
+        // A monthly salary, so the stretches do not add up to two of them.
+        $monthlyBase = 0.0;
         $details = [];
         $multi = count($segments) > 1;
         $unresolved = false;
@@ -698,6 +701,7 @@ class ContractSheetService
             foreach ($numeric as $field) {
                 $totals[$field] += (float) ($result[$field] ?? 0);
             }
+            $monthlyBase = max($monthlyBase, (float) ($result['base_salary_monthly'] ?? 0));
 
             $unresolved = $unresolved || ! empty($result['unresolved_vehicle_type']);
 
@@ -732,6 +736,7 @@ class ContractSheetService
         foreach (['base_salary', 'orders_bonus', 'deficit_deduction', 'surplus_bonus', 'absence_deduction', 'gross_contract_earnings'] as $money) {
             $totals[$money] = round($totals[$money], 3);
         }
+        $totals['base_salary_monthly'] = round($monthlyBase, 3);
         $totals['calculation_details'] = $details;
         $totals['segments'] = count($segments);
         $totals['unresolved_vehicle_type'] = $unresolved;

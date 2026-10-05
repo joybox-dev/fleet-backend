@@ -126,6 +126,7 @@ class EmployeeController extends Controller
             'premium_commission_rate' => 'nullable|numeric|min:0',
 
             'role_category' => 'nullable|in:driver,admin',
+            'job_title' => 'nullable|string|max:100',
             'admin_role_id' => 'required_if:role_category,admin|nullable|exists:roles,id',
             'salary_allocations' => 'nullable|array',
             'email' => 'required_if:role_category,admin|nullable|email|max:255|unique:users,email',
@@ -286,6 +287,7 @@ class EmployeeController extends Controller
             'notes' => 'nullable|string',
 
             'role_category' => 'sometimes|nullable|in:driver,admin',
+            'job_title' => 'sometimes|nullable|string|max:100',
             'admin_role_id' => 'nullable|exists:roles,id',
             'salary_allocations' => 'nullable|array',
             'email' => [

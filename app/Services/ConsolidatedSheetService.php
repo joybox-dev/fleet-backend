@@ -154,7 +154,10 @@ class ConsolidatedSheetService
                 'notes' => $consolidatedRun->notes,
             ];
 
-            return self::withDisbursements($frozen, $companyId, $year, $month, $startDate, $endDate, $consolidatedRun);
+            return self::withReportColumns(
+                self::withDisbursements($frozen, $companyId, $year, $month, $startDate, $endDate, $consolidatedRun),
+                $companyId, $year, $month
+            );
         }
 
         $driversList = [];
@@ -212,7 +215,7 @@ class ConsolidatedSheetService
             $totalPendingSum += $pendingTotal;
         }
 
-        return self::withDisbursements([
+        return self::withReportColumns(self::withDisbursements([
             'period' => [
                 'year' => $year,
                 'month' => $month,
@@ -256,7 +259,132 @@ class ConsolidatedSheetService
             })->values()->all(),
             'unapproved_contracts' => $unapprovedContracts->values()->all(),
             'drivers' => $driversList,
-        ], $companyId, $year, $month, $startDate, $endDate, null);
+        ], $companyId, $year, $month, $startDate, $endDate, null), $companyId, $year, $month);
+    }
+
+    /**
+     * The payroll report's columns for each driver, read from the approved contract sheets the
+     * row was built from: the month's required and paid days, the monthly salary and the share of
+     * it the days earned, incentives, the target shortfall, the hand adjustments both ways, and
+     * absence. Display only — nothing here moves a figure the sheet pays, and an approved month's
+     * contract sheets are frozen, so the columns are as fixed as the month.
+     *
+     * Absence is the days the contract expected in the part of the month the driver was assigned
+     * (its working days × assigned days ÷ days in the month) less the days paid, and its amount
+     * those days at the monthly salary's daily rate. The engine never deducts absence as such —
+     * a fixed salary is simply paid for the days worked — so this is that difference named.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private static function withReportColumns(array $data, int $companyId, int $year, int $month): array
+    {
+        $daysInMonth = (int) ($data['period']['days_in_month'] ?? Carbon::create($year, $month, 1)->daysInMonth);
+
+        $contractRows = [];
+        ContractPayrollRun::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->where('status', 'approved')
+            ->get(['id', 'contract_id', 'snapshot_data'])
+            ->each(function (ContractPayrollRun $run) use (&$contractRows) {
+                foreach ($run->snapshot_data['drivers'] ?? [] as $row) {
+                    if (! empty($row['employee_id'])) {
+                        $contractRows[(int) $row['employee_id']][] = $row;
+                    }
+                }
+            });
+
+        $employees = Employee::withoutGlobalScopes()->withTrashed()
+            ->whereIn('id', array_map(fn ($d) => (int) ($d['employee_id'] ?? 0), $data['drivers'] ?? []))
+            ->get(['id', 'job_title', 'role_category'])
+            ->keyBy('id');
+
+        foreach ($data['drivers'] ?? [] as $i => $driver) {
+            $employeeId = (int) ($driver['employee_id'] ?? 0);
+            $report = self::reportColumns($contractRows[$employeeId] ?? [], $daysInMonth, $employees->get($employeeId));
+            // Two contracts on the same days pay each its own days, so their sum can pass the month
+            // (27 + 27 in a 31-day August). The person was paid for at most the days he has on record.
+            $report['payable_days'] = min($report['payable_days'], (float) ($driver['actual_work_days'] ?? $report['payable_days']));
+            $report['absence_days'] = min($report['absence_days'], (float) $report['required_days']);
+            $data['drivers'][$i]['report'] = $report;
+        }
+
+        return $data;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows  the driver's rows on this month's approved contract sheets
+     * @return array<string, mixed>
+     */
+    private static function reportColumns(array $rows, int $daysInMonth, ?Employee $employee): array
+    {
+        $report = [
+            'job_title' => $employee?->job_title ?: ($employee === null || $employee->role_category === 'driver' ? 'سائق' : null),
+            'required_days' => 0,
+            'payable_days' => 0.0,
+            'base_salary_monthly' => 0.0,
+            'base_salary_earned' => 0.0,
+            'incentives' => 0.0,
+            'target_deficit' => 0.0,
+            'adjustment_additions' => 0.0,
+            'adjustment_deductions' => 0.0,
+            'absence_days' => 0.0,
+            'absence_amount' => 0.0,
+        ];
+
+        foreach ($rows as $row) {
+            $required = (int) ($row['contract_working_days'] ?? 0);
+            $payable = (float) ($row['payable_days'] ?? $row['paid_days'] ?? 0);
+            $monthly = self::monthlyBaseOf($row);
+            $assigned = min($daysInMonth, max(0, (int) ($row['assigned_days'] ?? $daysInMonth)));
+            $expected = $required > 0 ? min($required, (int) round($required * $assigned / max(1, $daysInMonth))) : 0;
+            $absent = max(0.0, $expected - $payable);
+
+            $report['required_days'] = max($report['required_days'], $required);
+            $report['payable_days'] += $payable;
+            // One person's monthly salary, whichever contract states it; never two of them added.
+            $report['base_salary_monthly'] = max($report['base_salary_monthly'], $monthly);
+            $report['base_salary_earned'] += (float) ($row['base_salary'] ?? 0);
+            $report['incentives'] += (float) ($row['orders_bonus'] ?? 0) + (float) ($row['surplus_bonus'] ?? 0);
+            $report['target_deficit'] += (float) ($row['deficit_deduction'] ?? 0);
+            $report['adjustment_additions'] += (float) ($row['manual_adjustments']['additions'] ?? 0);
+            $report['adjustment_deductions'] += (float) ($row['manual_adjustments']['deductions'] ?? 0);
+            $report['absence_days'] += $absent;
+            if ($monthly > 0 && $required > 0) {
+                $report['absence_amount'] += $absent * $monthly / $required;
+            }
+        }
+
+        foreach (['payable_days', 'absence_days'] as $days) {
+            $report[$days] = round($report[$days], 2);
+        }
+        foreach (['base_salary_monthly', 'base_salary_earned', 'incentives', 'target_deficit', 'adjustment_additions', 'adjustment_deductions', 'absence_amount'] as $money) {
+            $report[$money] = round($report[$money], 3);
+        }
+
+        return $report;
+    }
+
+    /**
+     * The monthly salary a contract row was paid a share of. Rows approved before the sheet kept it
+     * still state it in the base line's formula («… (260 د.ك ÷ 26 يوم …»).
+     *
+     * @param  array<string, mixed>  $row
+     */
+    private static function monthlyBaseOf(array $row): float
+    {
+        if (isset($row['base_salary_monthly'])) {
+            return (float) $row['base_salary_monthly'];
+        }
+        foreach ($row['calculation_details'] ?? [] as $line) {
+            if (preg_match('/\(([\d.]+) د\.ك ÷ \d+ يوم/u', (string) ($line['formula'] ?? ''), $match)) {
+                return (float) $match[1];
+            }
+        }
+
+        return 0.0;
     }
 
     /**

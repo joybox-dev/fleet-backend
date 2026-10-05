@@ -337,6 +337,8 @@ class KeetaDriverPayService
         return [
             'payment_method' => self::METHOD,
             'base_salary' => round($base, 3),
+            // The level salary is a month, not a share of one.
+            'base_salary_monthly' => round($base, 3),
             'orders_count' => $orders,
             'orders_bonus' => round($perOrder, 3),
             'required_target' => $target,

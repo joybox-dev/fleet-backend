@@ -289,6 +289,8 @@ class ContractPayrollService
 
         return [
             'base_salary' => $earnedBaseSalary,
+            // The monthly salary the days are a share of — shown on the payroll report, never summed.
+            'base_salary_monthly' => round($baseSalaryConfig, 3),
             'paid_days' => $paidDays,
             'payable_days' => $payableDays,
             'orders_count' => $totalOrders,
@@ -434,6 +436,7 @@ class ContractPayrollService
 
         return [
             'base_salary' => $earnedBaseSalary,
+            'base_salary_monthly' => round($baseSalaryConfig, 3),
             'orders_count' => $ordersCount,
             'orders_bonus' => $ordersBonus,
             'deficit_deduction' => 0.0,

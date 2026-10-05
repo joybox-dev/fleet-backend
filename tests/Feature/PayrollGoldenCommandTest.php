@@ -11,6 +11,7 @@ use App\Models\Employee;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 /**
@@ -149,6 +150,24 @@ class PayrollGoldenCommandTest extends TestCase
         $this->artisan('payroll:golden', ['action' => 'verify', '--file' => $this->file])
             ->expectsOutputToContain('gross_contract_earnings: 20 → 30')
             ->assertExitCode(1);
+    }
+
+    /**
+     * A driver's statement runs to the current month, so a golden written in September grew a row
+     * on October 1st and failed with no code changed. Verification reads as of the snapshot.
+     */
+    public function test_a_new_calendar_month_does_not_fail_the_golden(): void
+    {
+        Carbon::setTestNow('2026-05-20 10:00:00');
+        $this->artisan('payroll:golden', ['action' => 'snapshot', '--file' => $this->file])->assertExitCode(0);
+
+        Carbon::setTestNow('2026-07-02 09:00:00');
+        $this->artisan('payroll:golden', ['action' => 'verify', '--file' => $this->file])
+            ->expectsOutputToContain('identical')
+            ->assertExitCode(0);
+        $this->assertSame('2026-07-02', now()->toDateString(), 'the clock is handed back after the check');
+
+        Carbon::setTestNow();
     }
 
     public function test_verify_refuses_to_run_without_a_golden_file(): void

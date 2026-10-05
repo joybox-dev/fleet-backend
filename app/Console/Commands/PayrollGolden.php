@@ -10,6 +10,7 @@ use App\Services\ConsolidatedSheetService;
 use App\Services\ContractSheetService;
 use App\Services\EmployeeLedgerService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -75,7 +76,18 @@ class PayrollGolden extends Command
             return self::FAILURE;
         }
 
-        $now = $this->collect();
+        // The figures are read as of the moment they were frozen. A driver's statement runs to the
+        // current month, so on the first of a new month every statement grew a row and the file
+        // failed for the calendar, not for the code — this pins the clock to the snapshot.
+        $clock = Carbon::getTestNow();
+        if (! empty($golden['generated_at'])) {
+            Carbon::setTestNow(Carbon::parse($golden['generated_at']));
+        }
+        try {
+            $now = $this->collect();
+        } finally {
+            Carbon::setTestNow($clock);
+        }
         $diffs = [];
         $this->diff('', $golden['companies'], $now['companies'], $diffs);
 
