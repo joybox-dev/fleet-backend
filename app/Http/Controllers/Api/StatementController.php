@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\OperationalAdvance;
 use App\Models\OperationalAdvanceFund;
 use App\Services\OperationalFundService;
+use App\Services\PayrollBalanceService;
 use App\Services\StatementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,7 +32,11 @@ class StatementController extends Controller
         $result = ['pay' => [], 'custody' => [], 'client' => []];
 
         if ($user->can('payroll.view') || $user->can('contract_payroll.view')) {
-            $result['pay'] = $employees()->map(fn ($e) => self::party($e))->values();
+            // Drivers, and anyone else the payroll balance already holds a figure for.
+            $withBalance = array_keys(PayrollBalanceService::openingBalances($companyId));
+            $result['pay'] = $employees()
+                ->filter(fn ($e) => $e->role_category === 'driver' || in_array($e->id, $withBalance, true))
+                ->map(fn ($e) => self::party($e))->values();
         }
 
         if ($user->can('op_advances.view')) {
@@ -48,8 +53,8 @@ class StatementController extends Controller
         }
 
         if ($user->can('reports.view')) {
-            $result['client'] = Client::query()->orderBy('name')->get(['id', 'name', 'name_ar'])
-                ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name_ar ?: $c->name, 'number' => null])->values();
+            $result['client'] = Client::query()->get(['id', 'name', 'name_ar'])
+                ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name_ar ?: $c->name, 'number' => null])->sortBy('name')->values();
         }
 
         return response()->json($result);

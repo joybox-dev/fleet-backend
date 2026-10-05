@@ -190,6 +190,9 @@ class ProfitabilityScreensAgreeTest extends TestCase
         $this->assertEquals(5.0, $row['total_violations']);
         $this->assertEquals(455.0, $row['net_profit']);
         $this->assertEquals(455.0, $vehicleReport['totals']['net_profit']);
+        // The totals row carries the orders too — the Excel export's «الإجمالي» read 0 without it.
+        $this->assertGreaterThan(0, $row['total_orders']);
+        $this->assertSame($row['total_orders'], $vehicleReport['totals']['total_orders']);
     }
 
     /**

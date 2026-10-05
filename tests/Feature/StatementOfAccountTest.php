@@ -255,6 +255,10 @@ class StatementOfAccountTest extends TestCase
 
         $all = $this->actingAs($custodian)->getJson('/api/statements/parties')->assertOk()->json('custody');
         $this->assertEqualsCanonicalizing([$giver->id, $receiver->id], array_column($all, 'id'));
+
+        // The pay account lists drivers, not the office staff with no payroll behind them.
+        $payParties = $this->actingAs($this->admin)->getJson('/api/statements/parties')->assertOk()->json('pay');
+        $this->assertSame([$this->driver->id], array_column($payParties, 'id'));
     }
 
     private function login(string $handle, string $role): User

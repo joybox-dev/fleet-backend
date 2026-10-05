@@ -177,10 +177,17 @@ class StatementService
                 if (abs($amount) < 0.0005) {
                     return;
                 }
-                $keeta = $contract->keeta_settlement_from
+                // A month Keeta settles is its statement once imported, and until then an estimate.
+                $keetaMonth = KeetaRevenueService::appliesTo($contract, $y, $m);
+                $statement = $keetaMonth
                     && KeetaInvoice::withoutGlobalScopes()->where('contract_id', $contract->id)->where('year', $y)->where('month', $m)->exists();
                 $open = Carbon::create($y, $m, 1)->gte($today);
-                $note = $keeta ? ' (كشف كيتا)' : ($open ? ' (الشهر جارٍ — تقديري)' : '');
+                $note = match (true) {
+                    $statement => ' (كشف كيتا)',
+                    $keetaMonth => ' (تقدير — كشف كيتا للشهر لم يُستورد بعد)',
+                    $open => ' (الشهر جارٍ — تقديري)',
+                    default => '',
+                };
                 $lines[] = self::line(Carbon::create($y, $m, 1)->endOfMonth()->toDateString(), sprintf('مطالبة شهر %02d/%d — %s%s', $m, $y, $contract->name, $note), $amount, 0.0, 'invoice');
             });
 

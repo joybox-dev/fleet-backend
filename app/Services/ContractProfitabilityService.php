@@ -210,6 +210,7 @@ class ContractProfitabilityService
             ])->values()->all(),
             'vehicles' => $rows->all(),
             'totals' => [
+                'total_orders' => (int) $rows->sum('total_orders'),
                 'revenue' => $sum('revenue'),
                 'driver_cost' => $sum('driver_cost'),
                 'fuel_allowance' => $sum('fuel_allowance'),
