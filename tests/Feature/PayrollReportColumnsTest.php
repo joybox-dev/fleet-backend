@@ -123,9 +123,9 @@ class PayrollReportColumnsTest extends TestCase
         $this->assertEquals(200.0, $report['base_salary_earned']);
         $this->assertEquals(15.0, $report['adjustment_additions']);
         $this->assertEquals(5.0, $report['adjustment_deductions']);
-        // Assigned the whole month, so all 26 days were expected: 6 not paid, at 10.000 a day.
-        $this->assertEquals(6, $report['absence_days']);
-        $this->assertEquals(60.0, $report['absence_amount']);
+        // The system has no absence days: a salary is paid for the days worked, nothing else.
+        $this->assertArrayNotHasKey('absence_days', $report);
+        $this->assertArrayNotHasKey('absence_amount', $report);
 
         // The figures the sheet pays are the ones they were: 200 + 15 − 5.
         $this->assertEquals(200.0, $row['gross_contract_earnings']);
@@ -147,7 +147,7 @@ class PayrollReportColumnsTest extends TestCase
 
         $report = $this->row()['report'];
         $this->assertEquals(260.0, $report['base_salary_monthly']);
-        $this->assertEquals(60.0, $report['absence_amount']);
+        $this->assertEquals(200.0, $report['base_salary_earned']);
     }
 
     public function test_a_driver_with_no_title_reads_as_a_driver_and_the_title_is_saved_through_the_form(): void
