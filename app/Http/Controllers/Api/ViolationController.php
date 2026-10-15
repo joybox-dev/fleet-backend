@@ -66,7 +66,7 @@ class ViolationController extends Controller
     public function resolveDriver(Request $request): JsonResponse
     {
         $request->validate([
-            'vehicle_id' => 'required|exists:vehicles,id',
+            'vehicle_id' => 'required|exists_in_company:vehicles,id',
             'violation_date' => 'required',
         ]);
 
@@ -106,7 +106,7 @@ class ViolationController extends Controller
         $companyId = app('current_company_id');
 
         $request->validate([
-            'vehicle_id' => 'required|exists:vehicles,id',
+            'vehicle_id' => 'required|exists_in_company:vehicles,id',
             'violation_date' => 'required',
             'violation_type' => 'required|string|max:255',
             'reference_number' => [
@@ -132,11 +132,11 @@ class ViolationController extends Controller
             'split_mode' => 'nullable|in:percentage,manual',
             'driver_share' => 'nullable|numeric|min:0',
             'contract_share' => 'nullable|numeric|min:0',
-            'charge_contract_id' => 'nullable|exists:contracts,id',
+            'charge_contract_id' => 'nullable|exists_in_company:contracts,id',
             'manual_audit_reason' => 'nullable|string',
 
             // Overrides
-            'employee_id' => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|exists_in_company:employees,id',
             'assignment_override_reason' => 'nullable|string',
         ]);
 
@@ -299,11 +299,11 @@ class ViolationController extends Controller
             'split_mode' => 'nullable|in:percentage,manual',
             'driver_share' => 'nullable|numeric|min:0',
             'contract_share' => 'nullable|numeric|min:0',
-            'charge_contract_id' => 'nullable|exists:contracts,id',
+            'charge_contract_id' => 'nullable|exists_in_company:contracts,id',
             'manual_audit_reason' => 'nullable|string',
 
             // Overrides
-            'employee_id' => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|exists_in_company:employees,id',
             'assignment_override_reason' => 'nullable|string',
         ]);
 

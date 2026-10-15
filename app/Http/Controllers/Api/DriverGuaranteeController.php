@@ -38,7 +38,7 @@ class DriverGuaranteeController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_id'     => 'required|exists:employees,id',
+            'employee_id'     => 'required|exists_in_company:employees,id',
             'guarantee_type'  => 'required|in:passport,civil_id_copy,contract_copy,bank_guarantee,other',
             'document_number' => 'nullable|string|max:100',
             'file_path'       => 'nullable|string',

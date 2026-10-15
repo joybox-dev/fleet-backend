@@ -77,7 +77,7 @@ class ProfitLossService
                 'label' => 'رواتب الإداريين (من ملفاتهم)',
                 'amount' => $adminSalaries['total'],
                 'items' => $adminSalaries['items'],
-                'note' => 'النظام لا يصرف رواتب الإداريين؛ الرقم هو الراتب الفعلي المسجّل في ملف كل موظف إداري نشط.',
+                'note' => 'النظام لا يصرف رواتب الإداريين؛ الرقم هو الراتب الفعلي المسجّل في ملف كل موظف إداري على رأس عمله (نشط، تحت التجربة، في إجازة).',
             ];
         }
 
@@ -144,7 +144,10 @@ class ProfitLossService
         $items = Employee::withoutGlobalScopes()->whereNull('deleted_at')
             ->where('company_id', $companyId)
             ->where('role_category', 'admin')
-            ->where('status', 'active')
+            // Everyone on the payroll: a new employee starts on probation for three months, and one
+            // on leave is still paid. Counting «active» alone left a new company's office staff out of
+            // its first three months, and two staff on leave out of every month.
+            ->whereIn('status', Employee::EMPLOYED_STATUSES)
             ->where('actual_salary', '>', 0)
             ->orderBy('name')
             ->get(['name', 'actual_salary'])

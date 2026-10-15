@@ -35,8 +35,8 @@ class VehicleHandoverController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'vehicle_id'        => 'required|exists:vehicles,id',
-            'employee_id'       => 'required|exists:employees,id',
+            'vehicle_id'        => 'required|exists_in_company:vehicles,id',
+            'employee_id'       => 'required|exists_in_company:employees,id',
             'handover_date'     => 'required|date',
             'type'              => 'required|in:handover,return',
             'odometer_reading'  => 'required|integer|min:0',

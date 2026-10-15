@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Client;
 use App\Models\Contract;
 use App\Models\DailyLog;
+use App\Models\VehicleType;
 use App\Services\ContractScopeService;
 use App\Services\KeetaRevenueService;
 use Carbon\Carbon;
@@ -95,7 +96,7 @@ class ContractController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'client_id' => 'required|exists:clients,id',
+            'client_id' => 'required|exists_in_company:clients,id',
             'contract_number' => [
                 'required',
                 'string',
@@ -136,7 +137,7 @@ class ContractController extends Controller
             'notes' => 'nullable|string|max:1000',
 
             // New Pricing Rules & Vehicle Types
-            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
+            'vehicle_type_id' => 'nullable|exists_in_company:vehicle_types,id',
             // How the contract bills and how it pays are the two numbers everything else is built
             // from, so neither may be left for the engines to guess at.
             'client_payment_method' => 'required|string|in:fixed,zones,tiers,hybrid',
@@ -231,7 +232,7 @@ class ContractController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'client_id' => 'sometimes|exists:clients,id',
+            'client_id' => 'sometimes|exists_in_company:clients,id',
             'contract_number' => [
                 'sometimes',
                 'string',
@@ -275,7 +276,7 @@ class ContractController extends Controller
             'notes' => 'nullable|string|max:1000',
 
             // New Pricing Rules & Vehicle Types
-            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
+            'vehicle_type_id' => 'nullable|exists_in_company:vehicle_types,id',
             // Demanded only from a contract that does not already state it, so editing an unrelated
             // field on a contract set up long ago still works — but a contract missing its billing
             // method has to gain one the first time anybody touches it.
@@ -544,8 +545,20 @@ class ContractController extends Controller
             }
         }
 
+        // A rule is keyed by one of the company's own vehicle types. The contract screen used to
+        // offer the first company's ids (1–3) to every company, and a rule on a type none of the
+        // company's vehicles carry prices nothing: every order stayed unbilled and unpaid.
+        VehicleType::ensureDefaults($this->currentCompanyId());
+        $ownTypes = VehicleType::query()->pluck('id')->map(fn ($id) => (string) $id)->all();
+
         foreach ($rules as $vehicleType => $rule) {
             $where = "تسعير {$label}، نوع المركبة {$vehicleType}";
+
+            if (! in_array((string) $vehicleType, $ownTypes, true)) {
+                $problems[] = "{$where}: نوع المركبة هذا غير موجود في شركتك — اختر من أنواع مركبات الشركة.";
+
+                continue;
+            }
 
             if (! is_array($rule)) {
                 $problems[] = "{$where}: القاعدة غير صالحة.";

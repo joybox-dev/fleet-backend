@@ -16,7 +16,7 @@ class SupervisorAllocationController extends Controller
     public function index(Request $request): JsonResponse
     {
         $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
         ]);
 
         $allocations = SupervisorCostAllocation::with('contract:id,name,currency')
@@ -42,10 +42,10 @@ class SupervisorAllocationController extends Controller
         $userId = auth()->id() ?? 1; // Fallback to user ID 1 for tests/system
 
         $request->validate([
-            'employee_id'    => 'required|exists:employees,id',
+            'employee_id'    => 'required|exists_in_company:employees,id',
             'effective_date' => 'required|date',
             'allocations'    => 'required|array|min:1',
-            'allocations.*.contract_id' => 'required|exists:contracts,id',
+            'allocations.*.contract_id' => 'required|exists_in_company:contracts,id',
             'allocations.*.allocation_percentage' => 'required|numeric|min:0|max:100',
         ]);
 

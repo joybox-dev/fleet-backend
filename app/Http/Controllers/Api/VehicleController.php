@@ -83,7 +83,7 @@ class VehicleController extends Controller
             'rental_end_date' => 'nullable|date|after_or_equal:rental_start_date',
             'installment_start_date' => 'nullable|date',
             'installment_end_date' => 'nullable|date|after_or_equal:installment_start_date',
-            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
+            'vehicle_type_id' => 'nullable|exists_in_company:vehicle_types,id',
         ]);
 
         // Strip null values so DB column defaults (e.g. oil_change_interval_km=4000) are used
@@ -137,7 +137,7 @@ class VehicleController extends Controller
             'food_authority_license_expiry' => 'nullable|date',
             'next_service_due' => 'nullable|date',
             'notes' => 'nullable|string',
-            'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
+            'vehicle_type_id' => 'nullable|exists_in_company:vehicle_types,id',
         ], [
             'reserved_by.required_if' => 'اذكر الجهة التي حجزت المركبة (الداخلية، المرور، البلدية…).',
         ]);
@@ -198,7 +198,7 @@ class VehicleController extends Controller
                     ->where('company_id', $companyId)
                     ->where('role_category', 'driver'),
             ],
-            'contract_id' => 'nullable|exists:contracts,id',
+            'contract_id' => 'nullable|exists_in_company:contracts,id',
             'assigned_date' => 'required|date',
             'notes' => 'nullable|string',
         ]);
@@ -329,7 +329,7 @@ class VehicleController extends Controller
 
         $validated = $request->validate([
             'ids' => 'required|array',
-            'ids.*' => 'integer|exists:vehicles,id',
+            'ids.*' => 'integer|exists_in_company:vehicles,id',
         ]);
 
         $companyId = app('current_company_id');

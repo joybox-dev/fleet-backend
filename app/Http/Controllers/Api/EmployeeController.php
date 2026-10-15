@@ -127,7 +127,7 @@ class EmployeeController extends Controller
 
             'role_category' => 'nullable|in:driver,admin',
             'job_title' => 'nullable|string|max:100',
-            'admin_role_id' => 'required_if:role_category,admin|nullable|exists:roles,id',
+            'admin_role_id' => 'required_if:role_category,admin|nullable|exists_in_company:roles,id',
             'salary_allocations' => 'nullable|array',
             'email' => 'required_if:role_category,admin|nullable|email|max:255|unique:users,email',
             'password' => 'required_if:role_category,admin|nullable|string|min:6',
@@ -288,7 +288,7 @@ class EmployeeController extends Controller
 
             'role_category' => 'sometimes|nullable|in:driver,admin',
             'job_title' => 'sometimes|nullable|string|max:100',
-            'admin_role_id' => 'nullable|exists:roles,id',
+            'admin_role_id' => 'nullable|exists_in_company:roles,id',
             'salary_allocations' => 'nullable|array',
             'email' => [
                 'nullable',
@@ -484,7 +484,7 @@ class EmployeeController extends Controller
 
         $validated = $request->validate([
             'ids' => 'required|array',
-            'ids.*' => 'integer|exists:employees,id',
+            'ids.*' => 'integer|exists_in_company:employees,id',
         ]);
 
         $companyId = app('current_company_id');

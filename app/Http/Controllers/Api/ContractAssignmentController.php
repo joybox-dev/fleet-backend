@@ -19,7 +19,7 @@ class ContractAssignmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
         ]);
 
         $assignments = ContractAssignment::with(['contract:id,name,currency,payment_type,client_pricing_rules,driver_pricing_rules', 'overrides'])
@@ -41,7 +41,7 @@ class ContractAssignmentController extends Controller
                     ->where('company_id', $companyId)
                     ->where('role_category', 'driver'),
             ],
-            'contract_id' => 'required|exists:contracts,id',
+            'contract_id' => 'required|exists_in_company:contracts,id',
             'start_date' => 'required|date',
             'end_date' => 'nullable|date|after_or_equal:start_date',
             'courier_id' => 'nullable|string|max:255',

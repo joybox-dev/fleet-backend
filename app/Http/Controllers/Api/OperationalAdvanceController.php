@@ -156,7 +156,7 @@ class OperationalAdvanceController extends Controller
             'amount' => 'required|numeric|min:0.001|max:'.$remaining,
             'date' => 'required|date',
             'description' => 'required|string|max:255',
-            'contract_id' => 'nullable|exists:contracts,id',
+            'contract_id' => 'nullable|exists_in_company:contracts,id',
             'receipt_path' => 'nullable|string|max:255',
         ]);
 

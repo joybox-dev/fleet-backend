@@ -20,6 +20,8 @@ class LeaveController extends Controller
      * ══════════════════════════════════════════════════════════════════ */
     public function types(): JsonResponse
     {
+        LeaveType::ensureDefaults($this->currentCompanyId());
+
         return response()->json(
             LeaveType::where('is_active', true)->orderBy('id')->get()
         );
@@ -66,8 +68,8 @@ class LeaveController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'leave_type_id' => 'required|exists:leave_types,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
+            'leave_type_id' => 'required|exists_in_company:leave_types,id',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'reason' => 'nullable|string|max:1000',

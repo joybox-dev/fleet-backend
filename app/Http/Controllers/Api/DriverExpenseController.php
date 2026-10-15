@@ -105,9 +105,9 @@ class DriverExpenseController extends Controller
 
         $companyId = app('current_company_id');
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'vehicle_id' => 'nullable|exists:vehicles,id',
-            'expense_type_id' => 'nullable|exists:vehicle_expense_types,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
+            'vehicle_id' => 'nullable|exists_in_company:vehicles,id',
+            'expense_type_id' => 'nullable|exists_in_company:vehicle_expense_types,id',
             'expense_type' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0.001',
             'borne_by' => 'required|in:company,driver,split',
@@ -160,9 +160,9 @@ class DriverExpenseController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'vehicle_id' => 'nullable|exists:vehicles,id',
-            'expense_type_id' => 'nullable|exists:vehicle_expense_types,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
+            'vehicle_id' => 'nullable|exists_in_company:vehicles,id',
+            'expense_type_id' => 'nullable|exists_in_company:vehicle_expense_types,id',
             'expense_type' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0.001',
             'borne_by' => 'required|in:company,driver,split',

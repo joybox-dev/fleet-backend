@@ -188,7 +188,7 @@ class PayrollController extends Controller
         $companyId = $this->currentCompanyId();
 
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
             'year' => 'required|integer|min:2020|max:2030',
             'month' => 'required|integer|min:1|max:12',
             'type' => 'required|in:addition,deduction',

@@ -91,13 +91,13 @@ class EvaluationController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_id'     => 'required|exists:employees,id',
+            'employee_id'     => 'required|exists_in_company:employees,id',
             'evaluation_date' => 'required|date',
             'period_from'     => 'required|date',
             'period_to'       => 'required|date|after_or_equal:period_from',
             'notes'           => 'nullable|string',
             'scores'          => 'required|array|min:1',
-            'scores.*.criterion_id' => 'required|exists:evaluation_criteria,id',
+            'scores.*.criterion_id' => 'required|exists_in_company:evaluation_criteria,id',
             'scores.*.score'        => 'required|numeric|min:0',
             'scores.*.notes'        => 'nullable|string',
         ]);
@@ -138,7 +138,7 @@ class EvaluationController extends Controller
             'notes'           => 'nullable|string',
             'status'          => 'sometimes|in:draft,submitted,approved',
             'scores'          => 'sometimes|array|min:1',
-            'scores.*.criterion_id' => 'required_with:scores|exists:evaluation_criteria,id',
+            'scores.*.criterion_id' => 'required_with:scores|exists_in_company:evaluation_criteria,id',
             'scores.*.score'        => 'required_with:scores|numeric|min:0',
             'scores.*.notes'        => 'nullable|string',
         ]);

@@ -32,13 +32,13 @@ class MaintenanceController extends Controller
         }
 
         $validated = $request->validate([
-            'vehicle_id' => 'required|exists:vehicles,id',
+            'vehicle_id' => 'required|exists_in_company:vehicles,id',
             'garage_name' => 'nullable|string|max:255',
             'maintenance_type' => 'required|in:accident,periodic,repair,oil_change,other',
             'maintenance_date' => 'required|date',
             'estimated_cost' => 'nullable|numeric|min:0',
             'is_driver_liable' => 'boolean',
-            'liable_employee_id' => 'nullable|exists:employees,id',
+            'liable_employee_id' => 'nullable|exists_in_company:employees,id',
             'driver_deduction' => 'nullable|numeric|min:0',
             'odometer_km' => 'nullable|integer|min:0',
             'notes' => 'nullable|string',
@@ -112,7 +112,7 @@ class MaintenanceController extends Controller
             'invoice_path' => 'nullable|string',
             'notes' => 'nullable|string',
             'is_driver_liable' => 'boolean',
-            'liable_employee_id' => 'nullable|exists:employees,id',
+            'liable_employee_id' => 'nullable|exists_in_company:employees,id',
             'driver_deduction' => 'nullable|numeric|min:0',
 
             // Accident bearing fields

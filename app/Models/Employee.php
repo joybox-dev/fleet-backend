@@ -14,6 +14,9 @@ class Employee extends Model
 {
     use BelongsToCompany, SoftDeletes;
 
+    /** On the payroll: every status but «inactive» (a new employee starts on probation). */
+    public const EMPLOYED_STATUSES = ['active', 'probation', 'on_leave'];
+
     protected $fillable = [
         'name', 'name_ar', 'employee_number', 'nationality', 'civil_id', 'phone', 'has_whatsapp', 'whatsapp_company_number', 'whatsapp_language',
         'gender', 'date_of_birth', 'date_of_joining', 'employee_type',

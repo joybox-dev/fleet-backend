@@ -96,8 +96,8 @@ class CashSettlementController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'daily_log_id' => 'nullable|exists:daily_logs,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
+            'daily_log_id' => 'nullable|exists_in_company:daily_logs,id',
             'settlement_date' => 'required|date',
             'amount' => 'required|numeric|min:0.001',
             'receipt_photo_path' => 'nullable|string',

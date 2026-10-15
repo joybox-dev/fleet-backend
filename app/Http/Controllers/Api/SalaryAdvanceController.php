@@ -38,7 +38,7 @@ class SalaryAdvanceController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => 'required|exists_in_company:employees,id',
             'amount' => 'required|numeric|min:1',
             'monthly_installment' => 'required|numeric|min:0.001',
             'advance_date' => 'required|date',

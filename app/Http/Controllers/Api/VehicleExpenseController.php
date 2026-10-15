@@ -45,7 +45,7 @@ class VehicleExpenseController extends Controller
         }
 
         $validated = $request->validate([
-            'vehicle_id'   => 'required|exists:vehicles,id',
+            'vehicle_id'   => 'required|exists_in_company:vehicles,id',
             'expense_type' => 'required|in:fuel,insurance,tires,registration,fine,repair,other',
             'amount'       => 'required|numeric|min:0.001',
             'expense_date' => 'required|date',
@@ -80,7 +80,7 @@ class VehicleExpenseController extends Controller
         }
 
         $validated = $request->validate([
-            'vehicle_id'   => 'sometimes|exists:vehicles,id',
+            'vehicle_id'   => 'sometimes|exists_in_company:vehicles,id',
             'expense_type' => 'sometimes|in:fuel,insurance,tires,registration,fine,repair,other',
             'amount'       => 'sometimes|numeric|min:0.001',
             'expense_date' => 'sometimes|date',
