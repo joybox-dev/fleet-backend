@@ -125,6 +125,16 @@ class VehicleAssignmentBoardTest extends TestCase
         $this->assertSame(['سيارة صغيرة'], array_column($board['types'], 'name'));
     }
 
+    public function test_a_login_reading_english_gets_the_english_type_names(): void
+    {
+        $board = $this->actingAs($this->admin)->withHeaders(['X-Ui-Language' => 'en'])
+            ->getJson('/api/vehicles/assignment-board')->assertStatus(200)->json();
+
+        $holder = collect($board['drivers'])->firstWhere('id', $this->holder->id);
+        $this->assertSame('Small Car', $holder['vehicle']['type']);
+        $this->assertSame(['Small Car'], array_column($board['types'], 'name'));
+    }
+
     public function test_either_side_viewer_may_open_the_board_and_nobody_else(): void
     {
         Role::create(['name' => 'مركبات فقط', 'company_id' => $this->company->id, 'allowed_modules' => ['vehicles.view']]);

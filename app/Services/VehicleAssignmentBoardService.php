@@ -25,7 +25,9 @@ class VehicleAssignmentBoardService
             ->where('company_id', $companyId)
             ->orderBy('id')
             ->get(['id', 'name', 'name_ar']);
-        $typeName = fn (?int $id) => $id ? (($t = $types->firstWhere('id', $id)) ? ($t->name_ar ?: $t->name) : null) : null;
+        // A type's own name in the language the login reads: the English one when it asked for English.
+        $label = fn (VehicleType $t) => UiTranslator::wantsEnglish() ? ($t->name ?: $t->name_ar) : ($t->name_ar ?: $t->name);
+        $typeName = fn (?int $id) => $id ? (($t = $types->firstWhere('id', $id)) ? $label($t) : null) : null;
 
         $active = VehicleAssignment::withoutGlobalScopes()
             ->where('company_id', $companyId)
@@ -123,7 +125,7 @@ class VehicleAssignmentBoardService
         return [
             'drivers' => $drivers,
             'vehicles' => $vehicles,
-            'types' => $types->map(fn (VehicleType $t) => ['id' => $t->id, 'name' => $t->name_ar ?: $t->name])->values()->all(),
+            'types' => $types->map(fn (VehicleType $t) => ['id' => $t->id, 'name' => $label($t)])->values()->all(),
             'summary' => [
                 'drivers_without_vehicle' => count(array_filter($drivers, fn ($d) => $d['vehicle'] === null && in_array($d['status'], ['active', 'probation'], true))),
                 'drivers_with_vehicle' => count(array_filter($drivers, fn ($d) => $d['vehicle'] !== null)),

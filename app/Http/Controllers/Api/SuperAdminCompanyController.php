@@ -34,6 +34,12 @@ class SuperAdminCompanyController extends Controller
                     'name'            => $c->name,
                     'name_ar'         => $c->name_ar,
                     'code'            => $c->code,
+                    // The edit form opens from this row: without these it showed them empty and a
+                    // save — of the name only — wiped them.
+                    'phone'           => $c->phone,
+                    'email'           => $c->email,
+                    'address'         => $c->address,
+                    'tax_number'      => $c->tax_number,
                     'logo_path'       => $c->logo_path,
                     'is_active'       => $c->is_active,
                     'currency'        => $c->currency,

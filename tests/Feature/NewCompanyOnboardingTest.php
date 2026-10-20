@@ -196,6 +196,21 @@ class NewCompanyOnboardingTest extends TestCase
         $this->assertSame(1, VehicleType::withoutGlobalScopes()->where('company_id', $companyId)->where('name', 'Small Car')->count());
     }
 
+    public function test_the_companies_list_carries_the_contact_details_the_edit_form_opens_with(): void
+    {
+        $id = $this->actingAs($this->platformOwner)->postJson('/api/admin/companies', [
+            'name' => 'Contact Co', 'name_ar' => 'شركة الاتصال', 'code' => 'contactco',
+            'phone' => '22990011', 'email' => 'info@contact.test', 'address' => 'الري', 'tax_number' => 'TAX-1',
+        ])->assertCreated()->json('company.id');
+
+        $row = collect($this->actingAs($this->platformOwner)->getJson('/api/admin/companies')->assertOk()->json('companies'))
+            ->firstWhere('id', $id);
+
+        // The edit form is filled from this row; a missing field opened empty and a save wiped it.
+        $this->assertSame(['22990011', 'info@contact.test', 'الري', 'TAX-1'],
+            [$row['phone'], $row['email'], $row['address'], $row['tax_number']]);
+    }
+
     /**
      * Every screen a new company opens on its first day reads an empty company. A report that
      * divides by a count of zero, or reaches for a first row that is not there, would greet the

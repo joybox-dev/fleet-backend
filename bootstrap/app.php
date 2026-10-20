@@ -5,6 +5,7 @@ use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\RequirePermission;
 use App\Http\Middleware\SetCurrentCompany;
 use App\Http\Middleware\SuperAdminOnly;
+use App\Http\Middleware\TranslateResponse;
 use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -23,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Sanctum token auth for all /api/* routes
         $middleware->api(append: [
             EnsureFrontendRequestsAreStateful::class,
+            TranslateResponse::class,
         ]);
 
         // Register named middleware
