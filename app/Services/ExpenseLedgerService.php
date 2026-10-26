@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CompanyExpense;
 use App\Models\DriverExpense;
 use App\Models\Employee;
+use App\Models\OperationalAdvance;
 use App\Models\Vehicle;
 use App\Models\VehicleExpense;
 use App\Models\Violation;
@@ -139,12 +140,18 @@ class ExpenseLedgerService
             ->where('company_id', $companyId)
             ->get(['id', 'plate_number'])->keyBy('id');
 
+        $holders = OperationalAdvance::withoutGlobalScopes()->where('company_id', $companyId)
+            ->whereIn('id', array_filter(array_column($rows, 'operational_advance_id')))
+            ->with(['employee' => fn ($q) => $q->withoutGlobalScopes()->select('id', 'name')])
+            ->get(['id', 'employee_id'])->keyBy('id');
+
         foreach ($rows as &$r) {
             $e = $r['employee_id'] ? $employees->get($r['employee_id']) : null;
             $v = $r['vehicle_id'] ? $vehicles->get($r['vehicle_id']) : null;
             $r['employee_name'] = $e?->name;
             $r['employee_number'] = $e?->employee_number;
             $r['plate_number'] = $v?->plate_number;
+            $r['paid_from_name'] = $r['operational_advance_id'] ? $holders->get($r['operational_advance_id'])?->employee?->name : null;
         }
 
         return $rows;
@@ -156,7 +163,7 @@ class ExpenseLedgerService
     private static function row(
         string $kind, int $id, ?string $date, string $label,
         float $amount, float $driver, ?int $employeeId, ?int $vehicleId,
-        string $status, string $screen, ?string $reference = null
+        string $status, string $screen, ?string $reference = null, ?int $paidFrom = null, ?string $proof = null
     ): array {
         $company = round(max(0.0, $amount - $driver), 3);
 
@@ -178,6 +185,10 @@ class ExpenseLedgerService
             'status' => $status,
             'screen' => $screen,
             'reference' => $reference,
+            // The operational custody it was paid from (owner, 2026-10-26); null on records from before.
+            'operational_advance_id' => $paidFrom,
+            // The receipt, or the fine's ticket — what the old per-kind screens let you open from the row.
+            'proof_path' => $proof,
         ];
     }
 
@@ -195,7 +206,7 @@ class ExpenseLedgerService
                 (float) $v->amount, (float) $v->driver_deduction,
                 $v->employee_id, $v->vehicle_id,
                 $v->is_deducted ? 'collected' : 'pending',
-                '/violations', $v->reference_number
+                '/violations', $v->reference_number, $v->operational_advance_id, $v->photo_path
             ))->all();
     }
 
@@ -213,7 +224,7 @@ class ExpenseLedgerService
                 (float) $e->amount, (float) $e->driver_amount,
                 $e->employee_id, $e->vehicle_id,
                 $e->is_deducted ? 'collected' : 'pending',
-                '/driver-expenses', $e->vendor
+                '/driver-expenses', $e->vendor, $e->operational_advance_id, $e->receipt_path
             ))->all();
     }
 
@@ -231,7 +242,7 @@ class ExpenseLedgerService
                 $e->expense_type ?: 'مصروف مركبة',
                 (float) $e->amount, 0.0,
                 null, $e->vehicle_id,
-                'company', '/vehicle-expenses', $e->vendor
+                'company', '/vehicle-expenses', $e->vendor, $e->operational_advance_id, $e->receipt_path
             ))->all();
     }
 
@@ -254,7 +265,7 @@ class ExpenseLedgerService
                 trim(($e->category?->path() ?? 'مصروف شركة').($e->description ? ' — '.$e->description : '')),
                 (float) $e->amount, 0.0,
                 $e->employee_id, $e->vehicle_id,
-                'company', '/expenses', $e->reference ?: $e->vendor
+                'company', '/expenses', $e->reference ?: $e->vendor, $e->operational_advance_id, $e->receipt_path
             ))->all();
     }
 }

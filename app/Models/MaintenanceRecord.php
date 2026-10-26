@@ -3,13 +3,14 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use App\Traits\PaidFromCustody;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class MaintenanceRecord extends Model
 {
-    use BelongsToCompany, SoftDeletes;
+    use BelongsToCompany, PaidFromCustody, SoftDeletes;
 
     protected $fillable = [
         'vehicle_id', 'reported_by', 'approved_by',
@@ -24,6 +25,10 @@ class MaintenanceRecord extends Model
         'company_bearing_percentage',
         'accident_status',
         'accident_description',
+
+        // Paid out of an operational custody, on approval
+        'operational_advance_id',
+        'paid_at',
     ];
 
     protected $casts = [
@@ -31,6 +36,7 @@ class MaintenanceRecord extends Model
         'actual_cost' => 'decimal:3',
         'driver_deduction' => 'decimal:3',
         'is_driver_liable' => 'boolean',
+        'paid_at' => 'date:Y-m-d',
         'photo_paths' => 'array',
         'driver_bearing_percentage' => 'decimal:2',
         'company_bearing_percentage' => 'decimal:2',

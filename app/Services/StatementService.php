@@ -35,6 +35,15 @@ use Carbon\Carbon;
  */
 class StatementService
 {
+    /** What a record paid from a custody is called on its statement. */
+    private const PAID_KIND = [
+        'driver_expense' => 'مصروف على سائق',
+        'vehicle_expense' => 'مصروف مركبة',
+        'company_expense' => 'مصروف شركة',
+        'violation' => 'تسديد مخالفة',
+        'maintenance' => 'صيانة',
+    ];
+
     /**
      * @return array<string, mixed>
      */
@@ -121,14 +130,20 @@ class StatementService
                     : self::line($fund->date?->toDateString() ?? (string) $fund->date, 'سحب من رصيده'.($fund->notes ? " — {$fund->notes}" : ''), 0.0, -$amount, 'float');
             });
 
-        // Custodies he received and what he accounted for against them.
-        OperationalAdvance::withoutGlobalScopes()->where('company_id', $companyId)->where('employee_id', $employee->id)
-            ->whereIn('status', ['active', 'completed'])->with(['expenses', 'returns'])->get()
-            ->each(function (OperationalAdvance $advance) use (&$lines) {
+        // Custodies he received and what he accounted for against them: the records paid from each
+        // (CustodySpendingService), the free-text expenses from before those, and the cash returned.
+        $received = OperationalAdvance::withoutGlobalScopes()->where('company_id', $companyId)->where('employee_id', $employee->id)
+            ->whereIn('status', ['active', 'completed'])->with(['expenses', 'returns'])->get();
+        $paid = CustodySpendingService::spendsOf($received->pluck('id')->all())->groupBy('operational_advance_id');
+        $received
+            ->each(function (OperationalAdvance $advance) use (&$lines, $paid) {
                 $date = Carbon::parse($advance->date)->toDateString();
                 $lines[] = self::line($date, 'عهدة مستلمة: '.$advance->reason, round((float) $advance->amount, 3), 0.0, 'custody');
                 foreach ($advance->expenses as $expense) {
                     $lines[] = self::line(Carbon::parse($expense->date)->toDateString(), 'مصروف من العهدة: '.$expense->description, 0.0, round((float) $expense->amount, 3), 'custody_expense');
+                }
+                foreach ($paid->get($advance->id, collect()) as $record) {
+                    $lines[] = self::line($record->date, self::PAID_KIND[$record->kind].($record->label ? ': '.$record->label : ''), 0.0, $record->amount, 'custody_paid');
                 }
                 foreach ($advance->returns as $return) {
                     $lines[] = self::line(Carbon::parse($return->date)->toDateString(), 'إرجاع من العهدة: '.$advance->reason, 0.0, round((float) $return->amount, 3), 'custody_return');
@@ -261,7 +276,7 @@ class StatementService
 
     private const ORDER = [
         'opening' => 0, 'float' => 1, 'invoice' => 1, 'custody' => 2, 'earning' => 2, 'adjustment' => 3,
-        'deduction' => 4, 'custody_expense' => 5, 'float_out' => 5, 'custody_return' => 6, 'float_in' => 6,
+        'deduction' => 4, 'custody_expense' => 5, 'custody_paid' => 5, 'float_out' => 5, 'custody_return' => 6, 'float_in' => 6,
         'collection' => 7, 'payment' => 8,
     ];
 

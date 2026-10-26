@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\VehicleExpense;
-use Illuminate\Http\Request;
+use App\Services\CustodySpendingService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 
 class VehicleExpenseController extends Controller
 {
@@ -15,7 +15,7 @@ class VehicleExpenseController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = VehicleExpense::with(['vehicle:id,plate_number,make,model']);
+        $query = VehicleExpense::with(['vehicle:id,plate_number,make,model', 'custody.employee:id,name,name_ar']);
 
         if ($request->filled('vehicle_id')) {
             $query->where('vehicle_id', $request->vehicle_id);
@@ -40,23 +40,28 @@ class VehicleExpenseController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        if (!$request->user()->can('vehicle_expenses.create')) {
+        if (! $request->user()->can('vehicle_expenses.create') && ! CustodySpendingService::paysFromOwn($request)) {
             return response()->json(['message' => 'غير مصرح لك بإضافة مصاريف مركبـة.'], 403);
         }
 
         $validated = $request->validate([
-            'vehicle_id'   => 'required|exists_in_company:vehicles,id',
+            'vehicle_id' => 'required|exists_in_company:vehicles,id',
             'expense_type' => 'required|in:fuel,insurance,tires,registration,fine,repair,other',
-            'amount'       => 'required|numeric|min:0.001',
+            'amount' => 'required|numeric|min:0.001',
             'expense_date' => 'required|date',
-            'vendor'       => 'nullable|string|max:255',
+            'vendor' => 'nullable|string|max:255',
             'receipt_path' => 'nullable|string',
-            'description'  => 'nullable|string|max:500',
-            'notes'        => 'nullable|string',
+            'description' => 'nullable|string|max:500',
+            'notes' => 'nullable|string',
+            'operational_advance_id' => 'nullable|integer',
         ]);
 
+        // Paid out of an administrative employee's custody (CustodySpendingService).
+        $validated['operational_advance_id'] = CustodySpendingService::resolve($request, (float) $validated['amount'], $validated['expense_date'], 'vehicle_expense');
+
         $expense = VehicleExpense::create($validated);
-        $expense->load('vehicle:id,plate_number,make,model');
+        CustodySpendingService::refreshStatus($expense->operational_advance_id);
+        $expense->load('vehicle:id,plate_number,make,model', 'custody.employee:id,name,name_ar');
 
         return response()->json($expense, 201);
     }
@@ -67,6 +72,7 @@ class VehicleExpenseController extends Controller
     public function show(VehicleExpense $vehicleExpense): JsonResponse
     {
         $vehicleExpense->load('vehicle:id,plate_number,make,model');
+
         return response()->json($vehicleExpense);
     }
 
@@ -75,23 +81,30 @@ class VehicleExpenseController extends Controller
      */
     public function update(Request $request, VehicleExpense $vehicleExpense): JsonResponse
     {
-        if (!$request->user()->can('vehicle_expenses.edit')) {
+        if (! $request->user()->can('vehicle_expenses.edit')) {
             return response()->json(['message' => 'غير مصرح لك بتعديل مصاريف المركبة.'], 403);
         }
 
         $validated = $request->validate([
-            'vehicle_id'   => 'sometimes|exists_in_company:vehicles,id',
+            'vehicle_id' => 'sometimes|exists_in_company:vehicles,id',
             'expense_type' => 'sometimes|in:fuel,insurance,tires,registration,fine,repair,other',
-            'amount'       => 'sometimes|numeric|min:0.001',
+            'amount' => 'sometimes|numeric|min:0.001',
             'expense_date' => 'sometimes|date',
-            'vendor'       => 'nullable|string|max:255',
+            'vendor' => 'nullable|string|max:255',
             'receipt_path' => 'nullable|string',
-            'description'  => 'nullable|string|max:500',
-            'notes'        => 'nullable|string',
+            'description' => 'nullable|string|max:500',
+            'notes' => 'nullable|string',
+            'operational_advance_id' => 'nullable|integer',
         ]);
 
+        $wasPaidFrom = $vehicleExpense->operational_advance_id;
+        $validated['operational_advance_id'] = CustodySpendingService::resolve($request, (float) ($validated['amount'] ?? $vehicleExpense->amount),
+            $validated['expense_date'] ?? $vehicleExpense->expense_date?->toDateString(), 'vehicle_expense', $vehicleExpense);
+
         $vehicleExpense->update($validated);
-        $vehicleExpense->load('vehicle:id,plate_number,make,model');
+        CustodySpendingService::refreshStatus($wasPaidFrom);
+        CustodySpendingService::refreshStatus($vehicleExpense->operational_advance_id);
+        $vehicleExpense->load('vehicle:id,plate_number,make,model', 'custody.employee:id,name,name_ar');
 
         return response()->json($vehicleExpense);
     }
@@ -101,11 +114,13 @@ class VehicleExpenseController extends Controller
      */
     public function destroy(Request $request, VehicleExpense $vehicleExpense): JsonResponse
     {
-        if (!$request->user()->can('vehicle_expenses.delete')) {
+        if (! $request->user()->can('vehicle_expenses.delete')) {
             return response()->json(['message' => 'غير مصرح لك بحذف مصاريف المركبة.'], 403);
         }
 
         $vehicleExpense->delete();
+        CustodySpendingService::refreshStatus($vehicleExpense->operational_advance_id);
+
         return response()->json(['message' => 'تم الحذف.']);
     }
 
@@ -135,7 +150,7 @@ class VehicleExpenseController extends Controller
         $grandTotal = $byType->sum('total');
 
         return response()->json([
-            'by_type'     => $byType,
+            'by_type' => $byType,
             'grand_total' => round($grandTotal, 3),
         ]);
     }

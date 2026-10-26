@@ -17,6 +17,7 @@ use App\Models\Vehicle;
 use App\Services\VehicleFixedCostService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Tests\Concerns\PaysFromCustody;
 use Tests\TestCase;
 
 /**
@@ -29,6 +30,7 @@ use Tests\TestCase;
  */
 class CompanyExpensesAndProfitLossTest extends TestCase
 {
+    use PaysFromCustody;
     use RefreshDatabase;
 
     private Company $company;
@@ -124,7 +126,7 @@ class CompanyExpensesAndProfitLossTest extends TestCase
 
         $id = $this->postJson('/api/company-expenses', [
             'expense_category_id' => $rent->id, 'amount' => 350, 'expense_date' => '2026-05-01',
-            'description' => 'إيجار أيار', 'paid_via' => 'bank', 'reference' => 'TR-1',
+            'description' => 'إيجار أيار', 'reference' => 'TR-1', 'operational_advance_id' => $this->custody($this->company->id),
         ])->assertCreated()->json('data.id');
 
         $list = $this->getJson('/api/company-expenses?from=2026-05-01&to=2026-05-31')->assertOk()->json();
@@ -136,9 +138,12 @@ class CompanyExpensesAndProfitLossTest extends TestCase
         $this->assertSame(350.0, (float) $row['company']);
         $this->assertSame(0.0, (float) $row['driver']);
         $this->assertStringContainsString('إيجار مكتب', $row['label']);
+        $this->assertArrayHasKey('proof_path', $row);
+        $this->assertNotNull($row['paid_from_name']);
 
         $this->putJson("/api/company-expenses/{$id}", ['amount' => 360])->assertOk();
         $this->assertSame(360.0, (float) CompanyExpense::find($id)->amount);
+        $this->assertSame('custody', CompanyExpense::find($id)->paid_via);
 
         // A role without the module may not record one.
         Role::create(['name' => 'إجازات', 'company_id' => $this->company->id, 'allowed_modules' => ['leaves.view']]);

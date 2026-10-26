@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\PaysFromCustody;
 use Tests\TestCase;
 
 /**
@@ -25,6 +26,7 @@ use Tests\TestCase;
  */
 class EveryDeductionCarriesItsProofTest extends TestCase
 {
+    use PaysFromCustody;
     use RefreshDatabase;
 
     private Company $company;
@@ -138,7 +140,7 @@ class EveryDeductionCarriesItsProofTest extends TestCase
         $this->postJson('/api/driver-expenses', $payload)
             ->assertStatus(422)->assertJsonValidationErrors('receipt_path');
 
-        $this->postJson('/api/driver-expenses', $payload + ['receipt_path' => 'expenses/r.jpg'])
+        $this->postJson('/api/driver-expenses', $payload + ['receipt_path' => 'expenses/r.jpg', 'operational_advance_id' => $this->custody($this->company->id)])
             ->assertSuccessful();
     }
 

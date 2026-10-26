@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use App\Traits\PaidFromCustody;
 use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -12,7 +13,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Violation extends Model
 {
-    use BelongsToCompany, SoftDeletes;
+    use BelongsToCompany, PaidFromCustody, SoftDeletes;
 
     protected $fillable = [
         'employee_id', 'vehicle_id', 'created_by', 'violation_date',
@@ -21,6 +22,7 @@ class Violation extends Model
         'notes', 'erp_id', 'erp_synced_at', 'erp_sync_status',
         'split_mode', 'driver_share', 'contract_share', 'charge_contract_id',
         'manual_audit_reason', 'is_driver_override', 'is_contract_override', 'assignment_override_reason',
+        'operational_advance_id', 'paid_at',
     ];
 
     protected $casts = [
@@ -28,6 +30,7 @@ class Violation extends Model
         'driver_deduction' => 'decimal:3',
         'is_driver_liable' => 'boolean',
         'is_deducted' => 'boolean',
+        'paid_at' => 'date:Y-m-d',
         'driver_share' => 'decimal:3',
         'contract_share' => 'decimal:3',
         'charge_contract_id' => 'integer',

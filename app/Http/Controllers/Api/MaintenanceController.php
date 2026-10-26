@@ -6,8 +6,10 @@ use App\Helpers\ErpSync;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\MaintenanceRecord;
+use App\Models\OperationalAdvance;
 use App\Models\Vehicle;
 use App\Models\VehicleAssignment;
+use App\Services\CustodySpendingService;
 use App\Services\ErpNext\Jobs\SyncMaintenanceJob;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,7 +18,7 @@ class MaintenanceController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $records = MaintenanceRecord::with(['vehicle:id,plate_number', 'reportedBy:id,name'])
+        $records = MaintenanceRecord::with(['vehicle:id,plate_number', 'reportedBy:id,name', 'custody.employee:id,name,name_ar'])
             ->when($request->vehicle_id, fn ($q) => $q->where('vehicle_id', $request->vehicle_id))
             ->when($request->status, fn ($q) => $q->where('status', $request->status))
             ->orderByDesc('maintenance_date')
@@ -172,6 +174,10 @@ class MaintenanceController extends Controller
             return response()->json(['message' => 'غير مصرح لك بحذف سجلات الصيانة.'], 403);
         }
 
+        if ($maintenance->operational_advance_id) {
+            return response()->json(['message' => 'هذه الصيانة مدفوعة من عهدة — ألغِ الدفع أولاً.'], 422);
+        }
+
         $maintenance->delete();
 
         return response()->json(['message' => 'Record deleted.']);
@@ -232,6 +238,63 @@ class MaintenanceController extends Controller
         ErpSync::dispatch(SyncMaintenanceJob::class, $maintenance->id);
 
         return response()->json(['message' => 'Maintenance approved.', 'record' => $maintenance->fresh()]);
+    }
+
+    /**
+     * POST /api/maintenance/{maintenance}/pay — the garage was paid out of an administrative
+     * employee's custody. Approving the cost and paying it are two steps (owner, 2026-10-26): the
+     * manager approves, whoever holds the cash pays when the garage is actually paid.
+     */
+    public function pay(Request $request, MaintenanceRecord $maintenance): JsonResponse
+    {
+        if (! $request->user()->can('maintenance.edit') && ! CustodySpendingService::paysFromOwn($request)) {
+            return response()->json(['message' => 'غير مصرح لك واعتماد طلبات الصيانة.'], 403);
+        }
+        if (! in_array($maintenance->status, ['approved', 'completed'], true)) {
+            return response()->json(['message' => 'تُدفع الصيانة بعد اعتماد تكلفتها.'], 422);
+        }
+        if ($maintenance->operational_advance_id) {
+            return response()->json(['message' => 'هذه الصيانة مدفوعة أصلاً.'], 422);
+        }
+        $cost = round((float) $maintenance->actual_cost, 3);
+        if ($cost <= 0) {
+            return response()->json(['message' => 'لا تكلفة على هذه الصيانة — لا شيء يُدفع.'], 422);
+        }
+
+        $validated = $request->validate([
+            'operational_advance_id' => 'required|integer',
+            'paid_at' => 'required|date|before_or_equal:today',
+        ], [
+            'operational_advance_id.required' => 'اختر العهدة التي انصرف منها المبلغ.',
+            'paid_at.required' => 'تاريخ الدفع مطلوب.',
+            'paid_at.before_or_equal' => 'تاريخ الدفع لا يكون في المستقبل.',
+        ]);
+
+        $advance = CustodySpendingService::guard((int) $validated['operational_advance_id'], $cost, $validated['paid_at'], $request->user());
+
+        $maintenance->update(['operational_advance_id' => $advance->id, 'paid_at' => $validated['paid_at']]);
+        CustodySpendingService::refreshStatus($advance->id);
+
+        return response()->json($maintenance->fresh(['vehicle', 'custody.employee']));
+    }
+
+    /** DELETE /api/maintenance/{maintenance}/pay — the payment was recorded by mistake; the money goes back to the custody. */
+    public function unpay(Request $request, MaintenanceRecord $maintenance): JsonResponse
+    {
+        $advanceId = $maintenance->operational_advance_id;
+        if (! $advanceId) {
+            return response()->json(['message' => 'هذه الصيانة غير مدفوعة.'], 422);
+        }
+        // Whoever may pay from that custody may take the payment back; nobody else.
+        $advance = OperationalAdvance::find($advanceId);
+        if ($advance ? ! CustodySpendingService::maySpend($request->user(), $advance) : ! $request->user()->can('maintenance.edit')) {
+            return response()->json(['message' => 'لا يُسجَّل الصرف إلا على عهدتك، أو بصلاحية «إعطاء رصيد».'], 403);
+        }
+
+        $maintenance->update(['operational_advance_id' => null, 'paid_at' => null]);
+        CustodySpendingService::refreshStatus($advanceId);
+
+        return response()->json($maintenance->fresh(['vehicle']));
     }
 
     /**

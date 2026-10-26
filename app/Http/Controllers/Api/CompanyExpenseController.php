@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CompanyExpense;
 use App\Models\ExpenseCategory;
+use App\Services\CustodySpendingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -28,7 +29,7 @@ class CompanyExpenseController extends Controller
             'search' => 'nullable|string|max:120',
         ]);
 
-        $rows = CompanyExpense::with(['category.parent', 'employee:id,name,employee_number', 'vehicle:id,plate_number', 'contract:id,name'])
+        $rows = CompanyExpense::with(['category.parent', 'employee:id,name,employee_number', 'vehicle:id,plate_number', 'contract:id,name', 'custody.employee:id,name'])
             ->when($filters['from'] ?? null, fn ($q, $v) => $q->whereDate('expense_date', '>=', $v))
             ->when($filters['to'] ?? null, fn ($q, $v) => $q->whereDate('expense_date', '<=', $v))
             ->when($filters['category_id'] ?? null, function ($q, $id) {
@@ -58,18 +59,24 @@ class CompanyExpenseController extends Controller
             return response()->json(['message' => 'غير مصرح لك باستعراض مصاريف الشركة.'], 403);
         }
 
-        return response()->json(['data' => self::row($companyExpense->load(['category.parent', 'employee', 'vehicle', 'contract']))]);
+        return response()->json(['data' => self::row($companyExpense->load(['category.parent', 'employee', 'vehicle', 'contract', 'custody.employee']))]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        if (! $request->user()->can('company_expenses.create')) {
+        if (! $request->user()->can('company_expenses.create') && ! CustodySpendingService::paysFromOwn($request)) {
             return response()->json(['message' => 'غير مصرح لك بتسجيل مصاريف الشركة.'], 403);
         }
 
-        $expense = CompanyExpense::create($this->validated($request) + ['created_by' => $request->user()->id]);
+        $data = $this->validated($request);
+        // Paid out of an administrative employee's custody, like every other expense (CustodySpendingService).
+        $data['operational_advance_id'] = CustodySpendingService::resolve($request, (float) $data['amount'], $data['expense_date'], 'company_expense');
+        $data['paid_via'] = 'custody';
 
-        return response()->json(['data' => self::row($expense->load(['category.parent', 'employee', 'vehicle', 'contract']))], 201);
+        $expense = CompanyExpense::create($data + ['created_by' => $request->user()->id]);
+        CustodySpendingService::refreshStatus($expense->operational_advance_id);
+
+        return response()->json(['data' => self::row($expense->load(['category.parent', 'employee', 'vehicle', 'contract', 'custody.employee']))], 201);
     }
 
     public function update(Request $request, CompanyExpense $companyExpense): JsonResponse
@@ -78,9 +85,19 @@ class CompanyExpenseController extends Controller
             return response()->json(['message' => 'غير مصرح لك بتعديل مصاريف الشركة.'], 403);
         }
 
-        $companyExpense->update($this->validated($request, true));
+        $data = $this->validated($request, true);
+        $wasPaidFrom = $companyExpense->operational_advance_id;
+        $data['operational_advance_id'] = CustodySpendingService::resolve($request, (float) ($data['amount'] ?? $companyExpense->amount),
+            $data['expense_date'] ?? $companyExpense->expense_date?->toDateString(), 'company_expense', $companyExpense);
+        if ($data['operational_advance_id']) {
+            $data['paid_via'] = 'custody';
+        }
 
-        return response()->json(['data' => self::row($companyExpense->fresh(['category.parent', 'employee', 'vehicle', 'contract']))]);
+        $companyExpense->update($data);
+        CustodySpendingService::refreshStatus($wasPaidFrom);
+        CustodySpendingService::refreshStatus($companyExpense->operational_advance_id);
+
+        return response()->json(['data' => self::row($companyExpense->fresh(['category.parent', 'employee', 'vehicle', 'contract', 'custody.employee']))]);
     }
 
     public function destroy(Request $request, CompanyExpense $companyExpense): JsonResponse
@@ -90,6 +107,7 @@ class CompanyExpenseController extends Controller
         }
 
         $companyExpense->delete();
+        CustodySpendingService::refreshStatus($companyExpense->operational_advance_id);
 
         return response()->json(['message' => 'تم الحذف']);
     }
@@ -112,6 +130,7 @@ class CompanyExpenseController extends Controller
             'vehicle_id' => ['nullable', 'integer', Rule::exists('vehicles', 'id')->where('company_id', $companyId)],
             'contract_id' => ['nullable', 'integer', Rule::exists('contracts', 'id')->where('company_id', $companyId)],
             'receipt_path' => ['nullable', 'string', 'max:255'],
+            'operational_advance_id' => ['nullable', 'integer'],
         ], [
             'expense_category_id.required' => 'اختر بند المصروف.',
             'amount.required' => 'المبلغ مطلوب.',
@@ -144,6 +163,8 @@ class CompanyExpenseController extends Controller
             'contract_id' => $e->contract_id,
             'contract_name' => $e->contract?->name,
             'receipt_path' => $e->receipt_path,
+            'operational_advance_id' => $e->operational_advance_id,
+            'custody_employee_name' => $e->custody?->employee?->name,
         ];
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\DriverExpense;
 use App\Services\ContractScopeService;
+use App\Services\CustodySpendingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -30,7 +31,7 @@ class DriverExpenseController extends Controller
         $companyId = app('current_company_id');
         $allowedDriverIds = ContractScopeService::getAllocatedDriverIds($request->user());
 
-        $query = DriverExpense::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar'])
+        $query = DriverExpense::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar', 'custody.employee:id,name,name_ar'])
             ->where('company_id', $companyId)
             ->when($allowedDriverIds !== null, fn ($q) => $q->whereIn('employee_id', $allowedDriverIds));
 
@@ -99,7 +100,7 @@ class DriverExpenseController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        if (! $request->user()->can('driver_expenses.create') && ! $request->user()->can('employees.create') && ! $request->user()->can('payroll.create')) {
+        if (! $request->user()->can('driver_expenses.create') && ! $request->user()->can('employees.create') && ! $request->user()->can('payroll.create') && ! CustodySpendingService::paysFromOwn($request)) {
             return response()->json(['message' => 'غير مصرح لك بإضافة مصاريف السائقين.'], 403);
         }
 
@@ -120,6 +121,7 @@ class DriverExpenseController extends Controller
             'receipt_path' => 'nullable|string|max:255|required_if:borne_by,driver,split',
             'description' => 'nullable|string|max:1000',
             'notes' => 'nullable|string|max:1000',
+            'operational_advance_id' => 'nullable|integer',
         ], self::MESSAGES);
 
         $amount = (float) $validated['amount'];
@@ -139,16 +141,20 @@ class DriverExpenseController extends Controller
         $validated['company_id'] = $companyId;
         $validated['company_amount'] = $companyAmount;
         $validated['driver_amount'] = $driverAmount;
+        // Paid out of an administrative employee's custody — the whole amount, the driver's share too:
+        // the custody pays the station or the garage, and the driver's share comes back through payroll.
+        $validated['operational_advance_id'] = CustodySpendingService::resolve($request, $amount, $validated['expense_date'], 'driver_expense');
 
         $expense = DriverExpense::create($validated);
-        $expense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        CustodySpendingService::refreshStatus($expense->operational_advance_id);
+        $expense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar', 'custody.employee:id,name,name_ar']);
 
         return response()->json($expense, 201);
     }
 
     public function show(DriverExpense $driverExpense): JsonResponse
     {
-        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar', 'custody.employee:id,name,name_ar']);
 
         return response()->json($driverExpense);
     }
@@ -175,6 +181,7 @@ class DriverExpenseController extends Controller
             'receipt_path' => 'nullable|string|max:255|required_if:borne_by,driver,split',
             'description' => 'nullable|string|max:1000',
             'notes' => 'nullable|string|max:1000',
+            'operational_advance_id' => 'nullable|integer',
         ], self::MESSAGES);
 
         $amount = (float) $validated['amount'];
@@ -193,9 +200,13 @@ class DriverExpenseController extends Controller
 
         $validated['company_amount'] = $companyAmount;
         $validated['driver_amount'] = $driverAmount;
+        $wasPaidFrom = $driverExpense->operational_advance_id;
+        $validated['operational_advance_id'] = CustodySpendingService::resolve($request, $amount, $validated['expense_date'], 'driver_expense', $driverExpense);
 
         $driverExpense->update($validated);
-        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar']);
+        CustodySpendingService::refreshStatus($wasPaidFrom);
+        CustodySpendingService::refreshStatus($driverExpense->operational_advance_id);
+        $driverExpense->load(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'expenseType:id,name,name_ar', 'custody.employee:id,name,name_ar']);
 
         return response()->json($driverExpense);
     }
@@ -211,6 +222,7 @@ class DriverExpenseController extends Controller
         }
 
         $driverExpense->delete();
+        CustodySpendingService::refreshStatus($driverExpense->operational_advance_id);
 
         return response()->json(['message' => 'تم حذف مصروف السائق بنجاح.']);
     }

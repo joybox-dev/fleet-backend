@@ -4,8 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
+use App\Models\ExpenseCategory;
+use App\Models\MaintenanceRecord;
 use App\Models\OperationalAdvance;
 use App\Models\OperationalAdvanceFund;
+use App\Models\Vehicle;
+use App\Models\VehicleExpenseType;
+use App\Models\Violation;
+use App\Services\CustodySpendingService;
 use App\Services\OperationalFundService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,14 +47,17 @@ class OperationalAdvanceController extends Controller
             ->when($employeeId, fn ($q) => $q->where('employee_id', $employeeId))
             ->orderByDesc('date')
             ->orderByDesc('id')
-            ->get()
-            ->map(function (OperationalAdvance $advance) {
-                $totalExpenses = $advance->expenses->sum('amount');
-                $totalReturns = $advance->returns->sum('amount');
-                $advance->remaining_balance = max(0, $advance->amount - $totalExpenses - $totalReturns);
+            ->get();
 
-                return $advance;
-            });
+        // What each custody paid for: the records paid from it (CustodySpendingService), next to
+        // the free-text expenses recorded on it before custodies paid for real records.
+        $spends = CustodySpendingService::spendsOf($advances->pluck('id')->all())->groupBy('operational_advance_id');
+        $advances = $advances->map(function (OperationalAdvance $advance) use ($spends) {
+            $advance->paid_records = $spends->get($advance->id, collect())->values();
+            $advance->remaining_balance = max(0, CustodySpendingService::remaining($advance));
+
+            return $advance;
+        });
 
         return response()->json($advances);
     }
@@ -138,37 +147,15 @@ class OperationalAdvanceController extends Controller
         return response()->json($advance);
     }
 
-    public function registerExpense(Request $request, $id): JsonResponse
+    public function registerExpense(): JsonResponse
     {
-        $advance = OperationalAdvance::where('company_id', app('current_company_id'))
-            ->with(['expenses', 'returns'])
-            ->findOrFail($id);
-
-        if ($advance->status !== 'active') {
-            return response()->json(['message' => 'لا يمكن تسجيل مصروفات على سلفة غير نشطة.'], 422);
-        }
-
-        $totalExpenses = $advance->expenses->sum('amount');
-        $totalReturns = $advance->returns->sum('amount');
-        $remaining = $advance->amount - $totalExpenses - $totalReturns;
-
-        $validated = $request->validate([
-            'amount' => 'required|numeric|min:0.001|max:'.$remaining,
-            'date' => 'required|date',
-            'description' => 'required|string|max:255',
-            'contract_id' => 'nullable|exists_in_company:contracts,id',
-            'receipt_path' => 'nullable|string|max:255',
-        ]);
-
-        $expense = $advance->expenses()->create($validated);
-
-        // Check if balance reached exactly 0
-        $newRemaining = $remaining - $expense->amount;
-        if (abs($newRemaining) < 0.0001) {
-            $advance->update(['status' => 'completed']);
-        }
-
-        return response()->json($expense, 201);
+        // Since 2026-10-26 a custody pays for real records only — a driver or vehicle expense, a
+        // company expense, a fine, a maintenance — each recorded on its own screen with this custody
+        // named as where the money came from. The free-text expenses recorded before stay on their custodies,
+        // and no new one is accepted.
+        return response()->json([
+            'message' => 'الصرف من العهدة لم يعد وصفاً حراً — سجّل المصروف أو المخالفة أو الصيانة من شاشتها، واختر هذه العهدة.',
+        ], 422);
     }
 
     public function registerReturn(Request $request, $id): JsonResponse
@@ -181,9 +168,7 @@ class OperationalAdvanceController extends Controller
             return response()->json(['message' => 'لا يمكن تسجيل مرتجعات على سلفة غير نشطة.'], 422);
         }
 
-        $totalExpenses = $advance->expenses->sum('amount');
-        $totalReturns = $advance->returns->sum('amount');
-        $remaining = $advance->amount - $totalExpenses - $totalReturns;
+        $remaining = max(0, CustodySpendingService::remaining($advance));
 
         $validated = $request->validate([
             'amount' => 'required|numeric|min:0.001|max:'.$remaining,
@@ -191,14 +176,106 @@ class OperationalAdvanceController extends Controller
         ]);
 
         $return = $advance->returns()->create($validated);
-
-        // Check if balance reached exactly 0
-        $newRemaining = $remaining - $return->amount;
-        if (abs($newRemaining) < 0.0001) {
-            $advance->update(['status' => 'completed']);
-        }
+        CustodySpendingService::refreshStatus($advance->id);
 
         return response()->json($return, 201);
+    }
+
+    /**
+     * GET /api/operational-advances/spendable — the custodies a payment may come from: the ones the
+     * login holds, or every one in use with «إعطاء رصيد»; each with what is left in it.
+     */
+    public function spendable(Request $request): JsonResponse
+    {
+        $companyId = (int) app('current_company_id');
+        $user = $request->user();
+        $own = OperationalFundService::seesAll($user) ? null : OperationalFundService::employeeFor($user, $companyId);
+        if (! OperationalFundService::seesAll($user) && ! $own) {
+            return response()->json([]);
+        }
+
+        $rows = OperationalAdvance::with('employee:id,name,name_ar')
+            ->where('company_id', $companyId)
+            ->where('status', 'active')
+            ->when($own, fn ($q) => $q->where('employee_id', $own->id))
+            ->orderBy('date')
+            ->get()
+            ->map(fn (OperationalAdvance $a) => [
+                'id' => $a->id,
+                'employee_id' => $a->employee_id,
+                'employee_name' => $a->employee?->name,
+                'employee_name_ar' => $a->employee?->name_ar,
+                'reason' => $a->reason,
+                'date' => $a->date?->toDateString(),
+                'amount' => round((float) $a->amount, 3),
+                'remaining' => max(0, CustodySpendingService::remaining($a)),
+            ])
+            ->filter(fn ($a) => $a['remaining'] > 0)
+            ->values();
+
+        return response()->json($rows);
+    }
+
+    /**
+     * GET /api/operational-advances/workspace — «عهدتي»: everything the employee holding the cash
+     * needs on one screen. The custodies the login may pay from, what each paid for, what is waiting
+     * to be paid (fines not yet paid, maintenance approved and not yet paid), and the short lookups
+     * the payment forms need — sent here because a holder may have none of the screens they come
+     * from, and a refused lookup would blank the form.
+     */
+    public function workspace(Request $request): JsonResponse
+    {
+        $custodies = collect($this->spendable($request)->getData(true));
+        if ($custodies->isEmpty()) {
+            return response()->json(['custodies' => [], 'awaiting' => ['violations' => [], 'maintenance' => []], 'lookups' => null]);
+        }
+
+        $spends = CustodySpendingService::spendsOf($custodies->pluck('id')->all())->groupBy('operational_advance_id');
+        $custodies = $custodies->map(fn (array $c) => $c + ['paid_records' => $spends->get($c['id'], collect())->values()->all()]);
+
+        // Waiting to be paid: only what was recorded since custodies paid for everything — older
+        // fines and repairs were paid the old way and are not owed by anyone's custody.
+        $since = CustodySpendingService::SINCE;
+        $violations = Violation::with(['employee:id,name,name_ar', 'vehicle:id,plate_number'])
+            ->whereNull('operational_advance_id')
+            ->where('created_at', '>=', $since)
+            ->orderBy('violation_date')
+            ->get(['id', 'employee_id', 'vehicle_id', 'violation_date', 'violation_type', 'reference_number', 'amount'])
+            ->map(fn (Violation $v) => [
+                'id' => $v->id, 'date' => substr((string) $v->violation_date, 0, 10), 'label' => $v->violation_type,
+                'reference' => $v->reference_number, 'amount' => round((float) $v->amount, 3),
+                'employee_name' => $v->employee?->name, 'plate_number' => $v->vehicle?->plate_number,
+            ])->values();
+        $maintenance = MaintenanceRecord::with('vehicle:id,plate_number')
+            ->whereIn('status', ['approved', 'completed'])
+            ->whereNull('operational_advance_id')
+            ->where('actual_cost', '>', 0)
+            ->where('approved_at', '>=', $since)
+            ->orderBy('approved_at')
+            ->get(['id', 'vehicle_id', 'maintenance_type', 'garage_name', 'maintenance_date', 'actual_cost'])
+            ->map(fn (MaintenanceRecord $m) => [
+                'id' => $m->id, 'date' => substr((string) $m->maintenance_date, 0, 10), 'label' => $m->garage_name,
+                'type' => $m->maintenance_type, 'amount' => round((float) $m->actual_cost, 3),
+                'plate_number' => $m->vehicle?->plate_number,
+            ])->values();
+
+        $companyId = (int) app('current_company_id');
+        ExpenseCategory::ensureDefaults($companyId);
+
+        return response()->json([
+            'custodies' => $custodies->values(),
+            'awaiting' => ['violations' => $violations, 'maintenance' => $maintenance],
+            'lookups' => [
+                'drivers' => Employee::where('role_category', 'driver')->whereNotIn('status', ['terminated'])
+                    ->orderBy('name')->get(['id', 'name', 'name_ar', 'employee_number']),
+                'vehicles' => Vehicle::orderBy('plate_number')->get(['id', 'plate_number']),
+                'expense_types' => VehicleExpenseType::orderBy('id')->get(['id', 'name', 'name_ar']),
+                'categories' => ExpenseCategory::whereNull('parent_id')->where('is_active', true)
+                    ->with(['children' => fn ($q) => $q->where('is_active', true)->orderBy('sort_order')->orderBy('id')])
+                    ->orderBy('sort_order')->orderBy('id')->get(['id', 'name_ar'])
+                    ->map(fn (ExpenseCategory $c) => ['id' => $c->id, 'name_ar' => $c->name_ar, 'children' => $c->children->map(fn ($i) => ['id' => $i->id, 'name_ar' => $i->name_ar])->values()]),
+            ],
+        ]);
     }
 
     /**

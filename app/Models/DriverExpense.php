@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use App\Traits\PaidFromCustody;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class DriverExpense extends Model
 {
-    use BelongsToCompany, HasFactory, SoftDeletes;
+    use BelongsToCompany, HasFactory, PaidFromCustody, SoftDeletes;
 
     protected $fillable = [
         'company_id',
@@ -29,6 +30,7 @@ class DriverExpense extends Model
         'notes',
         'is_deducted',
         'payroll_slip_id',
+        'operational_advance_id',
     ];
 
     protected $casts = [

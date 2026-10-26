@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\ConsolidatedPayrollDeduction;
 use App\Models\ConsolidatedPayrollRun;
 use App\Models\ContractAssignment;
+use App\Models\OperationalAdvance;
 use App\Models\PayrollDeductionOverride;
 use App\Models\VehicleAssignment;
 use App\Models\Violation;
 use App\Services\ContractScopeService;
+use App\Services\CustodySpendingService;
 use App\Services\WhatsAppService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,7 +23,7 @@ class ViolationController extends Controller
     {
         $allowedDriverIds = ContractScopeService::getAllocatedDriverIds($request->user());
 
-        $violations = Violation::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'chargeContract:id,name'])
+        $violations = Violation::with(['employee:id,name,name_ar,employee_number', 'vehicle:id,plate_number,make,model', 'chargeContract:id,name', 'custody.employee:id,name,name_ar'])
             ->when($allowedDriverIds !== null, fn ($q) => $q->whereIn('employee_id', $allowedDriverIds))
             ->when($request->employee_id, fn ($q) => $q->where('employee_id', $request->employee_id))
             ->when($request->vehicle_id, fn ($q) => $q->where('vehicle_id', $request->vehicle_id))
@@ -370,9 +372,16 @@ class ViolationController extends Controller
             $validated['is_driver_liable'] = $driverShare > 0;
         }
 
-        $violation->update($validated);
+        // A fine already paid from a custody: a new amount must still fit in it.
+        if ($violation->operational_advance_id && isset($validated['amount'])) {
+            CustodySpendingService::guard((int) $violation->operational_advance_id, (float) $validated['amount'],
+                $violation->paid_at?->toDateString(), $request->user(), ['violation', $violation->id], 'amount');
+        }
 
-        return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract']));
+        $violation->update($validated);
+        CustodySpendingService::refreshStatus($violation->operational_advance_id);
+
+        return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract', 'custody.employee']));
     }
 
     public function destroy(Request $request, Violation $violation): JsonResponse
@@ -384,8 +393,61 @@ class ViolationController extends Controller
         if ($violation->is_deducted) {
             return response()->json(['message' => 'Cannot delete a deducted violation.'], 403);
         }
+        if ($violation->operational_advance_id) {
+            return response()->json(['message' => 'هذه المخالفة مسدَّدة من عهدة — ألغِ التسديد أولاً.'], 422);
+        }
         $violation->delete();
 
         return response()->json(['message' => 'Violation deleted.']);
+    }
+
+    /**
+     * POST /api/violations/{violation}/pay — the fine was paid to the traffic department out of an
+     * administrative employee's custody. A fine is recorded when it arrives and paid when it is paid,
+     * so the two are separate steps; until then it stays «غير مسدَّدة».
+     */
+    public function pay(Request $request, Violation $violation): JsonResponse
+    {
+        if (! $request->user()->can('violations.edit') && ! CustodySpendingService::paysFromOwn($request)) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل المخالفات.'], 403);
+        }
+        if ($violation->operational_advance_id) {
+            return response()->json(['message' => 'هذه المخالفة مسدَّدة أصلاً.'], 422);
+        }
+
+        $validated = $request->validate([
+            'operational_advance_id' => 'required|integer',
+            'paid_at' => 'required|date|before_or_equal:today',
+        ], [
+            'operational_advance_id.required' => 'اختر العهدة التي انصرف منها المبلغ.',
+            'paid_at.required' => 'تاريخ التسديد مطلوب.',
+            'paid_at.before_or_equal' => 'تاريخ التسديد لا يكون في المستقبل.',
+        ]);
+
+        $advance = CustodySpendingService::guard((int) $validated['operational_advance_id'], (float) $violation->amount, $validated['paid_at'], $request->user());
+
+        $violation->update(['operational_advance_id' => $advance->id, 'paid_at' => $validated['paid_at']]);
+        CustodySpendingService::refreshStatus($advance->id);
+
+        return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract', 'custody.employee']));
+    }
+
+    /** DELETE /api/violations/{violation}/pay — the payment was recorded by mistake; the money goes back to the custody. */
+    public function unpay(Request $request, Violation $violation): JsonResponse
+    {
+        $advanceId = $violation->operational_advance_id;
+        if (! $advanceId) {
+            return response()->json(['message' => 'هذه المخالفة غير مسدَّدة.'], 422);
+        }
+        // Whoever may pay from that custody may take the payment back; nobody else.
+        $advance = OperationalAdvance::find($advanceId);
+        if ($advance ? ! CustodySpendingService::maySpend($request->user(), $advance) : ! $request->user()->can('violations.edit')) {
+            return response()->json(['message' => 'لا يُسجَّل الصرف إلا على عهدتك، أو بصلاحية «إعطاء رصيد».'], 403);
+        }
+
+        $violation->update(['operational_advance_id' => null, 'paid_at' => null]);
+        CustodySpendingService::refreshStatus($advanceId);
+
+        return response()->json($violation->fresh(['employee', 'vehicle', 'chargeContract']));
     }
 }

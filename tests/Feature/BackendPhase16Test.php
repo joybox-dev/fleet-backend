@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
 use App\Models\Employee;
+use App\Models\ExpenseCategory;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -169,21 +170,36 @@ class BackendPhase16Test extends TestCase
             'approved_by' => $this->adminUser->id,
         ]);
 
-        // Register expense exceeding remaining
-        $response = $this->actingAs($this->adminUser)
-            ->postJson("/api/operational-advances/{$advanceId}/expense", [
-                'amount' => 600,
-                'date' => '2026-07-05',
-                'description' => 'شراء وقود',
-            ]);
-        $response->assertStatus(422);
-
-        // Register valid expense
+        // The custody is spent on a real expense, never on free text (owner, 2026-10-26)
         $response = $this->actingAs($this->adminUser)
             ->postJson("/api/operational-advances/{$advanceId}/expense", [
                 'amount' => 300,
                 'date' => '2026-07-05',
                 'description' => 'شراء وقود',
+            ]);
+        $response->assertStatus(422);
+
+        $category = ExpenseCategory::create(['company_id' => $this->company->id, 'name_ar' => 'وقود']);
+
+        // An expense exceeding what is left in the custody is refused
+        $response = $this->actingAs($this->adminUser)
+            ->postJson('/api/company-expenses', [
+                'expense_category_id' => $category->id,
+                'amount' => 600,
+                'expense_date' => '2026-07-05',
+                'description' => 'شراء وقود',
+                'operational_advance_id' => $advanceId,
+            ]);
+        $response->assertStatus(422);
+
+        // A valid expense paid from the custody
+        $response = $this->actingAs($this->adminUser)
+            ->postJson('/api/company-expenses', [
+                'expense_category_id' => $category->id,
+                'amount' => 300,
+                'expense_date' => '2026-07-05',
+                'description' => 'شراء وقود',
+                'operational_advance_id' => $advanceId,
             ]);
         $response->assertStatus(201);
 

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use App\Traits\PaidFromCustody;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class VehicleExpense extends Model
 {
-    use BelongsToCompany, HasFactory, SoftDeletes;
+    use BelongsToCompany, HasFactory, PaidFromCustody, SoftDeletes;
 
     protected $fillable = [
         'vehicle_id',
@@ -22,6 +23,7 @@ class VehicleExpense extends Model
         'description',
         'notes',
         'company_id',
+        'operational_advance_id',
     ];
 
     protected $casts = [

@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Company;
+use App\Models\CompanyExpense;
 use App\Models\Employee;
+use App\Models\ExpenseCategory;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -114,9 +116,8 @@ class OperationalAdvanceFundTest extends TestCase
         $this->fund($this->giver, 3000);
         $advanceId = $this->give($this->giverLogin, $this->receiver, 500)->json('id');
 
-        $this->actingAs($this->giverLogin)
-            ->postJson("/api/operational-advances/{$advanceId}/expense", ['amount' => 300, 'date' => '2026-09-23', 'description' => 'وقود'])
-            ->assertStatus(201);
+        // What the custody paid for is a real record now (owner, 2026-10-26), not free text.
+        CompanyExpense::create(['expense_category_id' => ExpenseCategory::create(['name_ar' => 'وقود'])->id, 'amount' => 300, 'expense_date' => '2026-09-23', 'operational_advance_id' => $advanceId]);
         $this->assertSame(2500.0, (float) $this->myBalance($this->giverLogin)['available']);
 
         $this->actingAs($this->giverLogin)

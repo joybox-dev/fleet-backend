@@ -5,12 +5,14 @@ namespace Tests\Feature;
 use App\Models\Client;
 use App\Models\ClientCollection;
 use App\Models\Company;
+use App\Models\CompanyExpense;
 use App\Models\Contract;
 use App\Models\ContractAssignment;
 use App\Models\DailyLog;
 use App\Models\DriverExpense;
 use App\Models\DriverOpeningBalance;
 use App\Models\Employee;
+use App\Models\ExpenseCategory;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -231,7 +233,8 @@ class StatementOfAccountTest extends TestCase
 
         $this->actingAs($custodian)->postJson('/api/operational-advances/balances', ['employee_id' => $giver->id, 'kind' => 'add', 'amount' => 1000, 'date' => '2026-09-01', 'notes' => 'دفعة'])->assertCreated();
         $advanceId = $this->actingAs($giverLogin)->postJson('/api/operational-advances', ['employee_id' => $receiver->id, 'amount' => 400, 'date' => '2026-09-02', 'reason' => 'عهدة ميدانية'])->assertCreated()->json('id');
-        $this->actingAs($giverLogin)->postJson("/api/operational-advances/{$advanceId}/expense", ['amount' => 100, 'date' => '2026-09-03', 'description' => 'وقود'])->assertCreated();
+        // What a custody pays for is a real record (owner, 2026-10-26), listed under its kind.
+        CompanyExpense::create(['expense_category_id' => ExpenseCategory::create(['name_ar' => 'وقود'])->id, 'amount' => 100, 'expense_date' => '2026-09-03', 'description' => 'وقود', 'operational_advance_id' => $advanceId]);
         $this->actingAs($giverLogin)->postJson("/api/operational-advances/{$advanceId}/return", ['amount' => 50, 'date' => '2026-09-04'])->assertCreated();
 
         $giverStatement = $this->actingAs($custodian)->getJson("/api/statements/custody/{$giver->id}")->assertOk()->json();
@@ -241,7 +244,7 @@ class StatementOfAccountTest extends TestCase
         $this->assertSame('عليه', $giverStatement['closing']['side'], 'he holds the company\'s cash');
 
         $receiverStatement = $this->actingAs($receiverLogin)->getJson("/api/statements/custody/{$receiver->id}")->assertOk()->json();
-        $this->assertSame(['custody', 'custody_expense', 'custody_return'], collect($receiverStatement['lines'])->pluck('kind')->all());
+        $this->assertSame(['custody', 'custody_paid', 'custody_return'], collect($receiverStatement['lines'])->pluck('kind')->all());
         $this->assertSame(250.0, (float) $receiverStatement['closing']['amount']);
 
         // Without the «إعطاء رصيد» permission one sees one's own custody only.

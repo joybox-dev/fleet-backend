@@ -84,6 +84,10 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     // ── Operational Advances (Phase 16 - accessible to all company roles to request/view)
     // A login sees its own custodies (received or given from its float); «إعطاء رصيد» sees them all.
     Route::get('operational-advances/my-balance', [OperationalAdvanceController::class, 'myBalance']);
+    // The custodies a payment may come from — every expense, fine and maintenance names one.
+    Route::get('operational-advances/spendable', [OperationalAdvanceController::class, 'spendable']);
+    // «عهدتي» — the holder's one screen: custodies, what is waiting to be paid, the form lookups.
+    Route::get('operational-advances/workspace', [OperationalAdvanceController::class, 'workspace']);
     Route::middleware('permission:op_advances.fund')->group(function () {
         Route::get('operational-advances/balances', [OperationalAdvanceController::class, 'balances']);
         Route::post('operational-advances/balances', [OperationalAdvanceController::class, 'fund']);
@@ -141,6 +145,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::apiResource('violations', ViolationController::class)->only(['index', 'show']);
         });
         Route::apiResource('violations', ViolationController::class)->except(['index', 'show']);
+        // Paying a fine out of a custody, and taking the payment back
+        Route::post('violations/{violation}/pay', [ViolationController::class, 'pay']);
+        Route::delete('violations/{violation}/pay', [ViolationController::class, 'unpay']);
 
         // Maintenance — report + view
         Route::middleware('permission:maintenance.view')->group(function () {
@@ -148,6 +155,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('maintenance/{maintenance}', [MaintenanceController::class, 'show']);
         });
         Route::post('maintenance', [MaintenanceController::class, 'store']);
+        // Approved first, paid later out of an operational custody.
+        Route::post('maintenance/{maintenance}/pay', [MaintenanceController::class, 'pay']);
+        Route::delete('maintenance/{maintenance}/pay', [MaintenanceController::class, 'unpay']);
 
         // Cash Settlements — record handover
         Route::post('cash-settlements', [CashSettlementController::class, 'store'])->middleware('permission:cash.create');

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\BelongsToCompany;
+use App\Traits\PaidFromCustody;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -14,7 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class CompanyExpense extends Model
 {
-    use BelongsToCompany, SoftDeletes;
+    use BelongsToCompany, PaidFromCustody, SoftDeletes;
 
     public const PAID_VIA = [
         'cash' => 'نقداً',
@@ -25,6 +26,7 @@ class CompanyExpense extends Model
     protected $fillable = [
         'company_id', 'expense_category_id', 'amount', 'expense_date', 'description', 'vendor', 'reference',
         'paid_via', 'employee_id', 'vehicle_id', 'contract_id', 'receipt_path', 'created_by',
+        'operational_advance_id',
     ];
 
     protected $casts = [
