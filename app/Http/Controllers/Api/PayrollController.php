@@ -618,7 +618,7 @@ class PayrollController extends Controller
             return response()->json(['message' => 'هذا السائق ليس في كشف الشهر المعتمد.'], 422);
         }
 
-        $this->assertBankWithinSalary($run->id, $data['employee_id'], $data['bank_amount']);
+        $warning = $this->bankOverSalary($run->id, $data['employee_id'], $data['bank_amount']);
 
         $disbursement = PayrollDisbursement::create([
             'company_id' => $run->company_id,
@@ -633,6 +633,7 @@ class PayrollController extends Controller
 
         return response()->json([
             'message' => 'تم تسجيل الصرف.',
+            'warning' => $warning,
             'disbursement' => $disbursement->load('createdBy:id,name')->toRow(),
         ], 201);
     }
@@ -645,7 +646,7 @@ class PayrollController extends Controller
     public function updateDisbursement(Request $request, PayrollDisbursement $disbursement): JsonResponse
     {
         $data = $this->validatedDisbursement($request, false);
-        $this->assertBankWithinSalary(
+        $warning = $this->bankOverSalary(
             (int) $disbursement->consolidated_run_id,
             (int) $disbursement->employee_id,
             $data['bank_amount'],
@@ -661,6 +662,7 @@ class PayrollController extends Controller
 
         return response()->json([
             'message' => 'تم تعديل حركة الصرف.',
+            'warning' => $warning,
             'disbursement' => $disbursement->load('createdBy:id,name')->toRow(),
         ]);
     }
@@ -946,15 +948,16 @@ class PayrollController extends Controller
     }
 
     /**
-     * The owner's rule on the bank side of a payment: what goes through the bank in a month is at
-     * most the driver's registered salary — the bank and the ministry see that figure and nothing
-     * above it — and the rest of what he is owed is handed over in cash. Measured against the
-     * month's other transfers, so a correction is judged without counting itself.
+     * The bank side of a payment above the driver's registered salary. It used to be refused — the
+     * bank and the ministry see that figure — and the client asked for it to be flexible (2026-11-03:
+     * «الصرف يكون مرن مش اجباري»): the payment is recorded as given, and this says how far over the
+     * month's transfers now are. Measured against the month's other transfers, so a correction is
+     * judged without counting itself. Null when within the salary.
      */
-    private function assertBankWithinSalary(int $runId, int $employeeId, float $bank, ?int $excludeId = null): void
+    private function bankOverSalary(int $runId, int $employeeId, float $bank, ?int $excludeId = null): ?string
     {
         if ($bank <= 0) {
-            return;
+            return null;
         }
 
         $employee = Employee::withoutGlobalScopes()->withTrashed()->find($employeeId);
@@ -963,19 +966,17 @@ class PayrollController extends Controller
             : ['salary' => 0.0, 'transferred' => 0.0, 'available' => 0.0];
 
         if ($bank <= $allowance['available'] + 0.0005) {
-            return;
+            return null;
         }
 
         $salary = number_format($allowance['salary'], 3, '.', '').' د.ك';
         $transferred = number_format($allowance['transferred'], 3, '.', '').' د.ك';
         $available = number_format($allowance['available'], 3, '.', '').' د.ك';
 
-        $message = match (true) {
-            $allowance['salary'] <= 0 => 'لا راتب بنكي مسجَّل لهذا السائق — سجّل راتبه الرسمي في ملفه، أو اصرف المبلغ نقداً.',
-            $allowance['transferred'] > 0 => "التحويل البنكي لا يتجاوز الراتب البنكي للسائق ({$salary}): حُوِّل له هذا الشهر {$transferred} والمتاح {$available} — الباقي يُصرف نقداً.",
-            default => "التحويل البنكي لا يتجاوز الراتب البنكي للسائق ({$salary}) — الباقي يُصرف نقداً.",
+        return match (true) {
+            $allowance['salary'] <= 0 => 'سُجِّل الصرف — تنبيه: لا راتب بنكي مسجَّل لهذا السائق، والتحويل البنكي بلا راتب رسمي يقابله.',
+            $allowance['transferred'] > 0 => "سُجِّل الصرف — تنبيه: التحويل البنكي فوق الراتب البنكي للسائق ({$salary}): حُوِّل له هذا الشهر {$transferred} وكان المتاح {$available}.",
+            default => "سُجِّل الصرف — تنبيه: التحويل البنكي فوق الراتب البنكي للسائق ({$salary}).",
         };
-
-        throw ValidationException::withMessages(['bank_amount' => $message]);
     }
 }

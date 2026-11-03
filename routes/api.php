@@ -14,11 +14,11 @@ use App\Http\Controllers\Api\CustodyController;
 use App\Http\Controllers\Api\CustodyTypeController;
 use App\Http\Controllers\Api\DailyLogController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DocumentController;
 use App\Http\Controllers\Api\DriverExpenseController;
 use App\Http\Controllers\Api\DriverGuaranteeController;
 use App\Http\Controllers\Api\DriverOpeningBalanceController;
 use App\Http\Controllers\Api\EmployeeController;
-use App\Http\Controllers\Api\EmployeeDocumentController;
 use App\Http\Controllers\Api\EvaluationController;
 use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\ExpenseLedgerController;
@@ -88,6 +88,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     Route::get('operational-advances/spendable', [OperationalAdvanceController::class, 'spendable']);
     // «عهدتي» — the holder's one screen: custodies, what is waiting to be paid, the form lookups.
     Route::get('operational-advances/workspace', [OperationalAdvanceController::class, 'workspace']);
+    // «المستندات»: employee, vehicle and company documents — DocumentController checks who may see which.
+    Route::apiResource('documents', DocumentController::class)->except(['show']);
     Route::middleware('permission:op_advances.fund')->group(function () {
         Route::get('operational-advances/balances', [OperationalAdvanceController::class, 'balances']);
         Route::post('operational-advances/balances', [OperationalAdvanceController::class, 'fund']);
@@ -270,19 +272,11 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
             Route::get('employees/{employee}/balance', [EmployeeController::class, 'balance']);
             Route::get('employees/{employee}/history', [EmployeeController::class, 'history']);
-            Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index']);
         });
         Route::apiResource('employees', EmployeeController::class)->except(['index', 'show']);
 
         // One search box across contracts, employees, vehicles, clients and violations.
         Route::get('search', GlobalSearchController::class);
-
-        // Employee Documents
-        Route::middleware('permission:employees.edit')->group(function () {
-            Route::post('employees/{employee}/documents', [EmployeeDocumentController::class, 'store']);
-            Route::put('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'update']);
-            Route::delete('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'destroy']);
-        });
 
         // Evaluation Criteria (company settings) & Employee Evaluations
         Route::get('evaluation-criteria', [EvaluationController::class, 'criteriaIndex'])->middleware('permission:evaluations.view');

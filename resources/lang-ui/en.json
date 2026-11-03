@@ -749,5 +749,18 @@
   "تاريخ الدفع مطلوب.": "The payment date is required.",
   "تاريخ الدفع لا يكون في المستقبل.": "The payment date cannot be in the future.",
   "هذه الصيانة غير مدفوعة.": "This maintenance is not paid.",
-  "هذه المخالفة غير مسدَّدة.": "This fine is not paid."
+  "هذه المخالفة غير مسدَّدة.": "This fine is not paid.",
+  "غير مصرح لك باستعراض المستندات.": "You are not allowed to view documents.",
+  "غير مصرح لك بإضافة مستند هنا.": "You are not allowed to add a document here.",
+  "غير مصرح لك بتعديل هذا المستند.": "You are not allowed to edit this document.",
+  "غير مصرح لك بحذف هذا المستند.": "You are not allowed to delete this document.",
+  "اكتب اسم المستند.": "Write the document name.",
+  "أرفق ملف المستند.": "Attach the document file.",
+  "اختر لمن هذا المستند.": "Choose who this document belongs to.",
+  "الموظف أو المركبة غير موجودة.": "The employee or vehicle was not found.",
+  "تاريخ الانتهاء قبل تاريخ الإصدار.": "The expiry date is before the issue date.",
+  "المستندات": "Documents",
+  "سُجِّل الصرف — تنبيه: لا راتب بنكي مسجَّل لهذا السائق، والتحويل البنكي بلا راتب رسمي يقابله.": "Payment recorded — note: this driver has no bank salary on file, so the bank transfer has no official salary behind it.",
+  "سُجِّل الصرف — تنبيه: التحويل البنكي فوق الراتب البنكي للسائق ({1}): حُوِّل له هذا الشهر {2} وكان المتاح {3}.": "Payment recorded — note: the bank transfer is above the driver’s bank salary ({1}): {2} was transferred this month and {3} was available.",
+  "سُجِّل الصرف — تنبيه: التحويل البنكي فوق الراتب البنكي للسائق ({1}).": "Payment recorded — note: the bank transfer is above the driver’s bank salary ({1})."
 }

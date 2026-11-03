@@ -58,6 +58,9 @@ class PermissionService
         'company_expenses.view', 'company_expenses.create', 'company_expenses.edit', 'company_expenses.delete',
         'reports.view',
 
+        // Documents — employees', vehicles' and the company's own
+        'documents.view', 'documents.create', 'documents.edit', 'documents.delete',
+
         // Admin
         'settings.view',      'settings.edit',
     ];
@@ -89,6 +92,7 @@ class PermissionService
         ['key' => 'salary_advances', 'label' => 'السلف الشخصية', 'icon' => '🏦'],
         ['key' => 'op_advances', 'label' => 'السلف التشغيلية', 'icon' => '🛠️'],
         ['key' => 'company_expenses', 'label' => 'مصاريف الشركة (إدارية وعامة)', 'icon' => '🏢'],
+        ['key' => 'documents', 'label' => 'المستندات', 'icon' => '📁'],
         ['key' => 'reports', 'label' => 'التقارير والإحصائيات', 'icon' => '📈'],
         ['key' => 'settings', 'label' => 'إعدادات النظام', 'icon' => '⚙️'],
     ];
@@ -130,6 +134,7 @@ class PermissionService
             'salary_advances.view' => true, 'salary_advances.create' => true, 'salary_advances.edit' => true,
             'op_advances.view' => true, 'op_advances.create' => true, 'op_advances.edit' => true, 'op_advances.delete' => true, 'op_advances.fund' => true,
             'company_expenses.view' => true, 'company_expenses.create' => true, 'company_expenses.edit' => true, 'company_expenses.delete' => true,
+            'documents.view' => true,  'documents.create' => true,  'documents.edit' => true,  'documents.delete' => true,
             'reports.view' => true,
             'settings.view' => true,   'settings.edit' => true,
         ],

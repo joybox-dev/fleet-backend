@@ -130,7 +130,7 @@ class Employee extends Model
 
     public function documents(): HasMany
     {
-        return $this->hasMany(EmployeeDocument::class);
+        return $this->hasMany(Document::class, 'owner_id')->where('owner_type', 'employee');
     }
 
     public function evaluations(): HasMany

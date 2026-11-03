@@ -312,7 +312,8 @@ class PayrollDisbursementTest extends TestCase
      * The owner's rule: the bank never receives more than the driver's registered salary in a
      * month — that is the figure the bank and the ministry know — and the rest is cash.
      */
-    public function test_the_bank_side_of_a_month_is_capped_at_the_registered_salary(): void
+    /** Flexible since 2026-11-03 (client: «الصرف يكون مرن مش اجباري»): over the salary is recorded, with a warning. */
+    public function test_the_bank_side_above_the_registered_salary_is_recorded_with_a_warning(): void
     {
         // A clean April owing 50 against a registered salary of 30 — the March expense would
         // otherwise be charged here too (expenses are cumulative) and leave nothing to pay.
@@ -321,35 +322,52 @@ class PayrollDisbursementTest extends TestCase
         $this->approveMonth(4);
 
         $row = $this->driverRow(4);
-        fwrite(STDERR, '
-');
         $this->assertSame(50.0, (float) $row['amount_due']);
         $this->assertSame(30.0, (float) $row['bank_salary']);
         $this->assertSame(30.0, (float) $row['bank_transferable']);
 
-        $this->pay(4, ['bank_amount' => 30.5])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
-        $this->pay(4, ['bank_amount' => 50])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
-        $this->assertSame(0, PayrollDisbursement::withoutGlobalScopes()->count());
-
-        $first = $this->pay(4, ['bank_amount' => 20, 'cash_amount' => 20])->assertCreated()->json('disbursement.id');
+        // Within the salary: no warning.
+        $first = $this->pay(4, ['bank_amount' => 20, 'cash_amount' => 20])->assertCreated()->assertJsonPath('warning', null)->json('disbursement.id');
         $this->assertSame(10.0, (float) $this->driverRow(4)['bank_transferable']);
 
-        // The cap is on the month, not on each payment: a second transfer only has what is left.
-        $this->pay(4, ['bank_amount' => 10.5])->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
-        $this->pay(4, ['bank_amount' => 10])->assertCreated();
+        // The salary is on the month, not on each payment: past what is left is recorded, and said.
+        $warning = $this->pay(4, ['bank_amount' => 10.5])->assertCreated()->json('warning');
+        $this->assertStringContainsString('فوق الراتب البنكي', $warning);
+        $this->assertStringContainsString('20.000', $warning);
         $this->assertSame(0.0, (float) $this->driverRow(4)['bank_transferable']);
-        $this->pay(4, ['cash_amount' => 5])->assertCreated();
 
         // A correction is measured against the other payments, not against its own old figure.
-        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 20, 'cash_amount' => 25])->assertOk();
-        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 21, 'cash_amount' => 0])
-            ->assertStatus(422)->assertJsonValidationErrors(['bank_amount']);
+        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 19.5, 'cash_amount' => 20])->assertOk()->assertJsonPath('warning', null);
+        $this->putJson("/api/payroll/disbursements/{$first}", ['bank_amount' => 21, 'cash_amount' => 0])->assertOk()
+            ->assertJsonPath('warning', fn ($w) => str_contains((string) $w, 'فوق الراتب البنكي'));
 
-        $this->assertSame(30.0, (float) $this->driverRow(4)['disbursed_bank']);
-        $this->assertSame(30.0, (float) $this->driverRow(4)['disbursed_cash']);
+        $this->assertSame(31.5, (float) $this->driverRow(4)['disbursed_bank']);
+        $this->assertSame(0.0, (float) $this->driverRow(4)['disbursed_cash']);
     }
 
-    public function test_a_driver_with_no_registered_salary_is_paid_in_cash_only(): void
+    /**
+     * A driver who did not work a month has no row on it, and cannot be paid there; the sheet names
+     * his balance and the last month he was on, and paying him on that month's sheet clears it.
+     */
+    public function test_a_driver_owed_from_an_earlier_month_is_paid_on_the_last_sheet_he_was_on(): void
+    {
+        DriverExpense::withoutGlobalScopes()->where('employee_id', $this->driver->id)->delete();
+        ContractAssignment::withoutGlobalScopes()->where('employee_id', $this->driver->id)->update(['end_date' => '2026-04-30', 'status' => 'ended']);
+        $this->approveMonth(4);
+
+        $may = $this->getJson('/api/payroll/consolidated/2026/5')->assertOk()->json();
+        $this->assertNotContains($this->driver->id, array_column($may['drivers'], 'employee_id'));
+        $owed = collect($may['standing_balances_off_sheet'])->firstWhere('employee_id', $this->driver->id);
+        $this->assertSame([50.0, '04/2026'], [(float) $owed['balance'], $owed['from']]);
+
+        $this->pay(5, ['cash_amount' => 50])->assertStatus(422);
+        $this->pay(4, ['cash_amount' => 50, 'paid_at' => '2026-09-08'])->assertCreated();
+
+        $may = $this->getJson('/api/payroll/consolidated/2026/5')->json();
+        $this->assertNull(collect($may['standing_balances_off_sheet'])->firstWhere('employee_id', $this->driver->id));
+    }
+
+    public function test_a_driver_with_no_registered_salary_may_still_be_paid_by_bank_with_a_warning(): void
     {
         DriverExpense::withoutGlobalScopes()->where('employee_id', $this->driver->id)->delete();
         $this->driver->update(['official_salary' => 0]);
@@ -358,9 +376,9 @@ class PayrollDisbursementTest extends TestCase
         $this->assertSame(50.0, (float) $this->driverRow(4)['amount_due']);
 
         $this->assertSame(0.0, (float) $this->driverRow(4)['bank_transferable']);
-        $message = $this->pay(4, ['bank_amount' => 10])->assertStatus(422)->json('errors.bank_amount.0');
+        $message = $this->pay(4, ['bank_amount' => 10])->assertCreated()->json('warning');
         $this->assertStringContainsString('لا راتب بنكي', $message);
-        $this->pay(4, ['cash_amount' => 50])->assertCreated();
+        $this->pay(4, ['cash_amount' => 40])->assertCreated()->assertJsonPath('warning', null);
     }
 
     public function test_the_statement_lists_movements_by_date_and_lands_on_the_sheet_balance(): void
