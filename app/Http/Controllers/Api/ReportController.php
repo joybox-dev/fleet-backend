@@ -186,7 +186,7 @@ class ReportController extends Controller
             if ($contract) {
                 // A week of a Keeta-settled contract is its orders at the month's price; Keeta's
                 // incentives and its statement belong to the month, not to one of its weeks.
-                $share = $contract->keeta_settlement_from ? 0.0 : 1.0;
+                $share = $contract->keeta_settlement_from || $contract->talabat_settlement_from ? 0.0 : 1.0;
                 $totalIncome += ContractRevenueService::forContractMonth($contract, $contractLogs, 1, $share)['revenue'];
             }
         }

@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\SettingsController;
 use App\Http\Controllers\Api\StatementController;
 use App\Http\Controllers\Api\SuperAdminCompanyController;
 use App\Http\Controllers\Api\SupervisorAllocationController;
+use App\Http\Controllers\Api\TalabatSettlementController;
 use App\Http\Controllers\Api\UploadController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\VehicleExpenseController;
@@ -217,6 +218,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::get('contracts/{contract}/dashboard', [ContractDashboardController::class, 'show']);
             // Keeta's month as Keeta settles it: its statement when imported, an estimate until then.
             Route::get('contracts/{contract}/keeta', [KeetaSettlementController::class, 'show']);
+            // Talabat's month: its payment statement when imported, the orders at its rates until then.
+            Route::get('contracts/{contract}/talabat', [TalabatSettlementController::class, 'show']);
         });
         Route::apiResource('contracts', ContractController::class)->except(['index', 'show']);
         // Importing Keeta's statement or level export changes the contract's revenue — an edit of the contract.
@@ -227,6 +230,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
             Route::post('contracts/{contract}/keeta/levels/preview', [KeetaSettlementController::class, 'previewLevels']);
             Route::post('contracts/{contract}/keeta/levels', [KeetaSettlementController::class, 'storeLevels']);
             Route::delete('contracts/{contract}/keeta/levels/{snapshot}', [KeetaSettlementController::class, 'destroyLevels']);
+            Route::post('contracts/{contract}/talabat/statement/preview', [TalabatSettlementController::class, 'preview']);
+            Route::post('contracts/{contract}/talabat/statement', [TalabatSettlementController::class, 'store']);
+            Route::delete('contracts/{contract}/talabat/statement/{statement}', [TalabatSettlementController::class, 'destroy']);
         });
 
         // Roles — who may do what. Only the settings screen edits them.

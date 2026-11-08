@@ -13,6 +13,7 @@ use App\Models\KeetaInvoice;
 use App\Models\OperationalAdvance;
 use App\Models\OperationalAdvanceFund;
 use App\Models\PayrollDisbursement;
+use App\Models\TalabatStatement;
 use Carbon\Carbon;
 
 /**
@@ -196,14 +197,28 @@ class StatementService
                 $keetaMonth = KeetaRevenueService::appliesTo($contract, $y, $m);
                 $statement = $keetaMonth
                     && KeetaInvoice::withoutGlobalScopes()->where('contract_id', $contract->id)->where('year', $y)->where('month', $m)->exists();
+                // A month Talabat settles likewise; what it charges the company itself comes off the bill.
+                $talabatMonth = ! $keetaMonth && TalabatRevenueService::appliesTo($contract, $y, $m);
+                $talabat = $talabatMonth
+                    ? TalabatStatement::withoutGlobalScopes()->where('contract_id', $contract->id)->where('year', $y)->where('month', $m)->first()
+                    : null;
                 $open = Carbon::create($y, $m, 1)->gte($today);
                 $note = match (true) {
                     $statement => ' (كشف كيتا)',
                     $keetaMonth => ' (تقدير — كشف كيتا للشهر لم يُستورد بعد)',
+                    $talabat !== null => ' (كشف طلبات)',
+                    $talabatMonth => ' (تقدير — كشف طلبات للشهر لم يُستورد بعد)',
                     $open => ' (الشهر جارٍ — تقديري)',
                     default => '',
                 };
-                $lines[] = self::line(Carbon::create($y, $m, 1)->endOfMonth()->toDateString(), sprintf('مطالبة شهر %02d/%d — %s%s', $m, $y, $contract->name, $note), $amount, 0.0, 'invoice');
+                $monthEnd = Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
+                $lines[] = self::line($monthEnd, sprintf('مطالبة شهر %02d/%d — %s%s', $m, $y, $contract->name, $note), $amount, 0.0, 'invoice');
+                foreach ($talabat?->company_lines ?? [] as $charge) {
+                    $value = round((float) $charge['amount'], 3);
+                    if (abs($value) >= 0.0005) {
+                        $lines[] = self::line($monthEnd, sprintf('خصم طلبات على الشركة %02d/%d — %s', $m, $y, $charge['label']), $value > 0 ? $value : 0.0, $value < 0 ? -$value : 0.0, 'adjustment');
+                    }
+                }
             });
 
         ClientCollection::withoutGlobalScopes()->where('company_id', $companyId)->whereIn('contract_id', $contracts->pluck('id'))->get()

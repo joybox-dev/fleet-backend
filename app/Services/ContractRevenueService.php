@@ -46,6 +46,24 @@ class ContractRevenueService
             return KeetaRevenueService::asContractRevenue(KeetaRevenueService::forMonth($contract, $year, $month, collect($logs)));
         }
 
+        // Likewise a month Talabat settles: its statement, or its orders at the rates of their days.
+        if ($contract->talabat_settlement_from && ($talabatMonth = TalabatRevenueService::monthOfLogs($contract, collect($logs)))) {
+            [$year, $month] = $talabatMonth;
+            if ($fixedShare < 1.0) {
+                $dayLogs = collect($logs);
+
+                return [
+                    'revenue' => TalabatRevenueService::dayRevenue($contract, $year, $month, $dayLogs),
+                    'fixed_revenue' => 0.0,
+                    'orders' => (int) $dayLogs->sum('orders_count'),
+                    'unpriced_orders' => 0,
+                    'details' => [],
+                ];
+            }
+
+            return TalabatRevenueService::asContractRevenue(TalabatRevenueService::forMonth($contract, $year, $month, collect($logs)));
+        }
+
         $rules = self::rules($contract);
         $fixedRevenue = 0.0;
 
@@ -192,6 +210,9 @@ class ContractRevenueService
     {
         if ($contract->keeta_settlement_from && ($keetaMonth = KeetaRevenueService::monthOfLogs($contract, collect($logs)))) {
             return KeetaRevenueService::asDriverSplit(KeetaRevenueService::forMonth($contract, $keetaMonth[0], $keetaMonth[1], collect($logs)));
+        }
+        if ($contract->talabat_settlement_from && ($talabatMonth = TalabatRevenueService::monthOfLogs($contract, collect($logs)))) {
+            return TalabatRevenueService::asDriverSplit(TalabatRevenueService::forMonth($contract, $talabatMonth[0], $talabatMonth[1], collect($logs)));
         }
 
         $rules = self::rules($contract);
@@ -345,7 +366,8 @@ class ContractRevenueService
     public static function forContractVehicles(Contract $contract, iterable $logs): array
     {
         $logs = collect($logs);
-        $settledByKeeta = $contract->keeta_settlement_from && KeetaRevenueService::monthOfLogs($contract, $logs);
+        $settledByKeeta = ($contract->keeta_settlement_from && KeetaRevenueService::monthOfLogs($contract, $logs))
+            || ($contract->talabat_settlement_from && TalabatRevenueService::monthOfLogs($contract, $logs));
         $rules = self::rules($contract);
 
         $perVehicle = [];

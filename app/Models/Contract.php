@@ -73,6 +73,10 @@ class Contract extends Model
         // Set by the Keeta statement import only, never by the contract form.
         'keeta_settlement_from' => 'date',
         'keeta_pay_rules' => 'array',
+
+        // «كشف طلبات الشهري»: billed by Talabat's statement from this month, priced by these rates until it comes.
+        'talabat_settlement_from' => 'date',
+        'talabat_rates' => 'array',
     ];
 
     protected static function booted(): void

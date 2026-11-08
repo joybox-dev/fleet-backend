@@ -7,6 +7,7 @@ use App\Models\ContractPayrollRun;
 use App\Models\DailyLog;
 use App\Models\KeetaInvoice;
 use App\Models\KeetaLevelSnapshot;
+use App\Models\TalabatStatement;
 use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -94,8 +95,11 @@ class OwnerPulseService
         $keeta = [
             KeetaInvoice::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
             KeetaLevelSnapshot::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
+            // A Talabat statement likewise, and its rates or start month set on the contract.
+            TalabatStatement::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
+            Contract::withoutGlobalScopes()->where('company_id', $companyId)->selectRaw('COUNT(*) AS n, MAX(updated_at) AS u')->first(),
         ];
-        $stamp = md5(implode('|', [$logs->n, $logs->u, $runs->n, $runs->u, $runs->a, $keeta[0]->n, $keeta[0]->u, $keeta[1]->n, $keeta[1]->u]));
+        $stamp = md5(implode('|', [$logs->n, $logs->u, $runs->n, $runs->u, $runs->a, $keeta[0]->n, $keeta[0]->u, $keeta[1]->n, $keeta[1]->u, $keeta[2]->n, $keeta[2]->u, $keeta[3]->n, $keeta[3]->u]));
         $key = sprintf('owner-pulse:%d:%04d-%02d:%s', $companyId, $year, $month, $stamp);
 
         return Cache::remember(
@@ -145,7 +149,7 @@ class OwnerPulseService
             $logs = $logsByContract->get($contract->id);
             $month = ContractRevenueService::forContractMonth($contract, $logs);
             // Keeta's month is an estimate until its statement is imported; the figure says so.
-            if ($month['keeta']['estimated'] ?? false) {
+            if (($month['keeta']['estimated'] ?? false) || ($month['talabat']['estimated'] ?? false)) {
                 $estimated[] = ['contract_id' => (int) $contract->id, 'contract_name' => $contract->name, 'amount' => round((float) $month['revenue'], 3)];
             }
             $monthToDate += $month['revenue'];

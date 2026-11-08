@@ -12,6 +12,7 @@ use App\Services\ContractRevenueService;
 use App\Services\ContractScopeService;
 use App\Services\KeetaDriverPayService;
 use App\Services\KeetaRevenueService;
+use App\Services\TalabatRevenueService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -92,12 +93,17 @@ class ContractDashboardController extends Controller
         $keetaMonth = KeetaRevenueService::appliesTo($contract, $year, $month)
             ? KeetaRevenueService::forMonth($contract, $year, $month)
             : null;
+        // A month Talabat settles is split the same way, by its statement's riders or their own orders.
+        $talabatMonth = $keetaMonth === null && TalabatRevenueService::appliesTo($contract, $year, $month)
+            ? TalabatRevenueService::forMonth($contract, $year, $month)
+            : null;
+        $settledMonth = $keetaMonth ?? $talabatMonth;
         // Any other month is the contract's own bill divided among its drivers, so the rows add up
         // to it. Pricing each driver's logs alone re-tiered him on his own volume — «مركز سلطان»'s
         // rows came to 3,278.500 in 8/2026 against 2,040.400 billed — and gave every row a flat fee whole.
-        $split = $keetaMonth === null ? ContractRevenueService::forContractDrivers($contract, $dailyLogs) : null;
-        $drivers = array_map(function (array $row) use ($keetaMonth, $split) {
-            $share = ($keetaMonth ?? $split)['drivers'][(int) $row['employee_id']] ?? [];
+        $split = $settledMonth === null ? ContractRevenueService::forContractDrivers($contract, $dailyLogs) : null;
+        $drivers = array_map(function (array $row) use ($settledMonth, $split) {
+            $share = ($settledMonth ?? $split)['drivers'][(int) $row['employee_id']] ?? [];
             $row['client_revenue'] = round((float) ($share['revenue'] ?? 0.0), 3);
             // His orders the client is billed nothing for: no zone on a zone-priced contract, a type
             // with no client price. `unpriced_orders` beside it is his PAY's, which a tier-paid driver
@@ -196,6 +202,14 @@ class ContractDashboardController extends Controller
                 'estimated' => $keetaMonth['estimated'] ?? null,
                 // Drivers paid by their Keeta level this month (KeetaDriverPayService).
                 'pays_by_level' => KeetaDriverPayService::rulesFor($contract, $year, $month) !== null,
+            ],
+            // A Talabat contract gets the Talabat tab: named Talabat, or already settled by statement.
+            'talabat' => [
+                'eligible' => $contract->talabat_settlement_from !== null
+                    || preg_match('/talabat|طلبات/iu', (string) $contract->name.' '.(string) $contract->client_name) === 1,
+                'settlement_from' => $contract->talabat_settlement_from ? Carbon::parse($contract->talabat_settlement_from)->format('Y-m') : null,
+                'applies' => $talabatMonth !== null,
+                'estimated' => $talabatMonth['estimated'] ?? null,
             ],
             'assignments' => $activeAssignments,
             // employee_id => [vehicle type ids held during this month]

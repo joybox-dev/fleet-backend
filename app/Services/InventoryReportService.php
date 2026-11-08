@@ -182,9 +182,11 @@ class InventoryReportService
                     default => 'running',
                 },
                 // Billed by Keeta's statement: the price list is kept only for months before it.
-                'client_payment_methods' => $c->keeta_settlement_from
-                    ? ['keeta']
-                    : self::methodsOf($c->client_pricing_rules, $c->client_payment_method),
+                'client_payment_methods' => match (true) {
+                    (bool) $c->keeta_settlement_from => ['keeta'],
+                    (bool) $c->talabat_settlement_from => ['talabat'],
+                    default => self::methodsOf($c->client_pricing_rules, $c->client_payment_method),
+                },
                 'driver_payment_methods' => self::methodsOf($c->driver_pricing_rules, $c->driver_payment_method),
                 'drivers_count' => $driverIds->count(),
                 'vehicles_count' => $driverIds->filter(fn ($id) => $holdingOfDriver->has($id))->count(),

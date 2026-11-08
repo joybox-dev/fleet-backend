@@ -9,6 +9,7 @@ use App\Models\DailyLog;
 use App\Models\VehicleType;
 use App\Services\ContractScopeService;
 use App\Services\KeetaRevenueService;
+use App\Services\TalabatRevenueService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -144,8 +145,8 @@ class ContractController extends Controller
             'client_pricing_rules' => [
                 'required', 'array',
                 function ($attribute, $value, $fail) use ($request) {
-                    // Keeta prices its own orders; its contract's vehicle types only set driver pay.
-                    if ($request->filled('keeta_settlement_from')) {
+                    // Keeta and Talabat price their own orders; the contract's vehicle types only set driver pay.
+                    if ($request->filled('keeta_settlement_from') || $request->filled('talabat_settlement_from')) {
                         return;
                     }
                     foreach ($this->pricingRuleProblems($value, $request->input('client_payment_method'), 'client') as $problem) {
@@ -180,10 +181,11 @@ class ContractController extends Controller
             'capacity_pricing_rules' => 'nullable|array',
             // «كشف كيتا الشهري»: from this month the client is billed by Keeta's own statement.
             'keeta_settlement_from' => 'nullable|date',
-        ] + self::KEETA_PAY_RULES);
+        ] + self::KEETA_PAY_RULES + self::TALABAT_RULES);
         $keetaFrom = $this->keetaMonth($validated);
         $keetaPay = $this->keetaPay($validated);
-        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules']);
+        [$talabatFrom, $talabatRates] = $this->talabatSettings($validated);
+        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules'], $validated['talabat_settlement_from'], $validated['talabat_rates']);
 
         if (empty($validated['client_name'])) {
             $client = Client::find($validated['client_id']);
@@ -204,6 +206,7 @@ class ContractController extends Controller
         if ($keetaFrom !== false) {
             $contract->forceFill(['keeta_settlement_from' => $keetaFrom])->saveQuietly();
         }
+        $this->saveTalabat($contract, $talabatFrom, $talabatRates);
         if ($keetaPay !== false) {
             $contract->forceFill(['keeta_pay_rules' => $keetaPay])->saveQuietly();
         }
@@ -290,7 +293,8 @@ class ContractController extends Controller
                 function ($attribute, $value, $fail) use ($request, $contract) {
                     // Keeta prices its own orders; its contract's vehicle types only set driver pay.
                     $keeta = $request->exists('keeta_settlement_from') ? $request->filled('keeta_settlement_from') : $contract->keeta_settlement_from !== null;
-                    if ($keeta) {
+                    $talabat = $request->exists('talabat_settlement_from') ? $request->filled('talabat_settlement_from') : $contract->talabat_settlement_from !== null;
+                    if ($keeta || $talabat) {
                         return;
                     }
                     $method = $request->input('client_payment_method') ?? $contract->client_payment_method;
@@ -326,10 +330,11 @@ class ContractController extends Controller
             'capacity_pricing_rules' => 'nullable|array',
             // «كشف كيتا الشهري» from this month; null returns every month to the price list below.
             'keeta_settlement_from' => 'nullable|date',
-        ] + self::KEETA_PAY_RULES);
+        ] + self::KEETA_PAY_RULES + self::TALABAT_RULES);
         $keetaFrom = $this->keetaMonth($validated);
         $keetaPay = $this->keetaPay($validated);
-        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules']);
+        [$talabatFrom, $talabatRates] = $this->talabatSettings($validated);
+        unset($validated['keeta_settlement_from'], $validated['keeta_pay_rules'], $validated['talabat_settlement_from'], $validated['talabat_rates']);
 
         if (isset($validated['rate_per_order']) && ! isset($validated['default_order_commission'])) {
             $validated['default_order_commission'] = $validated['rate_per_order'];
@@ -358,6 +363,7 @@ class ContractController extends Controller
         if ($keetaFrom !== false || $keetaPay !== false) {
             KeetaRevenueService::forget();
         }
+        $this->saveTalabat($contract, $talabatFrom, $talabatRates);
 
         return response()->json(
             $contract->fresh()->toArray() + ['pricing_change_impact' => $pricingImpact]
@@ -435,6 +441,58 @@ class ContractController extends Controller
         }
 
         return $stored;
+    }
+
+    /**
+     * «كشف طلبات الشهري»: the month Talabat's statement bills from (null stops it), and its rate
+     * periods — each from a date, a pickup and a drop-off price per vehicle (null: Talabat's own sheet).
+     */
+    private const TALABAT_RULES = [
+        'talabat_settlement_from' => 'nullable|date',
+        'talabat_rates' => 'nullable|array|max:24',
+        'talabat_rates.*.from' => 'required|date',
+        'talabat_rates.*.car_pickup' => 'required|numeric|min:0|max:100',
+        'talabat_rates.*.car_dropoff' => 'required|numeric|min:0|max:100',
+        'talabat_rates.*.bike_pickup' => 'required|numeric|min:0|max:100',
+        'talabat_rates.*.bike_dropoff' => 'required|numeric|min:0|max:100',
+    ];
+
+    /**
+     * What the form sent of the Talabat settings: false for a field it left out, so an edit that does
+     * not touch Talabat leaves it as it was.
+     *
+     * @return array{0: string|false|null, 1: array<int, array<string, mixed>>|false|null}
+     */
+    private function talabatSettings(array $validated): array
+    {
+        $from = ! array_key_exists('talabat_settlement_from', $validated) ? false
+            : ($validated['talabat_settlement_from'] === null ? null : Carbon::parse($validated['talabat_settlement_from'])->startOfMonth()->toDateString());
+        $rates = ! array_key_exists('talabat_rates', $validated) ? false
+            : ($validated['talabat_rates'] === null || $validated['talabat_rates'] === [] ? null : array_values(array_map(fn (array $r) => [
+                'from' => Carbon::parse($r['from'])->toDateString(),
+                'car_pickup' => round((float) $r['car_pickup'], 3),
+                'car_dropoff' => round((float) $r['car_dropoff'], 3),
+                'bike_pickup' => round((float) $r['bike_pickup'], 3),
+                'bike_dropoff' => round((float) $r['bike_dropoff'], 3),
+            ], $validated['talabat_rates'])));
+
+        return [$from, $rates];
+    }
+
+    private function saveTalabat(Contract $contract, string|false|null $from, array|false|null $rates): void
+    {
+        if ($from === false && $rates === false) {
+            return;
+        }
+        $changes = [];
+        if ($from !== false) {
+            $changes['talabat_settlement_from'] = $from;
+        }
+        if ($rates !== false) {
+            $changes['talabat_rates'] = $rates;
+        }
+        $contract->forceFill($changes)->saveQuietly();
+        TalabatRevenueService::forget();
     }
 
     private function keetaMonth(array $validated): string|false|null
