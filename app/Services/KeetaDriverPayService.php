@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Contract;
+use App\Models\ContractAssignment;
 use App\Models\DailyLog;
 use App\Models\Employee;
 use App\Models\KeetaInvoice;
@@ -47,6 +48,9 @@ class KeetaDriverPayService
     ];
 
     private const SALARIED = ['S', 'A', 'B'];
+
+    /** The days of a month Keeta lets a rider miss and still pay his full incentive. */
+    private const KEETA_SPARE_DAYS = 4;
 
     /** @var array<string, array<string, mixed>> */
     private static array $memo = [];
@@ -111,16 +115,21 @@ class KeetaDriverPayService
 
             $orders = (int) $rider->orders;
             $validDays = (float) $rider->valid_days;
+            // A rider who joined during the month is judged on the days from his joining only: the
+            // days before it are not his to have missed (Keeta likewise, owner 2026-11-13).
+            $joinedOn = self::joinedDuring($employee, $contract, $year, $month);
+            $daysCounted = $joinedOn ? $daysInMonth - $joinedOn->day + 1 : $daysInMonth;
             $invalidDays = $rider->invalid_days_override !== null
                 ? (float) $rider->invalid_days_override
-                : max(0.0, $daysInMonth - $validDays);
+                : max(0.0, $daysCounted - $validDays);
             $incentive = round((float) $rider->experience_incentive, 3);
-            $tier = self::tierOf($incentive, $rules);
+            $tier = self::tierOf($incentive, $rules, $validDays, $daysInMonth);
             $estimated = false;
 
             $details[] = [
                 'label' => 'من كشف كيتا: '.($tier ? "مستوى {$tier}" : 'مستوى غير معروف')." (حافز {$incentive} د.ك) · {$orders} طلب · "
-                    .self::days($validDays)." يوم صالح من {$daysInMonth}"
+                    .self::days($validDays)." يوم صالح من {$daysCounted}"
+                    .($joinedOn ? ' (انضم في '.$joinedOn->toDateString().')' : '')
                     .($rider->invalid_days_override !== null ? ' · الأيام غير الصالحة مُدخلة يدوياً: '.self::days($invalidDays) : ''),
                 'amount' => 0.0,
                 'formula' => $logged !== $orders ? "طلبات السجل اليومي {$logged}، والمعتمد طلبات كيتا {$orders}" : "طلبات السجل اليومي {$logged}",
@@ -224,8 +233,35 @@ class KeetaDriverPayService
         );
     }
 
-    /** The level whose incentive Keeta paid, or null when the amount names none of them. */
-    public static function tierOf(float $incentive, array $rules): ?string
+    /**
+     * The day the driver joined the contract, when that was after the month's first day: the
+     * earliest start of his assignments to it that reach into the month.
+     */
+    private static function joinedDuring(Employee $employee, Contract $contract, int $year, int $month): ?Carbon
+    {
+        $first = Carbon::create($year, $month, 1)->startOfDay();
+        $start = ContractAssignment::withoutGlobalScopes()
+            ->where('employee_id', $employee->id)->where('contract_id', $contract->id)
+            ->whereDate('start_date', '<=', $first->copy()->endOfMonth()->toDateString())
+            ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $first->toDateString()))
+            ->min('start_date');
+
+        if (! $start) {
+            return null;
+        }
+        $start = Carbon::parse($start)->startOfDay();
+
+        return $start->gt($first) ? $start : null;
+    }
+
+    /**
+     * The level whose incentive Keeta paid, or null when the amount names none of them.
+     *
+     * A rider who joined during the month is paid his level's incentive in part: the level's amount
+     * × his valid days ÷ (the month's days − 4) — October 2026: 170 × 26 ÷ 27 = 163.710, 50 × 25 ÷ 27
+     * = 46.295. Given his valid days, that share names the level too; the exact amount is read first.
+     */
+    public static function tierOf(float $incentive, array $rules, ?float $validDays = null, ?int $daysInMonth = null): ?string
     {
         foreach ((array) $rules['tier_incentives'] as $tier => $amount) {
             if (abs($incentive - (float) $amount) < 0.0005) {
@@ -233,7 +269,20 @@ class KeetaDriverPayService
             }
         }
 
-        return null;
+        if ($validDays === null || $daysInMonth === null || $incentive <= 0) {
+            return null;
+        }
+        $required = $daysInMonth - self::KEETA_SPARE_DAYS;
+        $matches = [];
+        foreach ((array) $rules['tier_incentives'] as $tier => $amount) {
+            $share = round((float) $amount * min($validDays, $required) / $required, 3);
+            if ((float) $amount > 0 && abs($incentive - $share) < 0.01) {
+                $matches[] = (string) $tier;
+            }
+        }
+
+        // Only an amount that names one level is read as it; two would be a guess.
+        return count($matches) === 1 ? $matches[0] : null;
     }
 
     /**

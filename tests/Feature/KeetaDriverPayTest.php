@@ -121,6 +121,25 @@ class KeetaDriverPayTest extends TestCase
         $this->assertSame(591, $sheet[$drivers['A valid, 591']->id]['orders_count'], 'Keeta\'s count is the one paid, not the 10 logged');
     }
 
+    /**
+     * A rider who joined during the month is paid his level's incentive in part — the amount × his
+     * valid days ÷ (the month's days − 4). October 2026, live: 170 × 26 ÷ 27 = 163.710 is level B,
+     * 50 × 25 ÷ 27 = 46.295 and 50 × 18 ÷ 27 = 33.335 are level C. They used to name no level, and
+     * the month's orders were left unpriced.
+     */
+    public function test_a_part_incentive_of_a_rider_who_joined_mid_month_still_names_his_level(): void
+    {
+        $rules = KeetaDriverPayService::DEFAULT_RULES;
+
+        $this->assertSame('B', KeetaDriverPayService::tierOf(163.710, $rules, 26.0, 31));
+        $this->assertSame('C', KeetaDriverPayService::tierOf(46.295, $rules, 25.0, 31));
+        $this->assertSame('C', KeetaDriverPayService::tierOf(33.335, $rules, 18.0, 31));
+        // The full amount is read as before; an amount that names no level stays unknown.
+        $this->assertSame('A', KeetaDriverPayService::tierOf(270.0, $rules));
+        $this->assertNull(KeetaDriverPayService::tierOf(100.0, $rules, 26.0, 31));
+        $this->assertNull(KeetaDriverPayService::tierOf(163.710, $rules));
+    }
+
     public function test_the_owner_can_set_a_riders_invalid_days_by_hand(): void
     {
         $invoice = $this->invoice(2026, 8);
@@ -133,6 +152,23 @@ class KeetaDriverPayTest extends TestCase
         $rider->update(['invalid_days_override' => 4]);
         KeetaRevenueService::forget();
         $this->assertEqualsWithDelta(338.5, $this->sheet(2026, 8)[$driver->id]['gross_contract_earnings'], 0.0005, '4 by hand: A salary 300 + 70 × 0.55');
+    }
+
+    /**
+     * A driver who joined during the month is judged on the days from his joining only (owner,
+     * 2026-11-13: Keeta does the same). Joined 6 August: 26 days are his, 25 valid → 1 invalid day,
+     * paid his A salary; counted from the 1st he would have 6 and be paid per order.
+     */
+    public function test_the_days_before_a_driver_joined_are_not_his_invalid_days(): void
+    {
+        $invoice = $this->invoice(2026, 8);
+        $driver = $this->driver('Joined late');
+        ContractAssignment::whereKey($this->assignments[$driver->id])->update(['start_date' => '2026-08-06']);
+        $this->logs($driver, '2026-08', 25, 18);
+        // Keeta's part incentive for A: 270 × 25 ÷ 27.
+        $this->rider($invoice, $driver, 470, 25, 250.0);
+
+        $this->assertEqualsWithDelta(338.5, $this->sheet(2026, 8)[$driver->id]['gross_contract_earnings'], 0.0005, 'A salary 300 + 70 × 0.55');
     }
 
     public function test_a_driver_who_worked_but_is_not_on_keetas_statement_holds_the_month(): void

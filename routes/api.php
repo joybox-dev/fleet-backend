@@ -85,6 +85,8 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
     // ── Operational Advances (Phase 16 - accessible to all company roles to request/view)
     // A login sees its own custodies (received or given from its float); «إعطاء رصيد» sees them all.
     Route::get('operational-advances/my-balance', [OperationalAdvanceController::class, 'myBalance']);
+    // Who a custody or a float can go to — not narrowed by a role's restriction to its contracts.
+    Route::get('operational-advances/employees', [OperationalAdvanceController::class, 'employees']);
     // The custodies a payment may come from — every expense, fine and maintenance names one.
     Route::get('operational-advances/spendable', [OperationalAdvanceController::class, 'spendable']);
     // «عهدتي» — the holder's one screen: custodies, what is waiting to be paid, the form lookups.
@@ -468,6 +470,9 @@ Route::middleware(['auth:sanctum', 'company'])->group(function () {
         });
         Route::apiResource('salary-advances', SalaryAdvanceController::class)->only(['store']);
         Route::post('salary-advances/{salaryAdvance}/cancel', [SalaryAdvanceController::class, 'cancel']);
+        Route::post('salary-advances/{salaryAdvance}/stop', [SalaryAdvanceController::class, 'stop']);
+        Route::post('salary-advances/{salaryAdvance}/transfer', [SalaryAdvanceController::class, 'transfer']);
+        Route::post('salary-advances/{salaryAdvance}/reopen', [SalaryAdvanceController::class, 'reopen']);
 
         // Operational Advances (Phase 16)
         Route::middleware('permission:op_advances.edit,op_advances.fund')->group(function () {

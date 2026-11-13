@@ -256,7 +256,7 @@ class CompanyDeductionService
                 // two advances at once, or a month closed out of turn, must still read true.
                 $index = (int) $advance->paid_installments + 1;
                 $total = max((int) $advance->total_installments, $index);
-                $label = "قسط سلفة {$index} من {$total}";
+                $label = "قسط {$advance->purposeLabel()} {$index} من {$total}";
 
                 // The owner may set this month's instalment himself — less, more, or nothing —
                 // without touching the advance's own schedule. Never more than what is left.

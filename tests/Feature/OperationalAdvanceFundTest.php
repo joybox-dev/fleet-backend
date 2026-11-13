@@ -111,6 +111,29 @@ class OperationalAdvanceFundTest extends TestCase
         $this->assertDatabaseCount('operational_advances', 2);
     }
 
+    /** A float handed and then taken back in full is no float: what he gives after it is the company's. */
+    public function test_a_float_taken_back_in_full_no_longer_funds_what_he_gives(): void
+    {
+        $this->fund($this->giver, 200)->assertStatus(201);
+        $this->fund($this->giver, 200, 'withdraw')->assertStatus(201);
+
+        $this->assertFalse((bool) $this->myBalance($this->giverLogin)['has_float']);
+        $this->give($this->giverLogin, $this->receiver, 75)->assertStatus(201)->assertJsonPath('funded_by_employee_id', null);
+    }
+
+    /** The custody form lists every administrative employee, whatever a role's contract restriction. */
+    public function test_the_custody_form_lists_the_administrative_employees_to_a_role_restricted_to_its_contracts(): void
+    {
+        Role::create(['name' => 'محاسب مقيّد', 'company_id' => $this->company->id, 'allowed_modules' => ['op_advances.view', 'op_advances.create', 'employees.view', 'employees.scope_contracts']]);
+        // An administrative employee of his own, as Assem is: the restriction then narrows the employees list.
+        [$restricted, $self] = $this->adminEmployee('restricted', 'محاسب مقيّد');
+
+        $listed = array_column($this->actingAs($restricted)->getJson('/api/employees')->assertOk()->json('data') ?? [], 'id');
+        $this->assertNotContains($this->receiver->id, $listed);
+        $ids = array_column($this->actingAs($restricted)->getJson('/api/operational-advances/employees')->assertOk()->json(), 'id');
+        $this->assertEqualsCanonicalizing([$this->giver->id, $this->receiver->id, $this->other->id, $self->id], $ids);
+    }
+
     public function test_returns_go_back_to_the_giver_and_expenses_do_not(): void
     {
         $this->fund($this->giver, 3000);

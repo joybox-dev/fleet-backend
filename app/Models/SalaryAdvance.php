@@ -13,6 +13,15 @@ class SalaryAdvance extends Model
 {
     use BelongsToCompany, HasFactory, SoftDeletes;
 
+    /** What the advance is for — each its own instalments, stopped or moved on its own. */
+    public const PURPOSES = ['cash' => 'نقدية', 'phone' => 'هاتف', 'sim' => 'خط', 'other' => 'أخرى'];
+
+    /** The line was cut: what was taken stays taken, what was left is no longer owed. */
+    public const STATUS_STOPPED = 'stopped';
+
+    /** What was left went on to another driver as an advance of its own. */
+    public const STATUS_TRANSFERRED = 'transferred';
+
     protected $fillable = [
         'employee_id',
         'approved_by',
@@ -25,6 +34,12 @@ class SalaryAdvance extends Model
         'reason',
         'voucher_path',
         'status',
+        'purpose',
+        'closed_at',
+        'closed_balance',
+        'closed_reason',
+        'transferred_from_id',
+        'transferred_to_id',
         'erp_id',
         'erp_synced_at',
         'erp_sync_status',
@@ -36,6 +51,8 @@ class SalaryAdvance extends Model
         'monthly_installment' => 'decimal:3',
         'remaining_balance' => 'decimal:3',
         'advance_date' => 'date',
+        'closed_at' => 'date',
+        'closed_balance' => 'decimal:3',
         'erp_synced_at' => 'datetime',
     ];
 
@@ -47,6 +64,24 @@ class SalaryAdvance extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function transferredTo(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'transferred_to_id')->withTrashed();
+    }
+
+    public function transferredFrom(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'transferred_from_id')->withTrashed();
+    }
+
+    /** «سلفة» for cash, «سلفة (هاتف)» for the rest — how a sheet line names it. */
+    public function purposeLabel(): string
+    {
+        $purpose = $this->purpose ?: 'cash';
+
+        return $purpose === 'cash' ? 'سلفة' : 'سلفة ('.(self::PURPOSES[$purpose] ?? $purpose).')';
     }
 
     public function deductions(): HasMany

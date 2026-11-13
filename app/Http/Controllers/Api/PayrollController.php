@@ -538,6 +538,22 @@ class PayrollController extends Controller
             ], 422);
         }
 
+        // An instalment this month took from an advance that has since been stopped or moved
+        // cannot simply go back on it: the balance it closed on was counted after that instalment,
+        // and a moved balance already sits on another driver. Undo the stop or the move first.
+        $closedAdvance = SalaryAdvance::withoutGlobalScopes()
+            ->whereIn('id', $run->advanceDeductions()->pluck('salary_advance_id'))
+            ->whereIn('status', [SalaryAdvance::STATUS_STOPPED, SalaryAdvance::STATUS_TRANSFERRED])
+            ->first();
+        if ($closedAdvance) {
+            $name = Employee::withoutGlobalScopes()->find($closedAdvance->employee_id)?->name ?? '—';
+            $what = $closedAdvance->status === SalaryAdvance::STATUS_STOPPED ? 'أُوقفت' : 'نُقلت إلى سائق آخر';
+
+            return response()->json([
+                'message' => "سلفة {$name} (#{$closedAdvance->id}) خُصم منها قسط في شهر {$month}/{$year} ثم {$what}. تراجع عن ذلك من شاشة السلف أولاً، ثم فكّ الاعتماد.",
+            ], 422);
+        }
+
         \DB::transaction(function () use ($run) {
             foreach ($run->advanceDeductions()->get() as $deduction) {
                 $advance = SalaryAdvance::withoutGlobalScopes()->find($deduction->salary_advance_id);

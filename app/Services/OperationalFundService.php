@@ -54,6 +54,11 @@ class OperationalFundService
     /**
      * One employee's float.
      *
+     * He holds one while something has been handed to him and not all taken back: a float given and
+     * then withdrawn in full is no float, and the custodies he gives after it come from the company,
+     * as before he was handed one (Assem Ismail, 2026-11: given 200 then 200 back, he was refused
+     * every custody «رصيدك المتاح 0.000»).
+     *
      * @return array{has_float: bool, funded: float, distributed: float, pending: float, active: float, returned: float, available: float, custodies: int}
      */
     public static function balanceFor(int $companyId, int $employeeId): array
@@ -75,7 +80,7 @@ class OperationalFundService
         $returned = round((float) $given->sum('returns_sum_amount'), 3);
 
         return [
-            'has_float' => $hasFloat,
+            'has_float' => $hasFloat && $funded > 0.0005,
             'funded' => $funded,
             'distributed' => $distributed,
             'pending' => round((float) $given->where('status', 'pending')->sum('amount'), 3),

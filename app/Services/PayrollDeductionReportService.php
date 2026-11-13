@@ -133,8 +133,8 @@ class PayrollDeductionReportService
             'reconciliation' => self::reconciliation($items, $sheetColumns),
             'advances_summary' => [
                 // A cancelled advance was never money out; it is counted apart, as the advances page shows it.
-                'issued_count' => $advanceRows->where('in_month', true)->where('cancelled', false)->count(),
-                'issued_amount' => round($advanceRows->where('in_month', true)->where('cancelled', false)->sum('amount'), 3),
+                'issued_count' => $advanceRows->where('in_month', true)->where('cancelled', false)->where('transferred_in', false)->count(),
+                'issued_amount' => round($advanceRows->where('in_month', true)->where('cancelled', false)->where('transferred_in', false)->sum('amount'), 3),
                 'cancelled_count' => $advanceRows->where('in_month', true)->where('cancelled', true)->count(),
                 'cancelled_amount' => round($advanceRows->where('in_month', true)->where('cancelled', true)->sum('amount'), 3),
                 'instalments_count' => $advanceRows->where('on_sheet_amount', '>', 0)->count(),
@@ -412,6 +412,8 @@ class PayrollDeductionReportService
         [$status, $statusLabel] = match (true) {
             $instalment > 0 => [self::STATUS_THIS_SHEET, $context['applied'] ? 'قسط خُصم في هذا الكشف' : 'قسط يُخصم عند اعتماد هذا الكشف'],
             $advance->status === 'cancelled' => [self::STATUS_COMPANY, 'ملغاة، لا يُخصم منها شيء'],
+            $advance->status === SalaryAdvance::STATUS_STOPPED => [self::STATUS_COMPANY, 'أُوقفت — أُسقط المتبقي '.number_format((float) $advance->closed_balance, 3)],
+            $advance->status === SalaryAdvance::STATUS_TRANSFERRED => [self::STATUS_OTHER_MONTH, 'نُقل المتبقي '.number_format((float) $advance->closed_balance, 3).' إلى سائق آخر'],
             array_key_exists($key, $context['deferred']) => [self::STATUS_DEFERRED, 'قسط هذا الشهر مؤجَّل بقرار'],
             $remainingNow <= 0 => [self::STATUS_OTHER_MONTH, 'مسدَّدة بالكامل'],
             ! isset($context['sheet_driver_ids'][$advance->employee_id]) => [self::STATUS_PENDING, 'السائق ليس على كشف هذا الشهر'],
@@ -427,6 +429,9 @@ class PayrollDeductionReportService
             'employee_name' => $employee?->name,
             'reason' => $advance->reason,
             'cancelled' => $advance->status === 'cancelled',
+            // A balance moved over from another driver: no cash left the company with it.
+            'transferred_in' => $advance->transferred_from_id !== null,
+            'purpose' => $advance->purpose ?: 'cash',
             'amount' => $amount,
             'monthly_installment' => round((float) $advance->monthly_installment, 3),
             'total_installments' => (int) $advance->total_installments,

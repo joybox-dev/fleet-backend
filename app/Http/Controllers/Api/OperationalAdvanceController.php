@@ -279,6 +279,26 @@ class OperationalAdvanceController extends Controller
     }
 
     /**
+     * GET /api/operational-advances/employees — the administrative employees a custody or a float
+     * can go to. The custody screen used to read them from the employees list, which a role
+     * restricted to its contracts narrows to those contracts' drivers: the form then had no one to
+     * choose («محاسب رواتب», 2026-11).
+     */
+    public function employees(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->can('op_advances.view') && ! $user->can('op_advances.create') && ! OperationalFundService::seesAll($user)) {
+            return response()->json(['message' => 'غير مصرح لك باستعراض العهد التشغيلية.'], 403);
+        }
+
+        return response()->json(Employee::where('company_id', (int) app('current_company_id'))
+            ->where('role_category', 'admin')
+            ->whereNotIn('status', ['terminated'])
+            ->orderBy('name')
+            ->get(['id', 'name', 'name_ar', 'employee_number', 'status', 'role_category', 'user_id']));
+    }
+
+    /**
      * GET /api/operational-advances/my-balance — the float behind the calling login, if any.
      */
     public function myBalance(Request $request): JsonResponse
