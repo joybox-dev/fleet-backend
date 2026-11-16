@@ -72,6 +72,33 @@ class KeetaDriverPayService
             return null;
         }
 
+        return self::merged($rules);
+    }
+
+    /**
+     * The level rules a driver with the personal exception «حسب مستوى كيتا» is paid by: the
+     * contract's figures, whether they pay every driver (`enabled`) or only those given the
+     * exception (`per_driver`). Null in a month the contract is not settled by Keeta's statement.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function levelRulesFor(Contract $contract, int $year, int $month): ?array
+    {
+        $rules = $contract->keeta_pay_rules;
+        if (! is_array($rules) || (empty($rules['enabled']) && empty($rules['per_driver']))
+            || ! KeetaRevenueService::appliesTo($contract, $year, $month)) {
+            return null;
+        }
+
+        return self::merged($rules);
+    }
+
+    /**
+     * @param  array<string, mixed>  $rules
+     * @return array<string, mixed>
+     */
+    private static function merged(array $rules): array
+    {
         // Key by key rather than a recursive merge, which would keep a default achievement the
         // owner removed from the list.
         $merged = self::DEFAULT_RULES;

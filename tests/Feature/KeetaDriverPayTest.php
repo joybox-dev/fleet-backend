@@ -247,6 +247,87 @@ class KeetaDriverPayTest extends TestCase
         $this->actingAs($this->admin)->putJson("/api/contracts/{$this->contract->id}", ['keeta_pay_rules' => ['enabled' => true, 'target' => -1]])->assertStatus(422);
     }
 
+    /**
+     * The contract keeps its own rule for its drivers, and only the ones given the personal
+     * exception «حسب مستوى كيتا» are paid by their level (client, 2026-11).
+     */
+    public function test_only_the_drivers_given_the_level_exception_are_paid_by_their_level(): void
+    {
+        $this->contract->forceFill(['keeta_pay_rules' => ['enabled' => false, 'per_driver' => true] + KeetaDriverPayService::DEFAULT_RULES])->saveQuietly();
+        $this->contract->refresh();
+        $this->assertNull(KeetaDriverPayService::rulesFor($this->contract, 2026, 8), 'the contract as a whole is not paid by level');
+
+        $invoice = $this->invoice(2026, 8);
+        $byLevel = $this->driver('By level');
+        $fixed = $this->driver('Contract rule');
+        foreach ([$byLevel, $fixed] as $driver) {
+            $this->logs($driver, '2026-07', 26, 16);
+            $this->logs($driver, '2026-08', 26, 16);
+            $this->rider($invoice, $driver, 591, 29, 270);
+        }
+
+        $this->actingAs($this->admin)->postJson("/api/contract-assignments/{$this->assignments[$byLevel->id]}/overrides", [
+            'override_type' => 'keeta_tiers', 'effective_from' => '2026-07-01', 'customization_reason' => 'يُدفع حسب مستواه',
+        ])->assertCreated();
+
+        $august = $this->sheet(2026, 8);
+        $this->assertSame('keeta_tiers', $august[$byLevel->id]['payment_method']);
+        $this->assertEqualsWithDelta(430.05, $august[$byLevel->id]['gross_contract_earnings'], 0.0005, '300 + 191 × 0.55 + 25');
+        $this->assertSame('fixed', $august[$fixed->id]['payment_method'], 'the rest keep the contract\'s own rule');
+        // 300 for the 400-order target, and 16 orders above it at the contract's 0.75.
+        $this->assertEqualsWithDelta(312.0, $august[$fixed->id]['gross_contract_earnings'], 0.0005);
+
+        // July is before Keeta settles the contract: there is no level to read, so the contract's rule
+        // pays him exactly as it pays the driver beside him.
+        $july = $this->sheet(2026, 7);
+        $this->assertSame('fixed', $july[$byLevel->id]['payment_method']);
+        $this->assertEqualsWithDelta($july[$fixed->id]['gross_contract_earnings'], $july[$byLevel->id]['gross_contract_earnings'], 0.0005);
+        $this->assertGreaterThan(0, $july[$byLevel->id]['gross_contract_earnings']);
+    }
+
+    public function test_a_level_exception_is_held_like_the_rest_until_keetas_statement_arrives(): void
+    {
+        $this->contract->forceFill(['keeta_pay_rules' => ['enabled' => false, 'per_driver' => true] + KeetaDriverPayService::DEFAULT_RULES])->saveQuietly();
+        $driver = $this->driver('Waiting');
+        $this->logs($driver, '2026-09', 10, 16);
+        DriverContractOverride::create([
+            'company_id' => $this->company->id, 'contract_assignment_id' => $this->assignments[$driver->id],
+            'override_type' => 'keeta_tiers', 'effective_from' => '2026-09-01', 'customization_reason' => 'مستوى',
+        ]);
+
+        KeetaRevenueService::forget();
+        $build = ContractSheetService::build($this->contract->fresh(), 2026, 9, $this->company->id);
+
+        $this->assertSame('keeta_tiers', collect($build['drivers'])->firstWhere('employee_id', $driver->id)['payment_method']);
+        $this->assertNotEmpty(ContractSheetService::approvalBlockers($build['drivers']), 'no statement for September yet');
+    }
+
+    public function test_the_contract_form_keeps_level_figures_for_the_exceptions_only(): void
+    {
+        $this->actingAs($this->admin)->putJson("/api/contracts/{$this->contract->id}", ['keeta_pay_rules' => [
+            'enabled' => false, 'per_driver' => true, 'tier_salaries' => ['S' => 350, 'A' => 300, 'B' => 230], 'target' => 430,
+        ]])->assertOk();
+
+        $stored = $this->contract->fresh()->keeta_pay_rules;
+        $this->assertFalse($stored['enabled']);
+        $this->assertTrue($stored['per_driver']);
+        $this->assertEquals(230.0, $stored['tier_salaries']['B']);
+        $this->assertNull(KeetaDriverPayService::rulesFor($this->contract->fresh(), 2026, 8));
+        $this->assertSame(430, KeetaDriverPayService::levelRulesFor($this->contract->fresh(), 2026, 8)['target']);
+    }
+
+    public function test_the_level_exception_is_refused_on_a_contract_without_level_figures(): void
+    {
+        $this->contract->forceFill(['keeta_pay_rules' => null])->saveQuietly();
+        $driver = $this->driver('No figures');
+
+        $this->actingAs($this->admin)->postJson("/api/contract-assignments/{$this->assignments[$driver->id]}/overrides", [
+            'override_type' => 'keeta_tiers', 'effective_from' => '2026-08-01', 'customization_reason' => 'x',
+        ])->assertStatus(422)->assertJsonValidationErrors('override_type');
+
+        $this->assertSame(0, DriverContractOverride::count());
+    }
+
     // ─── helpers ───────────────────────────────────────────────────────────────
 
     private function driver(string $name): Employee

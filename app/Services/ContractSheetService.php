@@ -414,7 +414,9 @@ class ContractSheetService
     ): array {
         // Which override, if any, covers a given day. effective_from/effective_to used to be
         // treated as a switch: any overlap with the month applied the override to all 31 days.
-        $overrideForDate = function (string $date) use ($overrides) {
+        // By reference: a Keeta-level exception is taken out of the list below once it is known
+        // whether the month has a level to read.
+        $overrideForDate = function (string $date) use (&$overrides) {
             return $overrides->first(function ($ov) use ($date) {
                 $ovStart = $ov->effective_from ? substr((string) $ov->effective_from, 0, 10) : null;
                 $ovEnd = $ov->effective_to ? substr((string) $ov->effective_to, 0, 10) : null;
@@ -434,6 +436,35 @@ class ContractSheetService
         // by Keeta's statement, the driver's month is one figure read from that statement — never a
         // sum of vehicle-type stretches. A personal override on any day of the month still wins.
         $monthStart = Carbon::parse($effStart);
+
+        // One driver paid by his Keeta level while the rest of the contract keeps its own rules
+        // (client, 2026-11): a personal exception «حسب مستوى كيتا» covering any day of the month puts
+        // the whole month on the level, because Keeta settles a rider by the month. In a month the
+        // contract is not settled by Keeta's statement there is no level to read, and the exception
+        // is set aside so the contract's rules pay him as before.
+        $levelOverride = $overrides->first(function ($ov) use ($monthStart) {
+            if ($ov->override_type !== KeetaDriverPayService::METHOD) {
+                return false;
+            }
+            $ovStart = $ov->effective_from ? substr((string) $ov->effective_from, 0, 10) : null;
+            $ovEnd = $ov->effective_to ? substr((string) $ov->effective_to, 0, 10) : null;
+
+            return (! $ovStart || $ovStart <= $monthStart->copy()->endOfMonth()->toDateString())
+                && (! $ovEnd || $ovEnd >= $monthStart->copy()->startOfMonth()->toDateString());
+        });
+        if ($levelOverride) {
+            $levelRules = KeetaDriverPayService::levelRulesFor($contract, $monthStart->year, $monthStart->month);
+            if ($levelRules) {
+                return [
+                    'calc' => KeetaDriverPayService::forDriverMonth($employee, $contract, $monthStart->year, $monthStart->month, $empLogs, $levelRules),
+                    'active_override' => $levelOverride,
+                    'vehicle_type_ids' => $vtIds->map(fn ($v) => (int) $v)->all(),
+                    'contract_default_gross' => null,
+                ];
+            }
+        }
+        $overrides = $overrides->reject(fn ($ov) => $ov->override_type === KeetaDriverPayService::METHOD)->values();
+
         $keetaRules = KeetaDriverPayService::rulesFor($contract, $monthStart->year, $monthStart->month);
         if ($keetaRules
             && $overrideForDate($effStart) === null

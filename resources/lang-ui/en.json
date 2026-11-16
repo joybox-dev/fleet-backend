@@ -799,5 +799,7 @@
   "سلفة {1} (#{2}) خُصم منها قسط في شهر {3}/{4} ثم نُقلت إلى سائق آخر. تراجع عن ذلك من شاشة السلف أولاً، ثم فكّ الاعتماد.": "{1}’s advance (#{2}) had an instalment deducted in {3}/{4} and was then moved to another driver. Undo that on the advances screen first, then unapprove.",
   "قسط سلفة (هاتف) {1} من {2}": "Phone advance instalment {1} of {2}",
   "قسط سلفة (خط) {1} من {2}": "SIM line advance instalment {1} of {2}",
-  "قسط سلفة (أخرى) {1} من {2}": "Other advance instalment {1} of {2}"
+  "قسط سلفة (أخرى) {1} من {2}": "Other advance instalment {1} of {2}",
+  "هذا العقد ليس فيه أجر حسب مستوى كيتا. فعّل «كشف كيتا الشهري» وأدخل أرقام المستويات في «إعداد حساب السائق» بالعقد أولاً.": "This contract has no pay by Keeta level. Turn on “Keeta monthly statement” and enter the level figures in the contract’s “Driver pricing” first.",
+  "لا توجد أرقام مستويات كيتا على هذا العقد.": "This contract has no Keeta level figures."
 }

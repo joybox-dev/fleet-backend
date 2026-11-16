@@ -384,6 +384,8 @@ class ContractController extends Controller
     private const KEETA_PAY_RULES = [
         'keeta_pay_rules' => 'nullable|array',
         'keeta_pay_rules.enabled' => 'boolean',
+        // The figures kept for the drivers given the personal exception «حسب مستوى كيتا» only.
+        'keeta_pay_rules.per_driver' => 'boolean',
         'keeta_pay_rules.tier_salaries' => 'array',
         'keeta_pay_rules.tier_salaries.*' => 'numeric|min:0',
         'keeta_pay_rules.target' => 'integer|min:0',
@@ -412,12 +414,13 @@ class ContractController extends Controller
             return false;
         }
         $rules = $validated['keeta_pay_rules'];
-        if (! is_array($rules) || empty($rules['enabled'])) {
+        if (! is_array($rules) || (empty($rules['enabled']) && empty($rules['per_driver']))) {
             return null;
         }
 
         $number = fn ($v) => round((float) $v, 3);
-        $stored = ['enabled' => true];
+        // Every driver by his level, or only those given the personal exception (client, 2026-11).
+        $stored = empty($rules['enabled']) ? ['enabled' => false, 'per_driver' => true] : ['enabled' => true];
         foreach (['target', 'min_orders'] as $key) {
             if (isset($rules[$key])) {
                 $stored[$key] = (int) $rules[$key];

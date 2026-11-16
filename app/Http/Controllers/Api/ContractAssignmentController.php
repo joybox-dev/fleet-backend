@@ -9,6 +9,7 @@ use App\Models\DailyLog;
 use App\Models\DriverContractOverride;
 use App\Models\Employee;
 use App\Models\VehicleAssignment;
+use App\Services\KeetaDriverPayService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -186,7 +187,7 @@ class ContractAssignmentController extends Controller
         $companyId = app('current_company_id');
 
         $validated = $request->validate([
-            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
+            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones,keeta_tiers',
             'fixed_amount' => 'nullable|numeric|min:0',
             'fixed_target' => 'nullable|integer|min:0',
             'fixed_deficit_rate' => 'nullable|numeric|min:0',
@@ -251,6 +252,9 @@ class ContractAssignmentController extends Controller
         }
 
         $oType = $validated['override_type'] ?? null;
+        if ($oType === KeetaDriverPayService::METHOD && ($refusal = $this->keetaLevelRefusal($assignment->contract))) {
+            return $refusal;
+        }
         if (in_array($oType, ['zones', 'zones_tiers', 'tiered_zones'])) {
             $driver = $assignment->employee;
             $contract = $assignment->contract;
@@ -312,7 +316,7 @@ class ContractAssignmentController extends Controller
         $assignment = $override->contractAssignment;
 
         $validated = $request->validate([
-            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones',
+            'override_type' => 'nullable|string|in:fixed,zones,tiers,hybrid,zones_tiers,tiered_zones,keeta_tiers',
             'fixed_amount' => 'nullable|numeric|min:0',
             'fixed_target' => 'nullable|integer|min:0',
             'fixed_deficit_rate' => 'nullable|numeric|min:0',
@@ -379,6 +383,9 @@ class ContractAssignmentController extends Controller
         }
 
         $oType = $validated['override_type'] ?? $override->override_type;
+        if ($oType === KeetaDriverPayService::METHOD && ($refusal = $this->keetaLevelRefusal($assignment->contract))) {
+            return $refusal;
+        }
         if (in_array($oType, ['zones', 'zones_tiers', 'tiered_zones'])) {
             $driver = $assignment->employee;
             $contract = $assignment->contract;
@@ -440,5 +447,23 @@ class ContractAssignmentController extends Controller
         $override->delete();
 
         return response()->json(['message' => 'تم حذف التجاوز بنجاح.']);
+    }
+
+    /**
+     * «حسب مستوى كيتا» as one driver's exception needs a contract Keeta settles by its statement and
+     * the level figures to pay him by — set in the contract's driver pricing, for every driver or
+     * for the exceptions only.
+     */
+    private function keetaLevelRefusal(?Contract $contract): ?JsonResponse
+    {
+        $rules = $contract?->keeta_pay_rules;
+        if ($contract && $contract->keeta_settlement_from && is_array($rules) && (! empty($rules['enabled']) || ! empty($rules['per_driver']))) {
+            return null;
+        }
+
+        return response()->json([
+            'message' => 'هذا العقد ليس فيه أجر حسب مستوى كيتا. فعّل «كشف كيتا الشهري» وأدخل أرقام المستويات في «إعداد حساب السائق» بالعقد أولاً.',
+            'errors' => ['override_type' => ['لا توجد أرقام مستويات كيتا على هذا العقد.']],
+        ], 422);
     }
 }
