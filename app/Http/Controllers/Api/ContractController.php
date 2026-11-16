@@ -399,6 +399,8 @@ class ContractController extends Controller
         'keeta_pay_rules.achievements.*.amount' => 'numeric|min:0',
         'keeta_pay_rules.tier_incentives' => 'array',
         'keeta_pay_rules.tier_incentives.*' => 'numeric|min:0',
+        'keeta_pay_rules.tier_order_rates' => 'array',
+        'keeta_pay_rules.tier_order_rates.*' => 'nullable|numeric|min:0',
     ];
 
     /**
@@ -435,6 +437,13 @@ class ContractController extends Controller
             if (isset($rules[$key]) && is_array($rules[$key])) {
                 $stored[$key] = array_map($number, array_filter($rules[$key], fn ($v) => $v !== null && $v !== ''));
             }
+        }
+        // A level priced per order: blank or zero leaves that level on salary + target.
+        if (isset($rules['tier_order_rates']) && is_array($rules['tier_order_rates'])) {
+            $stored['tier_order_rates'] = array_map($number, array_filter(
+                array_intersect_key($rules['tier_order_rates'], array_flip(['S', 'A', 'B'])),
+                fn ($v) => $v !== null && $v !== '' && (float) $v > 0
+            ));
         }
         if (isset($rules['achievements']) && is_array($rules['achievements'])) {
             $stored['achievements'] = collect($rules['achievements'])

@@ -328,6 +328,55 @@ class KeetaDriverPayTest extends TestCase
         $this->assertSame(0, DriverContractOverride::count());
     }
 
+    /**
+     * From October 2026 (client, 16-11): no salary and no target — a level is paid its orders × the
+     * level's price. S 0.850 · A 0.750 · B 0.600 · C/D 0.350 · not valid 0.350. The client's own
+     * example: two S riders with 500 and 550 orders are owed 425 and 467.5.
+     */
+    public function test_a_level_priced_per_order_is_paid_its_orders_times_the_price_without_salary_or_target(): void
+    {
+        $this->contract->forceFill(['keeta_pay_rules' => array_merge(KeetaDriverPayService::DEFAULT_RULES, [
+            'tier_salaries' => ['S' => 350, 'A' => 300, 'B' => 230], 'target' => 430,
+            'tier_order_rates' => ['S' => 0.85, 'A' => 0.75, 'B' => 0.6],
+            'per_order_rate' => 0.35, 'achievements' => [],
+        ])])->saveQuietly();
+
+        $invoice = $this->invoice(2026, 10);
+        $cases = [
+            // name => [orders, valid days, experience incentive, expected pay]
+            'S 500' => [500, 29, 370, 425.0],        // 500 × 0.850
+            'S 550' => [550, 29, 370, 467.5],        // 550 × 0.850
+            'A 470' => [470, 29, 270, 352.5],        // 470 × 0.750
+            'B 300' => [300, 29, 170, 180.0],        // 300 × 0.600
+            'C 400' => [400, 29, 50, 140.0],         // 400 × 0.350
+            'A, 270 orders' => [270, 29, 270, 94.5], // under 280 — not valid: 270 × 0.350
+            'S, 6 invalid days' => [500, 25, 370, 175.0], // not valid: 500 × 0.350
+        ];
+        $drivers = [];
+        foreach ($cases as $name => [$orders, $validDays, $incentive]) {
+            $drivers[$name] = $this->driver($name);
+            $this->logs($drivers[$name], '2026-10', 5, 1);
+            $this->rider($invoice, $drivers[$name], $orders, $validDays, $incentive);
+        }
+
+        $sheet = $this->sheet(2026, 10);
+        foreach ($cases as $name => [, , , $expected]) {
+            $this->assertEqualsWithDelta($expected, $sheet[$drivers[$name]->id]['gross_contract_earnings'], 0.0005, $name);
+        }
+        $labels = collect($sheet[$drivers['S 500']->id]['calculation_details'])->pluck('label')->implode(' | ');
+        $this->assertStringNotContainsString('راتب مستوى', $labels, 'no salary line');
+        $this->assertStringNotContainsString('التارغت', $labels, 'no target line');
+    }
+
+    public function test_the_contract_form_stores_the_level_order_prices_and_drops_blanks(): void
+    {
+        $this->actingAs($this->admin)->putJson("/api/contracts/{$this->contract->id}", ['keeta_pay_rules' => [
+            'enabled' => true, 'tier_order_rates' => ['S' => 0.85, 'A' => '0.750', 'B' => '', 'X' => 9],
+        ]])->assertOk();
+
+        $this->assertSame(['S' => 0.85, 'A' => 0.75], $this->contract->fresh()->keeta_pay_rules['tier_order_rates']);
+    }
+
     // ─── helpers ───────────────────────────────────────────────────────────────
 
     private function driver(string $name): Employee

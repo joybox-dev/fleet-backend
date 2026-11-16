@@ -45,6 +45,8 @@ class KeetaDriverPayService
         'per_order_rate' => 0.4,
         'achievements' => [['orders' => 500, 'amount' => 25], ['orders' => 600, 'amount' => 35]],
         'tier_incentives' => ['S' => 370, 'A' => 270, 'B' => 170, 'C' => 50, 'D' => 0],
+        // Price per order by level; a level listed here is paid orders × price instead of salary + target.
+        'tier_order_rates' => [],
     ];
 
     private const SALARIED = ['S', 'A', 'B'];
@@ -193,7 +195,11 @@ class KeetaDriverPayService
         $maxInvalid = (float) $rules['max_invalid_days'];
         $validByOrders = $orders >= $minOrders;
         $validByDays = $invalidDays === null || $invalidDays <= $maxInvalid;
-        $salaried = in_array($tier, self::SALARIED, true) && isset($rules['tier_salaries'][$tier]);
+        // A level with its own price per order (client, from October 2026: S 0.850 · A 0.750 · B 0.600)
+        // is paid its orders × that price — no salary and no target. A level without one keeps the
+        // salary-and-target scheme.
+        $levelRate = in_array($tier, self::SALARIED, true) ? (float) ($rules['tier_order_rates'][$tier] ?? 0) : 0.0;
+        $salaried = in_array($tier, self::SALARIED, true) && (isset($rules['tier_salaries'][$tier]) || $levelRate > 0);
 
         $base = 0.0;
         $perOrder = 0.0;
@@ -201,7 +207,14 @@ class KeetaDriverPayService
         $deficit = 0.0;
         $target = 0;
 
-        if ($salaried && $validByOrders && $validByDays) {
+        if ($salaried && $validByOrders && $validByDays && $levelRate > 0) {
+            $perOrder = round($orders * $levelRate, 3);
+            $details[] = [
+                'label' => "مستوى {$tier}: سعر الطلب {$levelRate}",
+                'orders' => $orders, 'rate' => $levelRate, 'amount' => $perOrder,
+                'formula' => "{$orders} طلب × {$levelRate} د.ك = {$perOrder} د.ك",
+            ];
+        } elseif ($salaried && $validByOrders && $validByDays) {
             $base = round((float) $rules['tier_salaries'][$tier], 3);
             $target = (int) $rules['target'];
             $details[] = ['label' => "راتب مستوى {$tier}", 'amount' => $base, 'formula' => number_format($base, 3).' د.ك'];
